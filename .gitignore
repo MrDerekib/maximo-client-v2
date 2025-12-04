@@ -1,0 +1,20 @@
+# Entorno virtual
+.venv/
+
+# Cache / PyCharm
+__pycache__/
+.idea/
+
+# Archivos sensibles
+credentials.json
+config.json
+*.db
+
+# Drivers Selenium
+drivers/
+msedgedriver*
+chromedriver*
+
+# Archivos temporales
+*.log
+*.tmp
