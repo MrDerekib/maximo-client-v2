@@ -16,6 +16,7 @@ class MaximoApp(tk.Tk):
         self.geometry("1100x650")
 
         self.cfg: AppConfig = load_config()
+        self.auto_update_job = None  # ID del after() del auto-update
 
         init_db()
 
@@ -57,14 +58,19 @@ class MaximoApp(tk.Tk):
         # Pestaña LISTADO
         self.list_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.list_frame, text="Listado")
-
         self._build_list_tab()
 
         # Pestaña CONFIG
         self.config_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.config_frame, text="Configuración")
-
         self._build_config_tab()
+
+        # Barra de estado (abajo)
+        self.status_var = tk.StringVar(value="Listo.")
+        status_bar = ttk.Label(self, textvariable=self.status_var,
+                               anchor="w", relief="sunken")
+        status_bar.pack(fill="x", side="bottom")
+
 
     def _build_list_tab(self):
         top_frame = ttk.Frame(self.list_frame)
@@ -91,7 +97,11 @@ class MaximoApp(tk.Tk):
         ttk.Radiobutton(rb_frame, text="Descripción", variable=self.search_by, value="Descripción").pack(anchor="w")
 
         ttk.Button(top_frame, text="Buscar", command=self.update_table).pack(side="left", padx=5)
-        ttk.Button(top_frame, text="Actualizar ahora", command=self.update_now_threaded).pack(side="right", padx=5)
+        ttk.Button(
+            top_frame,
+            text="Actualizar ahora",
+            command=lambda: self.update_now_threaded(show_popup=True)
+        ).pack(side="right", padx=5)
 
         # Tabla
         columns = ("OT", "Descripción", "Nº de serie", "Fecha",
@@ -181,8 +191,9 @@ class MaximoApp(tk.Tk):
 
         messagebox.showinfo("Configuración", "Configuración guardada correctamente.")
 
-        if self.cfg.auto_update_enabled:
-            self.schedule_auto_update()
+        # Siempre reconfiguramos el auto-update según la nueva config
+        self.schedule_auto_update()
+
 
     # ---------- Listado ----------
     def update_table(self):
@@ -238,31 +249,82 @@ class MaximoApp(tk.Tk):
             messagebox.showinfo("Copiado", f"Se copió: {value}")
 
     # ---------- Actualización (manual / auto) ----------
-    def update_now_threaded(self):
+    def update_now_threaded(self, show_popup: bool = True):
         # Comprobar credenciales antes de lanzar el hilo
         if not self._ensure_credentials():
             return
 
-        t = threading.Thread(target=self._update_now_worker, daemon=True)
+        t = threading.Thread(target=self._update_now_worker,
+                             args=(show_popup,), daemon=True)
         t.start()
 
 
-    def _update_now_worker(self):
+
+    def _update_now_worker(self, show_popup: bool):
+        from datetime import datetime
+
         try:
-            run_update(headless=True)
-            self.after(0, self.update_table)
+            # Mensaje mientras se actualiza
+            self.after(0, lambda: self.status_var.set("Actualizando base de datos..."))
+
+            new_entries, updated_entries = run_update(headless=True)
+
+            def on_done():
+                ahora = datetime.now().strftime("%H:%M:%S")
+                msg = f"Última actualización {ahora}: {new_entries} nuevas, {updated_entries} actualizadas."
+                self.status_var.set(msg)
+                self.update_table()
+
+                if show_popup:
+                    # Si quisieras un popup en actualización manual, descomenta esto:
+                    # messagebox.showinfo("Actualización completada", msg)
+                    pass
+
+            self.after(0, on_done)
+
         except Exception as e:
             self.after(0, lambda: messagebox.showerror("Error", f"Error en actualización:\n{e}"))
+            self.after(0, lambda: self.status_var.set("Error en la última actualización."))
+
 
     def schedule_auto_update(self):
+        """
+        Configura (o detiene) el auto-update según self.cfg.auto_update_enabled
+        y self.cfg.auto_update_interval_min. Garantiza que solo haya un timer activo.
+        """
+        # Si ya había un auto-update programado, lo cancelamos
+        if self.auto_update_job is not None:
+            try:
+                self.after_cancel(self.auto_update_job)
+            except Exception:
+                pass
+            self.auto_update_job = None
+
+        # Si está desactivado en la configuración, no programamos nada
+        if not self.cfg.auto_update_enabled:
+            # Si quieres, puedes actualizar la barra de estado aquí:
+            # self.status_var.set("Auto-actualización desactivada.")
+            return
+
         interval_ms = self.cfg.auto_update_interval_min * 60 * 1000
 
         def tick():
-            if self.cfg.auto_update_enabled:
-                self.update_now_threaded()
-                self.after(interval_ms, tick)
+            # Si mientras tanto se ha desactivado, paramos el bucle
+            if not self.cfg.auto_update_enabled:
+                self.auto_update_job = None
+                return
 
-        self.after(interval_ms, tick)
+            # Ejecutamos la actualización silenciosa (sin popups)
+            self.update_now_threaded(show_popup=False)
+
+            # Programamos la siguiente ejecución
+            self.auto_update_job = self.after(interval_ms, tick)
+
+        # Programamos la primera ejecución
+        self.auto_update_job = self.after(interval_ms, tick)
+        # Si tienes barra de estado, aquí podrías poner algo tipo:
+        # self.status_var.set(f"Auto-actualización cada {self.cfg.auto_update_interval_min} min.")
+
 
     # ---------- Abrir OT ----------
     def open_ot_threaded(self, ot):

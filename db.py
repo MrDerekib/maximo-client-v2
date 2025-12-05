@@ -29,9 +29,6 @@ def init_db():
 
 
 def update_database_from_df(df):
-    """
-    Lógica basada en tus scripts update_database*.py
-    """
     conn = get_connection()
     cur = conn.cursor()
 
@@ -43,11 +40,9 @@ def update_database_from_df(df):
     for row in df.itertuples(index=False, name=None):
         ot = str(row[0]).replace('\u00a0', ' ').strip()
 
-        # ¿Existe ya la OT?
         cur.execute("SELECT * FROM maximo WHERE REPLACE(OT, ' ', ' ') = REPLACE(?, ' ', ' ')", (ot,))
         existing = cur.fetchone()
 
-        # Normalizamos datos nuevos
         new_data = tuple("" if v is None else str(v).replace(' ', ' ').strip() for v in row[1:])
 
         if existing:
@@ -78,6 +73,8 @@ def update_database_from_df(df):
     conn.commit()
     conn.close()
     print(f"BD: nuevas entradas={new_entries}, actualizadas={updated_entries}")
+    return new_entries, updated_entries
+
 
 
 def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str]) -> List[Tuple]:

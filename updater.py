@@ -13,14 +13,7 @@ from db import update_database_from_df
 
 def run_update(headless=True):
     """
-    Lanza una actualización completa de la BD:
-    - Abre navegador
-    - Login
-    - Accede a WO
-    - Aplica filtros
-    - Descarga XLS
-    - Procesa tabla
-    - Actualiza SQLite
+    Lanza una actualización completa de la BD y devuelve (new_entries, updated_entries).
     """
     driver = setup_driver(headless=headless)
     try:
@@ -31,10 +24,11 @@ def run_update(headless=True):
         file_path = move_latest_file()
         if not file_path:
             print("No se pudo mover el archivo descargado. Abortando actualización.")
-            return
+            return 0, 0
         df = process_html_table(file_path)
-        update_database_from_df(df)
+        new_entries, updated_entries = update_database_from_df(df)
         print("Actualización de base de datos completada.")
+        return new_entries, updated_entries
     finally:
         driver.quit()
         print("Navegador cerrado.")
