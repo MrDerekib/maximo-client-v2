@@ -51,6 +51,14 @@ def get_credentials():
     cfg = load_config()
     return cfg.username, cfg.password
 
+def credentials_configured() -> bool:
+    """
+    Devuelve True si hay usuario y contraseña configurados,
+    False en caso contrario.
+    """
+    username, password = get_credentials()
+    return bool(username and password)
+
 
 def set_credentials(username: str, password: str):
     cfg = load_config()

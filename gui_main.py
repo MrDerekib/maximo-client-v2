@@ -3,7 +3,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from config import load_config, save_config, set_credentials, AppConfig
+from config import load_config, save_config, set_credentials, AppConfig, credentials_configured
 from db import fetch_data, init_db
 from maximo_client import open_ot
 from updater import run_update
@@ -30,6 +30,24 @@ class MaximoApp(tk.Tk):
         # Si auto-update está activado, programamos el timer
         if self.cfg.auto_update_enabled:
             self.schedule_auto_update()
+
+    def _ensure_credentials(self) -> bool:
+        """
+        Devuelve True si hay credenciales configuradas.
+        Si no las hay, muestra un aviso y lleva al usuario a la pestaña de Configuración.
+        """
+        if not credentials_configured():
+            messagebox.showwarning(
+                "Credenciales necesarias",
+                "No hay usuario y/o contraseña configurados.\n\n"
+                "Ve a la pestaña 'Configuración', introduce tus credenciales de Maximo "
+                "y guarda la configuración antes de usar esta opción."
+            )
+            # Cambiar a la pestaña de Configuración
+            self.notebook.select(self.config_frame)
+            return False
+        return True
+
 
     # ---------- UI ----------
     def _build_ui(self):
@@ -221,8 +239,13 @@ class MaximoApp(tk.Tk):
 
     # ---------- Actualización (manual / auto) ----------
     def update_now_threaded(self):
+        # Comprobar credenciales antes de lanzar el hilo
+        if not self._ensure_credentials():
+            return
+
         t = threading.Thread(target=self._update_now_worker, daemon=True)
         t.start()
+
 
     def _update_now_worker(self):
         try:
@@ -243,6 +266,10 @@ class MaximoApp(tk.Tk):
 
     # ---------- Abrir OT ----------
     def open_ot_threaded(self, ot):
+        # Comprobar credenciales antes de intentar abrir la OT
+        if not self._ensure_credentials():
+            return
+
         def worker():
             try:
                 open_ot(ot, headless=False)  # aquí normal, para que veas la ventana
@@ -250,6 +277,7 @@ class MaximoApp(tk.Tk):
                 self.after(0, lambda: messagebox.showerror("Error", f"No se pudo abrir la OT:\n{e}"))
 
         threading.Thread(target=worker, daemon=True).start()
+
 
 
 if __name__ == "__main__":
