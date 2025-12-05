@@ -2,6 +2,7 @@
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
+from datetime import datetime
 
 from config import load_config, save_config, set_credentials, AppConfig, credentials_configured
 from db import fetch_data, init_db
@@ -48,6 +49,19 @@ class MaximoApp(tk.Tk):
             self.notebook.select(self.config_frame)
             return False
         return True
+    def _format_ok_status(self, dt: datetime, new_entries: int, updated_entries: int) -> str:
+        """
+        Devuelve el texto para la barra de estado en caso de actualización correcta.
+        Incluye emoji, fecha dd/mm/aa y hora hh:mm.
+        """
+        ts_str = dt.strftime("%d/%m/%y %H:%M")
+        if (new_entries or 0) > 0 or (updated_entries or 0) > 0:
+            # Hubo cambios
+            return f"✅ Última actualización {ts_str} – {new_entries} nuevas, {updated_entries} actualizadas."
+        else:
+            # Sin cambios
+            return f"🟢 Última actualización {ts_str} – sin cambios."
+
 
 
     # ---------- UI ----------
@@ -71,6 +85,29 @@ class MaximoApp(tk.Tk):
                                anchor="w", relief="sunken")
         status_bar.pack(fill="x", side="bottom")
 
+        # Mostrar, si existe, el último estado correcto guardado
+        self._load_last_status_into_statusbar()
+
+    def _load_last_status_into_statusbar(self):
+        """
+        Si hay un último estado correcto guardado en la configuración,
+        lo muestra en la barra de estado al arrancar la app.
+        """
+        last = getattr(self.cfg, "last_status", None)
+        if not last:
+            self.status_var.set("Listo.")
+            return
+
+        try:
+            ts = last.get("ts")
+            new_entries = int(last.get("new_entries", 0))
+            updated_entries = int(last.get("updated_entries", 0))
+            dt = datetime.fromisoformat(ts)
+        except Exception:
+            self.status_var.set("Listo.")
+            return
+
+        self.status_var.set(self._format_ok_status(dt, new_entries, updated_entries))
 
     def _build_list_tab(self):
         top_frame = ttk.Frame(self.list_frame)
@@ -261,30 +298,64 @@ class MaximoApp(tk.Tk):
 
 
     def _update_now_worker(self, show_popup: bool):
-        from datetime import datetime
-
         try:
             # Mensaje mientras se actualiza
-            self.after(0, lambda: self.status_var.set("Actualizando base de datos..."))
+            self.after(0, lambda: self.status_var.set("⏳ Actualizando base de datos..."))
 
             new_entries, updated_entries = run_update(headless=True)
 
             def on_done():
-                ahora = datetime.now().strftime("%H:%M:%S")
-                msg = f"Última actualización {ahora}: {new_entries} nuevas, {updated_entries} actualizadas."
+                # Momento en que terminamos correctamente
+                dt = datetime.now()
+
+                # Texto bonito para la barra
+                msg = self._format_ok_status(dt, new_entries, updated_entries)
                 self.status_var.set(msg)
                 self.update_table()
 
+                # Guardar como último estado correcto (persistente)
+                self.cfg.last_status = {
+                    "ts": dt.isoformat(timespec="minutes"),
+                    "new_entries": int(new_entries),
+                    "updated_entries": int(updated_entries),
+                }
+                save_config(self.cfg)
+
                 if show_popup:
-                    # Si quisieras un popup en actualización manual, descomenta esto:
+                    # Si algún día quieres popup en actualización manual, lo pones aquí
                     # messagebox.showinfo("Actualización completada", msg)
                     pass
 
             self.after(0, on_done)
 
         except Exception as e:
-            self.after(0, lambda: messagebox.showerror("Error", f"Error en actualización:\n{e}"))
-            self.after(0, lambda: self.status_var.set("Error en la última actualización."))
+            # No sobreescribimos last_status: conserva la última correcta
+            def on_error():
+                messagebox.showerror("Error", f"Error en actualización:\n{e}")
+
+                last = getattr(self.cfg, "last_status", None)
+                if last:
+                    # Construimos mensaje con la última correcta
+                    try:
+                        ts = last.get("ts")
+                        new_entries = int(last.get("new_entries", 0))
+                        updated_entries = int(last.get("updated_entries", 0))
+                        dt = datetime.fromisoformat(ts)
+                        ok_part = self._format_ok_status(dt, new_entries, updated_entries)
+                        # ok_part ya empieza con ✅/🟢, lo adaptamos un poco:
+                        # quitamos el emoji inicial para reutilizar el texto
+                        if ok_part[0] in ("✅", "🟢"):
+                            ok_part = ok_part[2:]  # quita "✅ " / "🟢 "
+                        self.status_var.set(
+                            f"❌ Error en la última actualización. Última correcta: {ok_part}"
+                        )
+                    except Exception:
+                        self.status_var.set("❌ Error en la última actualización.")
+                else:
+                    self.status_var.set("❌ Error en la última actualización.")
+
+            self.after(0, on_error)
+
 
 
     def schedule_auto_update(self):

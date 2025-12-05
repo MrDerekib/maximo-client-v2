@@ -18,6 +18,7 @@ class AppConfig:
     auto_update_interval_min: int = 5
     # Filtros por defecto (ajusta a tu caso)
     filters: dict = None
+    last_status: dict | None = None
 
     def __post_init__(self):
         if self.filters is None:
