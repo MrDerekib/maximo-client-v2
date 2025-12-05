@@ -8,6 +8,10 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+
 
 from config import load_config, get_credentials
 
@@ -136,20 +140,48 @@ def process_html_table(file_path):
 
 def open_ot(ot: str, headless=False):
     """
-    Abre Maximo y busca una OT concreta (para doble click en la GUI).
-    Equivalente a tu open_maximo actual.
+    Abre Maximo, entra en la aplicación de OT favorita y busca una OT concreta.
     """
     driver = setup_driver(headless=headless)
     try:
+        # Login
         login(driver)
-        print("Login OK, accediendo a búsqueda rápida...")
-        time.sleep(6)
-        search_box = driver.find_element(By.ID, "quicksearch")
+        print("Login OK, abriendo aplicación de órdenes de trabajo favoritas...")
+
+        # Ir a la app de OT, igual que en el flujo de actualización de BD
+        open_workorders_app(driver)
+
+        # Ahora sí, estamos en la pantalla donde existe quicksearch
+        wait = WebDriverWait(driver, 30)
+        try:
+            search_box = wait.until(
+                EC.presence_of_element_located((By.ID, "quicksearch"))
+            )
+        except TimeoutException:
+            raise RuntimeError(
+                "No se encontró el cuadro de búsqueda rápida (id 'quicksearch') "
+                "después de abrir la app de OT. Comprueba que la página se ha "
+                "cargado correctamente o si ha cambiado el identificador."
+            )
+
+        # Por si viniera con texto pre-rellenado
+        search_box.clear()
         search_box.send_keys(ot)
         search_box.send_keys(Keys.RETURN)
-        print("OT enviada a Maximo.")
-        # Aquí ya dejas al usuario en la pantalla de la OT.
+        print(f"OT {ot} enviada a Maximo.")
+
+        # IMPORTANTE:
+        # - Si headless=True -> no tiene sentido dejar la ventana abierta
+        # - Si headless=False -> dejamos la ventana para que el usuario trabaje
+        if headless:
+            driver.quit()
+
     except Exception as e:
         print(f"Error al abrir OT en Maximo: {e}")
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        # Propagamos para que la GUI muestre el messagebox
         raise
+
