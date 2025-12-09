@@ -11,6 +11,7 @@ from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import NoSuchElementException
 
 
 from config import load_config, get_credentials
@@ -54,11 +55,27 @@ def login(driver):
             raise RuntimeError("No se pudo cargar la página de login.")
 
     print("Ingresando credenciales...")
+    driver.find_element(By.ID, "username").clear()
     driver.find_element(By.ID, "username").send_keys(username)
+    driver.find_element(By.ID, "password").clear()
     driver.find_element(By.ID, "password").send_keys(password + Keys.RETURN)
-    time.sleep(10)
 
-    # Podrías añadir aquí la detección del error BMXAA7901E, como en tu script
+    # Damos unos segundos para que Maximo muestre el posible mensaje de error
+    time.sleep(5)
+
+    # Comprobar el mensaje de error BMXAA7901E en <div class="errorText">
+    try:
+        error_div = driver.find_element(By.CLASS_NAME, "errorText")
+        error_message = error_div.text.strip() if error_div else ""
+        if "BMXAA7901E" in error_message:
+            # Este es exactamente el mensaje de tu captura:
+            # "BMXAA7901E - No se puede iniciar sesión en este momento..."
+            raise RuntimeError(
+                "Login rechazado por Maximo, compruebe que sus credenciales son correctas y Máximo funciona correctamente."
+            )
+    except NoSuchElementException:
+        # No hay div de error -> asumimos que el login ha ido bien
+        print("Login exitoso. Continuando...")
 
 
 def open_workorders_app(driver):

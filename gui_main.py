@@ -328,11 +328,11 @@ class MaximoApp(tk.Tk):
 
             self.after(0, on_done)
 
-        except Exception as e:
-            # No sobreescribimos last_status: conserva la última correcta
-            def on_error():
-                messagebox.showerror("Error", f"Error en actualización:\n{e}")
 
+        except Exception as e:
+            err_msg = str(e)
+            def on_error():
+                messagebox.showerror("Error", f"Error en actualización:\n{err_msg}")
                 last = getattr(self.cfg, "last_status", None)
                 if last:
                     # Construimos mensaje con la última correcta
@@ -407,7 +407,15 @@ class MaximoApp(tk.Tk):
             try:
                 open_ot(ot, headless=False)  # aquí normal, para que veas la ventana
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Error", f"No se pudo abrir la OT:\n{e}"))
+                err_msg = str(e)
+                # Y usamos esa variable dentro del callback de Tkinter
+                self.after(
+                    0,
+                    lambda: messagebox.showerror(
+                        "Error",
+                        f"No se pudo abrir la OT:\n{err_msg}"
+                    )
+                )
 
         threading.Thread(target=worker, daemon=True).start()
 
