@@ -2,23 +2,48 @@
 import json
 import os
 from dataclasses import dataclass, asdict
+from pathlib import Path
+import sys
 
-CONFIG_PATH = "config.json"
+#CONFIG_PATH = "config.json"
 
+# Directorio base: donde está el código o el .exe (si está compilado con Nuitka)
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent
+
+# Carpeta de datos propia de la app
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(exist_ok=True)
+
+# Config junto al ejecutable / script
+CONFIG_PATH = str(BASE_DIR / "config.json")
 
 @dataclass
 class AppConfig:
     maximo_url: str = "https://eam.indraweb.net/maximo/"
     username: str = ""
     password: str = ""
-    download_dir: str = os.path.expanduser("~/Downloads")
-    dest_folder: str = os.path.expanduser("~/Documents/Maximo")
-    db_path: str = "maximo_data.db"
+
+    # Descargas: por defecto, carpeta de Descargas del usuario
+    download_dir: str = str(Path.home() / "Downloads")
+
+    # Carpeta de trabajo de la app: ./data/exports (junto a la app)
+    dest_folder: str = str(DATA_DIR / "exports")
+
+    # Base de datos: ./data/maximo_data.db
+    db_path: str = str(DATA_DIR / "maximo_data.db")
+
     auto_update_enabled: bool = False
     auto_update_interval_min: int = 5
-    # Filtros por defecto (ajusta a tu caso)
-    filters: dict = None
+
+    # Filtros por defecto (se usan en apply_filter)
+    filters: dict | None = None
+
+    # Para la barra de estado persistente
     last_status: dict | None = None
+
 
     def __post_init__(self):
         if self.filters is None:
