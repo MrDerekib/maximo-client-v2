@@ -3,6 +3,7 @@ import os
 import time
 import shutil
 import pandas as pd
+import logging
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -19,7 +20,7 @@ from config import load_config, get_credentials
 
 def setup_driver(headless=True):
     cfg = load_config()
-    print("Inicializando Edge...")
+    logging.info("Inicializando Edge...")
 
     options = EdgeOptions()
     if headless:
@@ -31,7 +32,7 @@ def setup_driver(headless=True):
     options.add_argument(f"--download-default-directory={cfg.download_dir}")
 
     driver = webdriver.Edge(options=options)
-    print("Navegador inicializado.")
+    logging.info("Navegador inicializado.")
     return driver
 
 
@@ -39,22 +40,25 @@ def login(driver):
     cfg = load_config()
     username, password = get_credentials()
     if not username or not password:
+        logging.warning("No hay credenciales configuradas.")
         raise RuntimeError("No hay credenciales configuradas.")
 
     url = cfg.maximo_url
 
     max_attempts = 3
     for attempt in range(max_attempts):
-        print(f"Cargando página de login (intento {attempt+1}/{max_attempts})...")
+        logging.info(f"Cargando página de login (intento {attempt+1}/{max_attempts})...")
         driver.get(url)
         time.sleep(6)
         body_text = driver.find_element(By.TAG_NAME, "body").text
         if "Maximo" in driver.title and len(body_text) > 50:
             break
         if attempt == max_attempts - 1:
+            logging.warning("No se pudo cargar la página de login")
             raise RuntimeError("No se pudo cargar la página de login.")
 
-    print("Ingresando credenciales...")
+
+    logging.info("Ingresando credenciales...")
     driver.find_element(By.ID, "username").clear()
     driver.find_element(By.ID, "username").send_keys(username)
     driver.find_element(By.ID, "password").clear()
@@ -75,39 +79,39 @@ def login(driver):
             )
     except NoSuchElementException:
         # No hay div de error -> asumimos que el login ha ido bien
-        print("Login exitoso. Continuando...")
+        logging.info("Login exitoso. Continuando...")
 
 
 def open_workorders_app(driver):
-    print("Accediendo a la sección de filtros...")
+    logging.info("Accediendo a la sección de filtros...")
     time.sleep(10)
     driver.find_element(By.ID, "FavoriteApp_WO_TR").click()
     time.sleep(10)
-    print("Sección de filtros abierta.")
+    logging.info("Sección de filtros abierta.")
 
 
 def apply_filter(driver):
     cfg = load_config()
     filters = cfg.filters
-    print("Aplicando filtros...")
+    logging.info("Aplicando filtros...")
     for field_id, value in filters.items():
-        print(f"Llenando campo {field_id} con {value}")
+        logging.info(f"Llenando campo {field_id} con {value}")
         field = driver.find_element(By.ID, field_id)
         field.clear()
         field.send_keys(value)
         time.sleep(1)
     field.send_keys(Keys.RETURN)
     time.sleep(10)
-    print("Filtros aplicados.")
+    logging.info("Filtros aplicados.")
 
 
 def download_file(driver):
-    print("Descargando archivo...")
+    logging.info("Descargando archivo...")
     time.sleep(10)
     download_button = driver.find_element(By.ID, "mx38-lb4")
     driver.execute_script("arguments[0].click();", download_button)
     time.sleep(45)
-    print("Archivo descargado.")
+    logging.info("Archivo descargado.")
 
 
 def move_latest_file():
@@ -116,25 +120,25 @@ def move_latest_file():
     dest_folder = cfg.dest_folder
     os.makedirs(dest_folder, exist_ok=True)
 
-    print("Moviendo archivo descargado...")
+    logging.info("Moviendo archivo descargado...")
     files = sorted(
         [f for f in os.listdir(download_dir) if f.endswith(".xls")],
         key=lambda x: os.path.getctime(os.path.join(download_dir, x)),
         reverse=True
     )
     if not files:
-        print("No se encontró archivo .xls en la carpeta de descargas.")
+        logging.warning("No se encontró archivo .xls en la carpeta de descargas.")
         return None
 
     latest_file = os.path.join(download_dir, files[0])
     new_location = os.path.join(dest_folder, files[0])
     shutil.move(latest_file, new_location)
-    print(f"Archivo movido a {new_location}")
+    logging.info(f"Archivo movido a {new_location}")
     return new_location
 
 
 def process_html_table(file_path):
-    print(f"Procesando archivo: {file_path}")
+    logging.info(f"Procesando archivo: {file_path}")
     dfs = pd.read_html(file_path)
 
     df = dfs[0].iloc[1:, [0, 12, 15, 2, 3, 9, 5, 13]].copy()
@@ -151,7 +155,7 @@ def process_html_table(file_path):
     with open("clientes_unicos.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(unique_clients))
 
-    print("Archivo procesado.")
+    logging.info("Archivo procesado.")
     return df
 
 
@@ -163,7 +167,7 @@ def open_ot(ot: str, headless=False):
     try:
         # Login
         login(driver)
-        print("Login OK, abriendo aplicación de órdenes de trabajo favoritas...")
+        logging.info("Login OK, abriendo aplicación de órdenes de trabajo favoritas...")
 
         # Ir a la app de OT, igual que en el flujo de actualización de BD
         open_workorders_app(driver)
@@ -175,6 +179,7 @@ def open_ot(ot: str, headless=False):
                 EC.presence_of_element_located((By.ID, "quicksearch"))
             )
         except TimeoutException:
+            logging.warning("No se encontró el cuadro de búsqueda rápida (id 'quicksearch')")
             raise RuntimeError(
                 "No se encontró el cuadro de búsqueda rápida (id 'quicksearch') "
                 "después de abrir la app de OT. Comprueba que la página se ha "
@@ -185,7 +190,7 @@ def open_ot(ot: str, headless=False):
         search_box.clear()
         search_box.send_keys(ot)
         search_box.send_keys(Keys.RETURN)
-        print(f"OT {ot} enviada a Maximo.")
+        logging.info(f"OT {ot} enviada a Maximo.")
 
         # IMPORTANTE:
         # - Si headless=True -> no tiene sentido dejar la ventana abierta
@@ -195,6 +200,7 @@ def open_ot(ot: str, headless=False):
 
     except Exception as e:
         print(f"Error al abrir OT en Maximo: {e}")
+        logging.warning("Error al abrir OT en Maximo.")
         try:
             driver.quit()
         except Exception:

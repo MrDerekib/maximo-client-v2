@@ -10,6 +10,7 @@ credentials.json
 config.json
 *.db
 data/
+clientes_unicos.txt
 
 # Drivers Selenium
 drivers/

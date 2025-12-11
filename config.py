@@ -36,7 +36,7 @@ class AppConfig:
     db_path: str = str(DATA_DIR / "maximo_data.db")
 
     auto_update_enabled: bool = False
-    auto_update_interval_min: int = 5
+    auto_update_interval_min: int = 10
 
     # Filtros por defecto (se usan en apply_filter)
     filters: dict | None = None
@@ -48,7 +48,7 @@ class AppConfig:
     def __post_init__(self):
         if self.filters is None:
             self.filters = {
-                "mx38_tfrow_[C:26]_txt-tb": "=LAB-BAD"  # mismo que en tus scripts
+                "mx38_tfrow_[C:26]_txt-tb": "=LAB-BAD"  # valor filtro planta = LAB-BDN
             }
 
 

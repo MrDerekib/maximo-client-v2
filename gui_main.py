@@ -8,13 +8,27 @@ from config import load_config, save_config, set_credentials, AppConfig, credent
 from db import fetch_data, init_db
 from maximo_client import open_ot
 from updater import run_update
+import logging
+import version
 
+
+# Configuración básica para los logs
+logging.basicConfig(
+    level=logging.DEBUG,  # Establece el nivel de detalle
+    format="%(asctime)s - %(levelname)s - %(message)s",  # Formato del log
+    handlers=[
+        logging.FileHandler("maximo_client.log"),  # Guarda el log en archivo
+        logging.StreamHandler()  # También muestra los logs en consola
+    ]
+)
+
+logging.info(f"App Version: {version.APP_VERSION} - Iniciando la aplicación")
 
 class MaximoApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Cliente Maximo (Refactor)")
-        self.geometry("1100x650")
+        self.title(f"Cliente Maximo v.{version.APP_VERSION}")
+        self.geometry("1600x800")
 
         self.cfg: AppConfig = load_config()
         self.auto_update_job = None  # ID del after() del auto-update
@@ -39,6 +53,8 @@ class MaximoApp(tk.Tk):
         Si no las hay, muestra un aviso y lleva al usuario a la pestaña de Configuración.
         """
         if not credentials_configured():
+            #añadimos el mensaje al log
+            logging.warning("No hay usuario y/o contraseña configurados.")
             messagebox.showwarning(
                 "Credenciales necesarias",
                 "No hay usuario y/o contraseña configurados.\n\n"
@@ -201,6 +217,10 @@ class MaximoApp(tk.Tk):
         ttk.Button(frame, text="Guardar configuración", command=self.save_config_from_ui)\
             .grid(row=4, column=0, columnspan=2, pady=15)
 
+
+        ttk.Label(frame, text=f"Versión: {version.APP_VERSION}", anchor="center").grid(row=10, column=0, columnspan=2, pady=10)
+        self.user_var = tk.StringVar()
+
     # ---------- Lógica GUI ----------
     def _load_config_into_ui(self):
         self.user_var.set(self.cfg.username)
@@ -227,6 +247,7 @@ class MaximoApp(tk.Tk):
         save_config(self.cfg)
 
         messagebox.showinfo("Configuración", "Configuración guardada correctamente.")
+        logging.info("Configuración de usuario guardada correctamente.")
 
         # Siempre reconfiguramos el auto-update según la nueva config
         self.schedule_auto_update()

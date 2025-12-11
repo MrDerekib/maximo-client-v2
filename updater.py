@@ -9,7 +9,7 @@ from maximo_client import (
     process_html_table,
 )
 from db import update_database_from_df
-
+import logging
 
 def run_update(headless=True):
     """
@@ -23,12 +23,12 @@ def run_update(headless=True):
         download_file(driver)
         file_path = move_latest_file()
         if not file_path:
-            print("No se pudo mover el archivo descargado. Abortando actualización.")
+            logging.warning("No se pudo mover el archivo descargado. Abortando actualización.")
             return 0, 0
         df = process_html_table(file_path)
         new_entries, updated_entries = update_database_from_df(df)
-        print("Actualización de base de datos completada.")
+        logging.info("Actualización de base de datos completada.")
         return new_entries, updated_entries
     finally:
         driver.quit()
-        print("Navegador cerrado.")
+        logging.info("Navegador cerrado.")

@@ -1,5 +1,6 @@
 # db.py
 import sqlite3
+import logging
 from typing import List, Tuple, Optional
 from config import load_config
 
@@ -72,15 +73,13 @@ def update_database_from_df(df):
 
     conn.commit()
     conn.close()
-    print(f"BD: nuevas entradas={new_entries}, actualizadas={updated_entries}")
+    logging.info(f"BD: nuevas entradas={new_entries}, actualizadas={updated_entries}")
     return new_entries, updated_entries
 
 
 
 def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str]) -> List[Tuple]:
-    """
-    Equivalente a fetch_data de tu GUI actual.
-    """
+
     filter_words = filter_text.strip().split()
     query = "SELECT * FROM maximo"
     params = []
