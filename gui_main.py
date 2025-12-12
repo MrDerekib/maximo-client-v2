@@ -219,7 +219,6 @@ class MaximoApp(tk.Tk):
 
 
         ttk.Label(frame, text=f"Versión: {version.APP_VERSION}", anchor="center").grid(row=10, column=0, columnspan=2, pady=10)
-        self.user_var = tk.StringVar()
 
     # ---------- Lógica GUI ----------
     def _load_config_into_ui(self):
