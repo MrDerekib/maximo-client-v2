@@ -10,13 +10,16 @@ from maximo_client import (
 )
 from db import update_database_from_df
 import logging
+import tempfile
+import shutil
+
 
 def run_update(headless=True):
-    """
-    Lanza una actualización completa de la BD y devuelve (new_entries, updated_entries).
-    """
-    driver = setup_driver(headless=headless)
+    profile_dir = tempfile.mkdtemp(prefix="maximo-update-")
+    logging.info(f"Updater: usando perfil temporal {profile_dir}")
+    driver = None
     try:
+        driver = setup_driver(headless=headless, profile_dir=profile_dir)
         login(driver)
         open_workorders_app(driver)
         apply_filter(driver)
@@ -30,5 +33,11 @@ def run_update(headless=True):
         logging.info("Actualización de base de datos completada.")
         return new_entries, updated_entries
     finally:
-        driver.quit()
+        try:
+            if driver is not None:
+                driver.quit()
+        finally:
+            shutil.rmtree(profile_dir, ignore_errors=True)
+            logging.info(f"Updater: navegador cerrado y perfil {profile_dir} eliminado")
+
         logging.info("Navegador cerrado.")

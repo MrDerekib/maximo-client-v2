@@ -4,6 +4,8 @@ import time
 import shutil
 import pandas as pd
 import logging
+import tempfile
+from pathlib import Path
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -18,7 +20,7 @@ from selenium.common.exceptions import NoSuchElementException
 from config import load_config, get_credentials
 
 
-def setup_driver(headless=True):
+def setup_driver(headless=True, profile_dir=None):
     cfg = load_config()
     logging.info("Inicializando Edge...")
 
@@ -27,6 +29,15 @@ def setup_driver(headless=True):
         options.add_argument("--headless")
         options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
+
+    # PERFIL AISLADO (clave para que quit() no mate otras ventanas)
+    if profile_dir is None:
+        profile_dir = tempfile.mkdtemp(prefix="maximo-edge-")
+        logging.warning(
+            f"setup_driver llamado sin profile_dir explícito. "
+            f"Usando perfil temporal por defecto: {profile_dir}"
+        )
+    options.add_argument(f"--user-data-dir={profile_dir}")
 
     # Descarga por defecto
     options.add_argument(f"--download-default-directory={cfg.download_dir}")
@@ -163,7 +174,9 @@ def open_ot(ot: str, headless=False):
     """
     Abre Maximo, entra en la aplicación de OT favorita y busca una OT concreta.
     """
-    driver = setup_driver(headless=headless)
+    profile_dir = tempfile.mkdtemp(prefix="maximo-ot-")
+    logging.info(f"OT {ot}: usando perfil temporal {profile_dir}")
+    driver = setup_driver(headless=headless, profile_dir=profile_dir)
     try:
         # Login
         login(driver)
