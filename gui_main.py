@@ -34,6 +34,7 @@ class MaximoApp(tk.Tk):
         super().__init__()
         self.title(f"Cliente Maximo {format_version_tag(version.APP_VERSION)}")
         self.geometry("1600x800")
+        self.iconbitmap("icon.ico")
 
         self.cfg: AppConfig = load_config()
         self.auto_update_job = None  # ID del after() del auto-update
