@@ -1,8 +1,10 @@
 # gui_main.py
 import threading
 import tkinter as tk
+import webbrowser
 from tkinter import ttk, messagebox
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 
 from config import load_config, save_config, set_credentials, AppConfig, credentials_configured
 from db import fetch_data, init_db
@@ -10,7 +12,7 @@ from maximo_client import open_ot
 from updater import run_update
 import logging
 import version
-
+from update_checker import fetch_latest_release, is_newer, format_version_tag
 
 # Configuración básica para los logs
 logging.basicConfig(
@@ -24,10 +26,13 @@ logging.basicConfig(
 
 logging.info(f"App Version: {version.APP_VERSION} - Iniciando la aplicación")
 
+
+
+
 class MaximoApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"Cliente Maximo v.{version.APP_VERSION}")
+        self.title(f"Cliente Maximo {format_version_tag(version.APP_VERSION)}")
         self.geometry("1600x800")
 
         self.cfg: AppConfig = load_config()
@@ -38,6 +43,7 @@ class MaximoApp(tk.Tk):
         self._build_ui()
         self._load_config_into_ui()
         self.update_table()
+        self.after(500, lambda: self.check_updates(notify_popup=True))
 
         # Si al arrancar no hay credenciales, abrimos directamente la pestaña de config
         if not self.cfg.username or not self.cfg.password:
@@ -196,29 +202,53 @@ class MaximoApp(tk.Tk):
     def _build_config_tab(self):
         frame = self.config_frame
 
-        # Usuario / contraseña
-        ttk.Label(frame, text="Usuario Maximo:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
+        # Subframe 1: formulario (GRID)
+        form = ttk.Frame(frame)
+        form.pack(fill="x", padx=10, pady=10)
+
+        ttk.Label(form, text="Usuario Maximo:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
         self.user_var = tk.StringVar()
-        ttk.Entry(frame, textvariable=self.user_var, width=30).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Entry(form, textvariable=self.user_var, width=30).grid(row=0, column=1, padx=5, pady=5)
 
-        ttk.Label(frame, text="Contraseña Maximo:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
+        ttk.Label(form, text="Contraseña Maximo:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
         self.pass_var = tk.StringVar()
-        ttk.Entry(frame, textvariable=self.pass_var, width=30, show="*").grid(row=1, column=1, padx=5, pady=5)
+        ttk.Entry(form, textvariable=self.pass_var, width=30, show="*").grid(row=1, column=1, padx=5, pady=5)
 
-        # Auto-update
         self.auto_update_var = tk.BooleanVar()
-        ttk.Checkbutton(frame, text="Auto-actualizar en segundo plano",
-                        variable=self.auto_update_var).grid(row=2, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+        ttk.Checkbutton(
+            form,
+            text="Auto-actualizar en segundo plano",
+            variable=self.auto_update_var
+        ).grid(row=2, column=0, columnspan=2, sticky="w", padx=5, pady=5)
 
-        ttk.Label(frame, text="Intervalo (minutos):").grid(row=3, column=0, sticky="e", padx=5, pady=5)
+        ttk.Label(form, text="Intervalo (minutos):").grid(row=3, column=0, sticky="e", padx=5, pady=5)
         self.interval_var = tk.IntVar()
-        ttk.Entry(frame, textvariable=self.interval_var, width=10).grid(row=3, column=1, sticky="w", padx=5, pady=5)
+        ttk.Entry(form, textvariable=self.interval_var, width=10).grid(row=3, column=1, sticky="w", padx=5, pady=5)
 
-        ttk.Button(frame, text="Guardar configuración", command=self.save_config_from_ui)\
+        ttk.Button(form, text="Guardar configuración", command=self.save_config_from_ui) \
             .grid(row=4, column=0, columnspan=2, pady=15)
 
+        # Subframe 2: actualizaciones (PACK)
+        update_frame = ttk.LabelFrame(frame, text="Actualizaciones")
+        update_frame.pack(fill="x", padx=10, pady=10)
 
-        ttk.Label(frame, text=f"Versión: {version.APP_VERSION}", anchor="center").grid(row=10, column=0, columnspan=2, pady=10)
+        ttk.Label(update_frame, text=f"Versión instalada: v{version.APP_VERSION}") \
+            .pack(anchor="w", padx=10, pady=2)
+
+        self.lbl_latest = ttk.Label(update_frame, text="Última versión detectada: —")
+        self.lbl_latest.pack(anchor="w", padx=10, pady=2)
+
+        self.lbl_checked = ttk.Label(update_frame, text="Última comprobación: —")
+        self.lbl_checked.pack(anchor="w", padx=10, pady=2)
+
+        btns = ttk.Frame(update_frame)
+        btns.pack(fill="x", padx=10, pady=6)
+
+        ttk.Button(btns, text="Buscar actualizaciones", command=lambda: self.check_updates(False)).pack(side="left")
+        self.btn_open = ttk.Button(btns, text="Abrir release", command=self._open_latest_release)
+        self.btn_open.pack(side="left", padx=8)
+
+        self._refresh_update_block()
 
     # ---------- Lógica GUI ----------
     def _load_config_into_ui(self):
@@ -439,6 +469,112 @@ class MaximoApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def check_updates(self, notify_popup: bool):
+        """
+        Comprueba la última release en GitHub.
+        - notify_popup=True: si hay versión nueva, muestra popup (solo al arrancar)
+        - notify_popup=False: check manual desde Configuración (sin popup)
+        """
+
+        def worker():
+            import logging
+
+            # Ajustes: al arrancar damos más margen y reintentos
+            attempts = 3 if notify_popup else 1
+            timeout = 10 if notify_popup else 5
+            delays = [0.0, 1.0, 2.0]  # backoff suave
+
+            last_exc = None
+            latest = None
+
+            for i in range(attempts):
+                try:
+                    logging.info(f"Update check: intento {i + 1}/{attempts} (timeout={timeout}s)")
+                    if delays[i] > 0:
+                        time.sleep(delays[i])
+
+                    latest = fetch_latest_release(timeout_sec=timeout)
+                    last_exc = None
+                    break
+
+                except Exception as e:
+                    last_exc = e
+                    logging.info(f"Update check intento {i + 1}/{attempts} falló: {e}")
+
+                logging.warning("Update check falló tras 3 intentos: ...")
+
+            if latest is None:
+                # Falló todo: refresca UI pero sin popup
+                self.after(0, self._refresh_update_block)
+                return
+
+            # Guardamos en config (persistente)
+            self.cfg.latest_release_tag = latest.tag
+            self.cfg.latest_release_url = latest.html_url
+            self.cfg.latest_release_checked_at = latest.checked_at
+            save_config(self.cfg)
+
+            def on_ui():
+                self._refresh_update_block()
+
+                is_new = is_newer(latest.tag, version.APP_VERSION)
+                should_popup = notify_popup and latest.tag and latest.html_url and is_new
+
+                logging.info(
+                    f"Update popup check -> "
+                    f"notify_popup={notify_popup}, "
+                    f"local={version.APP_VERSION}, "
+                    f"remote={latest.tag}, "
+                    f"is_newer={is_new}, "
+                    f"should_popup={should_popup}"
+                )
+
+                if should_popup:
+                    # Normalizamos el tag SOLO para mostrarlo al usuario
+                    raw_tag = latest.tag or ""
+                    pretty_tag = format_version_tag(latest.tag)
+
+                    if messagebox.askyesno(
+                            "Actualización disponible",
+                            f"Hay una nueva versión disponible: {pretty_tag}\n\n"
+                            f"¿Quieres abrir la página de la release?",
+                            parent=self
+                    ):
+                        webbrowser.open(latest.html_url)
+
+            self.after(0, on_ui)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _open_latest_release(self):
+        url = getattr(self.cfg, "latest_release_url", "") or ""
+        if url:
+            webbrowser.open(url)
+
+    def _refresh_update_block(self):
+        """
+        Actualiza labels/botones del bloque de Actualizaciones en Configuración.
+        """
+
+        raw_tag = getattr(self.cfg, "latest_release_tag", "") or ""
+        checked = getattr(self.cfg, "latest_release_checked_at", "") or ""
+        url = getattr(self.cfg, "latest_release_url", "") or ""
+
+        # Versiones bonitas para UI
+        installed_ui = format_version_tag(version.APP_VERSION)
+        latest_ui = format_version_tag(raw_tag) if raw_tag else "—"
+
+        if hasattr(self, "lbl_installed"):
+            self.lbl_installed.config(text=f"Versión instalada: {installed_ui}")
+
+        if hasattr(self, "lbl_latest"):
+            self.lbl_latest.config(text=f"Última versión detectada: {latest_ui}")
+
+        if hasattr(self, "lbl_checked"):
+            self.lbl_checked.config(text=f"Última comprobación: {checked or '—'}")
+
+        if hasattr(self, "btn_open"):
+            self.btn_open.config(state=("normal" if url else "disabled"))
 
 
 if __name__ == "__main__":

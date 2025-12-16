@@ -44,6 +44,10 @@ class AppConfig:
     # Para la barra de estado persistente
     last_status: dict | None = None
 
+    # ---- Updates (GitHub Releases) ----
+    latest_release_tag: str = ""
+    latest_release_url: str = ""
+    latest_release_checked_at: str = ""  # ISO: "2025-12-15T08:10"
 
     def __post_init__(self):
         if self.filters is None:
