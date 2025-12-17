@@ -5,8 +5,7 @@ import shutil
 import pandas as pd
 import logging
 import tempfile
-from pathlib import Path
-
+from config import load_config, get_credentials, DATA_DIR
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -15,9 +14,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import NoSuchElementException
-
-
-from config import load_config, get_credentials
 
 
 def setup_driver(headless=True, profile_dir=None):
@@ -170,27 +166,28 @@ def process_html_table(file_path):
     return df
 
 
-def open_ot(ot: str, headless=False):
+def open_ot(ot: str, headless: bool = False):
     """
     Abre Maximo, entra en la aplicación de OT favorita y busca una OT concreta.
+
+    Para evitar que en la versión .exe (Nuitka) se cierre la ventana de Edge:
+    - Si headless=False (visible), devolvemos (driver, profile_dir) y NO cerramos aquí.
+      La GUI debe conservar la referencia y decidir cuándo cerrar/limpiar.
+    - Si headless=True, cerramos y eliminamos el perfil temporal.
     """
     profile_dir = tempfile.mkdtemp(prefix="maximo-ot-")
     logging.info(f"OT {ot}: usando perfil temporal {profile_dir}")
+
     driver = setup_driver(headless=headless, profile_dir=profile_dir)
     try:
-        # Login
         login(driver)
         logging.info("Login OK, abriendo aplicación de órdenes de trabajo favoritas...")
 
-        # Ir a la app de OT, igual que en el flujo de actualización de BD
         open_workorders_app(driver)
 
-        # Ahora sí, estamos en la pantalla donde existe quicksearch
         wait = WebDriverWait(driver, 30)
         try:
-            search_box = wait.until(
-                EC.presence_of_element_located((By.ID, "quicksearch"))
-            )
+            search_box = wait.until(EC.presence_of_element_located((By.ID, "quicksearch")))
         except TimeoutException:
             logging.warning("No se encontró el cuadro de búsqueda rápida (id 'quicksearch')")
             raise RuntimeError(
@@ -199,25 +196,25 @@ def open_ot(ot: str, headless=False):
                 "cargado correctamente o si ha cambiado el identificador."
             )
 
-        # Por si viniera con texto pre-rellenado
         search_box.clear()
         search_box.send_keys(ot)
         search_box.send_keys(Keys.RETURN)
         logging.info(f"OT {ot} enviada a Maximo.")
 
-        # IMPORTANTE:
-        # - Si headless=True -> no tiene sentido dejar la ventana abierta
-        # - Si headless=False -> dejamos la ventana para que el usuario trabaje
         if headless:
             driver.quit()
+            shutil.rmtree(profile_dir, ignore_errors=True)
+            logging.info(f"OT {ot}: navegador cerrado y perfil {profile_dir} eliminado (headless)")
+            return None
 
-    except Exception as e:
-        print(f"Error al abrir OT en Maximo: {e}")
-        logging.warning("Error al abrir OT en Maximo.")
+        # Visible: devolvemos para que la GUI mantenga viva la sesión.
+        return driver, profile_dir
+
+    except Exception:
+        logging.exception(f"Error al abrir OT en Maximo (OT={ot})")
         try:
             driver.quit()
         except Exception:
             pass
-        # Propagamos para que la GUI muestre el messagebox
+        shutil.rmtree(profile_dir, ignore_errors=True)
         raise
-

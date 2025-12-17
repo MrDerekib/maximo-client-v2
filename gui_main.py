@@ -1,18 +1,19 @@
 # gui_main.py
 import threading
+import shutil
 import tkinter as tk
 import webbrowser
 from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
-import time
 
-from config import load_config, save_config, set_credentials, AppConfig, credentials_configured
+from config import load_config, save_config, set_credentials, AppConfig, credentials_configured, BASE_DIR, DATA_DIR
 from db import fetch_data, init_db
 from maximo_client import open_ot
 from updater import run_update
 import logging
 import version
-from update_checker import fetch_latest_release, is_newer, format_version_tag
+from update_checker import fetch_latest_release, is_newer
+from pathlib import Path
 
 # Configuración básica para los logs
 logging.basicConfig(
@@ -32,19 +33,25 @@ logging.info(f"App Version: {version.APP_VERSION} - Iniciando la aplicación")
 class MaximoApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"Cliente Maximo {format_version_tag(version.APP_VERSION)}")
+        self.title(f"Cliente Maximo v.{version.APP_VERSION}")
         self.geometry("1600x800")
-        self.iconbitmap("icon.ico")
+        icon_path = Path(BASE_DIR) / "icon.ico"
+        try:
+            if icon_path.exists():
+                self.iconbitmap(str(icon_path))
+        except Exception:
+            logging.exception("No se pudo cargar icon.ico (no crítico).")
 
         self.cfg: AppConfig = load_config()
         self.auto_update_job = None  # ID del after() del auto-update
-
+        self.ot_sessions = []  # sesiones Edge visibles (OT)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.after(500, lambda: self.check_updates(notify_popup=True))
         init_db()
 
         self._build_ui()
         self._load_config_into_ui()
         self.update_table()
-        self.after(500, lambda: self.check_updates(notify_popup=True))
 
         # Si al arrancar no hay credenciales, abrimos directamente la pestaña de config
         if not self.cfg.username or not self.cfg.password:
@@ -456,7 +463,9 @@ class MaximoApp(tk.Tk):
 
         def worker():
             try:
-                open_ot(ot, headless=False)  # aquí normal, para que veas la ventana
+                session = open_ot(ot, headless=False)  # devuelve (driver, profile_dir)
+                if session:
+                    self.after(0, lambda s=session: self._register_ot_session(s))
             except Exception as e:
                 err_msg = str(e)
                 # Y usamos esa variable dentro del callback de Tkinter
@@ -478,72 +487,31 @@ class MaximoApp(tk.Tk):
         """
 
         def worker():
-            import logging
+            try:
+                latest = fetch_latest_release(timeout_sec=5)
 
-            # Ajustes: al arrancar damos más margen y reintentos
-            attempts = 3 if notify_popup else 1
-            timeout = 10 if notify_popup else 5
-            delays = [0.0, 1.0, 2.0]  # backoff suave
+                # Guardamos en config (persistente)
+                self.cfg.latest_release_tag = latest.tag
+                self.cfg.latest_release_url = latest.html_url
+                self.cfg.latest_release_checked_at = latest.checked_at
+                save_config(self.cfg)
 
-            last_exc = None
-            latest = None
+                def on_ui():
+                    self._refresh_update_block()
+                    if notify_popup and latest.tag and latest.html_url and is_newer(latest.tag, version.APP_VERSION):
+                        if messagebox.askyesno(
+                                "Actualización disponible",
+                                f"Hay una nueva versión disponible: {latest.tag}\n\n¿Quieres abrir la página de la release?"
+                        ):
+                            webbrowser.open(latest.html_url)
 
-            for i in range(attempts):
-                try:
-                    logging.info(f"Update check: intento {i + 1}/{attempts} (timeout={timeout}s)")
-                    if delays[i] > 0:
-                        time.sleep(delays[i])
+                self.after(0, on_ui)
 
-                    latest = fetch_latest_release(timeout_sec=timeout)
-                    last_exc = None
-                    break
-
-                except Exception as e:
-                    last_exc = e
-                    logging.info(f"Update check intento {i + 1}/{attempts} falló: {e}")
-
-                logging.warning("Update check falló tras 3 intentos: ...")
-
-            if latest is None:
-                # Falló todo: refresca UI pero sin popup
+            except Exception as e:
+                # No popup: solo logs, y refrescamos el bloque para mostrar "no se pudo"
+                import logging
+                logging.warning(f"Update check falló: {e}")
                 self.after(0, self._refresh_update_block)
-                return
-
-            # Guardamos en config (persistente)
-            self.cfg.latest_release_tag = latest.tag
-            self.cfg.latest_release_url = latest.html_url
-            self.cfg.latest_release_checked_at = latest.checked_at
-            save_config(self.cfg)
-
-            def on_ui():
-                self._refresh_update_block()
-
-                is_new = is_newer(latest.tag, version.APP_VERSION)
-                should_popup = notify_popup and latest.tag and latest.html_url and is_new
-
-                logging.info(
-                    f"Update popup check -> "
-                    f"notify_popup={notify_popup}, "
-                    f"local={version.APP_VERSION}, "
-                    f"remote={latest.tag}, "
-                    f"is_newer={is_new}, "
-                    f"should_popup={should_popup}"
-                )
-
-                if should_popup:
-                    # Normalizamos el tag SOLO para mostrarlo al usuario
-                    raw_tag = latest.tag or ""
-                    pretty_tag = format_version_tag(latest.tag)
-
-                    if messagebox.askyesno(
-                            "Actualización disponible",
-                            f"Hay una nueva versión disponible: {pretty_tag}\n\n"
-                            f"¿Quieres abrir la página de la release?",
-                            parent=self
-                    ):
-                        webbrowser.open(latest.html_url)
-
-            self.after(0, on_ui)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -555,28 +523,42 @@ class MaximoApp(tk.Tk):
     def _refresh_update_block(self):
         """
         Actualiza labels/botones del bloque de Actualizaciones en Configuración.
+        Ajusta los nombres de widgets si los llamas distinto.
         """
-
-        raw_tag = getattr(self.cfg, "latest_release_tag", "") or ""
+        tag = getattr(self.cfg, "latest_release_tag", "") or ""
         checked = getattr(self.cfg, "latest_release_checked_at", "") or ""
         url = getattr(self.cfg, "latest_release_url", "") or ""
 
-        # Versiones bonitas para UI
-        installed_ui = format_version_tag(version.APP_VERSION)
-        latest_ui = format_version_tag(raw_tag) if raw_tag else "—"
-
-        if hasattr(self, "lbl_installed"):
-            self.lbl_installed.config(text=f"Versión instalada: {installed_ui}")
-
         if hasattr(self, "lbl_latest"):
-            self.lbl_latest.config(text=f"Última versión detectada: {latest_ui}")
-
+            self.lbl_latest.config(text=f"Última versión detectada: {tag or '—'}")
         if hasattr(self, "lbl_checked"):
             self.lbl_checked.config(text=f"Última comprobación: {checked or '—'}")
-
         if hasattr(self, "btn_open"):
             self.btn_open.config(state=("normal" if url else "disabled"))
 
+
+
+    def _register_ot_session(self, session):
+        """Guarda (driver, profile_dir) para mantener viva la ventana y poder limpiarla al cerrar la app."""
+        try:
+            self.ot_sessions.append(session)
+            logging.info(f"OT session registrada. Total sesiones OT: {len(self.ot_sessions)}")
+        except Exception:
+            logging.exception("No se pudo registrar la sesión OT")
+
+    def on_close(self):
+        """Cierre ordenado: cierra navegadores visibles y elimina sus perfiles temporales."""
+        sessions = list(getattr(self, "ot_sessions", []) or [])
+        for driver, profile_dir in sessions:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            try:
+                shutil.rmtree(profile_dir, ignore_errors=True)
+            except Exception:
+                pass
+        self.destroy()
 
 if __name__ == "__main__":
     app = MaximoApp()
