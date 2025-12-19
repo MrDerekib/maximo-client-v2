@@ -12,8 +12,9 @@ from maximo_client import open_ot
 from updater import run_update
 import logging
 import version
-from update_checker import fetch_latest_release, is_newer
+from update_checker import fetch_latest_release, is_newer, format_version_tag
 from pathlib import Path
+import time
 
 # Configuración básica para los logs
 logging.basicConfig(
@@ -33,14 +34,16 @@ logging.info(f"App Version: {version.APP_VERSION} - Iniciando la aplicación")
 class MaximoApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"Cliente Maximo v.{version.APP_VERSION}")
+        self.title(f"Cliente Maximo {format_version_tag(version.APP_VERSION)}")
         self.geometry("1600x800")
         icon_path = Path(BASE_DIR) / "icon.ico"
-        try:
-            if icon_path.exists():
+        if icon_path.exists():
+            try:
                 self.iconbitmap(str(icon_path))
-        except Exception:
-            logging.exception("No se pudo cargar icon.ico (no crítico).")
+            except Exception:
+                logging.warning("No se pudo aplicar icon.ico a la ventana (no crítico).", exc_info=True)
+        else:
+            logging.debug("icon.ico no encontrado; se omite iconbitmap.")
 
         self.cfg: AppConfig = load_config()
         self.auto_update_job = None  # ID del after() del auto-update
@@ -257,6 +260,9 @@ class MaximoApp(tk.Tk):
         self.btn_open.pack(side="left", padx=8)
 
         self._refresh_update_block()
+
+        # Añadir el autor después del bloque de actualizaciones
+        ttk.Label(frame, text="© Joan Camps (jcamp@indra.es)").pack(anchor="w", padx=10, pady=10)
 
     # ---------- Lógica GUI ----------
     def _load_config_into_ui(self):
@@ -487,31 +493,72 @@ class MaximoApp(tk.Tk):
         """
 
         def worker():
-            try:
-                latest = fetch_latest_release(timeout_sec=5)
+            import logging
 
-                # Guardamos en config (persistente)
-                self.cfg.latest_release_tag = latest.tag
-                self.cfg.latest_release_url = latest.html_url
-                self.cfg.latest_release_checked_at = latest.checked_at
-                save_config(self.cfg)
+            # Ajustes: al arrancar damos más margen y reintentos
+            attempts = 3 if notify_popup else 1
+            timeout = 10 if notify_popup else 5
+            delays = [0.0, 1.0, 2.0]  # backoff suave
 
-                def on_ui():
-                    self._refresh_update_block()
-                    if notify_popup and latest.tag and latest.html_url and is_newer(latest.tag, version.APP_VERSION):
-                        if messagebox.askyesno(
-                                "Actualización disponible",
-                                f"Hay una nueva versión disponible: {latest.tag}\n\n¿Quieres abrir la página de la release?"
-                        ):
-                            webbrowser.open(latest.html_url)
+            last_exc = None
+            latest = None
 
-                self.after(0, on_ui)
+            for i in range(attempts):
+                try:
+                    logging.info(f"Update check: intento {i + 1}/{attempts} (timeout={timeout}s)")
+                    if delays[i] > 0:
+                        time.sleep(delays[i])
 
-            except Exception as e:
-                # No popup: solo logs, y refrescamos el bloque para mostrar "no se pudo"
-                import logging
-                logging.warning(f"Update check falló: {e}")
+                    latest = fetch_latest_release(timeout_sec=timeout)
+                    last_exc = None
+                    break
+
+                except Exception as e:
+                    last_exc = e
+                    logging.info(f"Update check intento {i + 1}/{attempts} falló: {e}")
+
+                logging.warning("Update check falló tras 3 intentos: ...")
+
+            if latest is None:
+                # Falló todo: refresca UI pero sin popup
                 self.after(0, self._refresh_update_block)
+                return
+
+            # Guardamos en config (persistente)
+            self.cfg.latest_release_tag = latest.tag
+            self.cfg.latest_release_url = latest.html_url
+            self.cfg.latest_release_checked_at = latest.checked_at
+            save_config(self.cfg)
+
+            def on_ui():
+                self._refresh_update_block()
+
+                is_new = is_newer(latest.tag, version.APP_VERSION)
+                should_popup = notify_popup and latest.tag and latest.html_url and is_new
+
+                logging.info(
+                    f"Update popup check -> "
+                    f"notify_popup={notify_popup}, "
+                    f"local={version.APP_VERSION}, "
+                    f"remote={latest.tag}, "
+                    f"is_newer={is_new}, "
+                    f"should_popup={should_popup}"
+                )
+
+                if should_popup:
+                    # Normalizamos el tag SOLO para mostrarlo al usuario
+                    raw_tag = latest.tag or ""
+                    pretty_tag = format_version_tag(latest.tag)
+
+                    if messagebox.askyesno(
+                            "Actualización disponible",
+                            f"Hay una nueva versión disponible: {pretty_tag}\n\n"
+                            f"¿Quieres abrir la página de la release?",
+                            parent=self
+                    ):
+                        webbrowser.open(latest.html_url)
+
+            self.after(0, on_ui)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -523,16 +570,25 @@ class MaximoApp(tk.Tk):
     def _refresh_update_block(self):
         """
         Actualiza labels/botones del bloque de Actualizaciones en Configuración.
-        Ajusta los nombres de widgets si los llamas distinto.
         """
-        tag = getattr(self.cfg, "latest_release_tag", "") or ""
+
+        raw_tag = getattr(self.cfg, "latest_release_tag", "") or ""
         checked = getattr(self.cfg, "latest_release_checked_at", "") or ""
         url = getattr(self.cfg, "latest_release_url", "") or ""
 
+        # Versiones bonitas para UI
+        installed_ui = format_version_tag(version.APP_VERSION)
+        latest_ui = format_version_tag(raw_tag) if raw_tag else "—"
+
+        if hasattr(self, "lbl_installed"):
+            self.lbl_installed.config(text=f"Versión instalada: {installed_ui}")
+
         if hasattr(self, "lbl_latest"):
-            self.lbl_latest.config(text=f"Última versión detectada: {tag or '—'}")
+            self.lbl_latest.config(text=f"Última versión detectada: {latest_ui}")
+
         if hasattr(self, "lbl_checked"):
             self.lbl_checked.config(text=f"Última comprobación: {checked or '—'}")
+
         if hasattr(self, "btn_open"):
             self.btn_open.config(state=("normal" if url else "disabled"))
 
