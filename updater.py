@@ -22,7 +22,7 @@ def run_update(headless=True):
         driver = setup_driver(headless=headless, profile_dir=profile_dir)
         login(driver)
         open_workorders_app(driver)
-        apply_filter(driver)
+        ##apply_filter(driver)
         download_file(driver)
         file_path = move_latest_file()
         if not file_path:

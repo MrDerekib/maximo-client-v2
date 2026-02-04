@@ -56,7 +56,7 @@ def login(driver):
     for attempt in range(max_attempts):
         logging.info(f"Cargando página de login (intento {attempt+1}/{max_attempts})...")
         driver.get(url)
-        time.sleep(6)
+        time.sleep(1)
         body_text = driver.find_element(By.TAG_NAME, "body").text
         if "Maximo" in driver.title and len(body_text) > 50:
             break
@@ -91,9 +91,10 @@ def login(driver):
 
 def open_workorders_app(driver):
     logging.info("Accediendo a la sección de filtros...")
-    time.sleep(10)
-    driver.find_element(By.ID, "FavoriteApp_WO_TR").click()
-    time.sleep(10)
+    time.sleep(2)
+    ##driver.find_element(By.ID, "FavoriteApp_WO_TR").click()
+    driver.execute_script("sendEvent('changeapp','startcntr','WO_TR',3);")
+    time.sleep(12)
     logging.info("Sección de filtros abierta.")
 
 
@@ -106,7 +107,7 @@ def apply_filter(driver):
         field = driver.find_element(By.ID, field_id)
         field.clear()
         field.send_keys(value)
-        time.sleep(1)
+        time.sleep(2)
     field.send_keys(Keys.RETURN)
     time.sleep(10)
     logging.info("Filtros aplicados.")
