@@ -33,6 +33,17 @@ class FilterTests(unittest.TestCase):
     def test_client_and_tracking(self):
         self.assertEqual(self.ids({"tracking": ["EN TALLER"]}, "TMB"), ["1"])
 
+    def test_invisible_spaces_share_choice_and_match_all_rows(self):
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("UPDATE maximo SET Seguimiento = ? WHERE OT = '1'", ("DAR SALIDA",))
+            conn.execute("UPDATE maximo SET Seguimiento = ? WHERE OT = '2'", (" DAR\u00a0SALIDA  ",))
+            conn.commit()
+        self.assertEqual(db.filter_choices()["tracking"].count("DAR SALIDA"), 1)
+        self.assertNotIn(" DAR\u00a0SALIDA  ", db.filter_choices()["tracking"])
+        self.assertEqual(self.ids({"tracking": ["DAR SALIDA"]}), ["1", "2"])
+        self.assertEqual(self.ids({"tracking": ["DAR\u00a0SALIDA"]}), ["1", "2"])
+        self.assertEqual(validate_filters({"tracking": ["DAR SALIDA", "DAR\u00a0SALIDA"]})["tracking"], ["DAR SALIDA"])
+
     def test_equipment_type_and_multiple_tracking(self):
         self.assertEqual(self.ids({"equipment": "cabina radio", "types": ["REP"],
                                    "tracking": ["EN TALLER", "RETENIDO"]}), ["1", "2"])

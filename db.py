@@ -3,6 +3,7 @@ import sqlite3
 import logging
 from typing import List, Tuple, Optional
 from config import load_config
+from search_filters import normalize_filter_value
 
 
 def get_connection():
@@ -103,13 +104,13 @@ def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], a
         params.extend(f"%{word.lower()}%" for word in filter_words)
 
     if client_filter and client_filter != "Todos" and not advanced.get("clients"):
-        conditions.append("Cliente = ?")
-        params.append(client_filter)
+        conditions.append("FILTER_VALUE(Cliente) = ?")
+        params.append(normalize_filter_value(client_filter))
 
     for key, column in (("clients", "Cliente"), ("types", "Tipo_de_trabajo"), ("tracking", "Seguimiento")):
         values = advanced.get(key, [])
         if values:
-            conditions.append(f"COALESCE({column}, '') IN ({','.join('?' for _ in values)})")
+            conditions.append(f"FILTER_VALUE({column}) IN ({','.join('?' for _ in values)})")
             params.extend(values)
     for word in advanced.get("equipment", "").split():
         conditions.append("LOWER(Descripción) LIKE ? ESCAPE '\\'")
@@ -125,6 +126,7 @@ def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], a
 
     conn = get_connection()
     cur = conn.cursor()
+    conn.create_function("FILTER_VALUE", 1, normalize_filter_value)
     cur.execute(query, params)
     rows = cur.fetchall()
     conn.close()
@@ -134,8 +136,9 @@ def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], a
 def filter_choices():
     conn = get_connection()
     try:
+        conn.create_function("FILTER_VALUE", 1, normalize_filter_value)
         return {key: [row[0] for row in conn.execute(
-            f"SELECT DISTINCT COALESCE({column}, '') FROM maximo ORDER BY 1"
+            f"SELECT DISTINCT FILTER_VALUE({column}) FROM maximo ORDER BY 1"
         )] for key, column in (("clients", "Cliente"), ("types", "Tipo_de_trabajo"), ("tracking", "Seguimiento"))}
     finally:
         conn.close()

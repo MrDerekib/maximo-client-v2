@@ -1,5 +1,13 @@
 # Historial de cambios
 
+## 0.9.5.1 — Opciones duplicadas por espacios invisibles
+
+- Normalización de espacios normales/no separables, repetidos y exteriores en
+  opciones y consultas de cliente, tipo de trabajo y seguimiento. Los perfiles
+  anteriores también normalizan sus selecciones al cargarse. Una sola opción
+  «DAR SALIDA» encuentra tanto los valores importados como los editados localmente.
+- Los datos originales de SQLite permanecen intactos.
+
 ## 0.9.5 — Filtros avanzados y perfiles de búsqueda
 
 - Nueva función: panel avanzado plegado por defecto, combinado con el buscador

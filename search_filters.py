@@ -6,13 +6,18 @@ from pathlib import Path
 import tempfile
 
 
+def normalize_filter_value(value):
+    """Unifica espacios HTML, repetidos y exteriores sin modificar la BD."""
+    return " ".join((value or "").split())
+
+
 def validate_filters(value):
     result = {}
     for key in ("clients", "types", "tracking"):
         items = value.get(key, [])
         if not isinstance(items, list) or any(not isinstance(item, str) for item in items):
             raise ValueError("Selección de filtros no válida")
-        result[key] = list(dict.fromkeys(items))
+        result[key] = list(dict.fromkeys(normalize_filter_value(item) for item in items))
     for key in ("equipment", "date_from", "date_to"):
         item = value.get(key, "")
         if not isinstance(item, str):
@@ -44,6 +49,7 @@ def validate_profile(value):
         result[key] = value.get(key, default)
         if not isinstance(result[key], str):
             raise ValueError("Perfil no válido")
+    result["client"] = normalize_filter_value(result["client"])
     return result
 
 
