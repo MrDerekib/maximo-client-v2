@@ -612,9 +612,8 @@ class MaximoApp(tk.Tk):
                     last_exc = e
                     logging.info(f"Update check intento {i + 1}/{attempts} falló: {e}")
 
-                logging.warning("Update check falló tras 3 intentos: ...")
-
             if latest is None:
+                logging.warning("Update check falló tras %d intento(s): %s", attempts, last_exc)
                 # Falló todo: refresca UI pero sin popup
                 self.after(0, self._refresh_update_block)
                 return

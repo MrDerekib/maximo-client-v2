@@ -15,6 +15,27 @@ with patch("logging.handlers.RotatingFileHandler", return_value=logging.NullHand
 
 
 class AccessTests(unittest.TestCase):
+    def _check_releases(self, results, notify=True):
+        app = SimpleNamespace(cfg=SimpleNamespace(), after=Mock(), _refresh_update_block=Mock())
+        def thread(**kwargs):
+            return SimpleNamespace(start=kwargs["target"])
+        with patch.object(gui_main.threading, "Thread", side_effect=thread), \
+             patch.object(gui_main, "fetch_latest_release", side_effect=results), \
+             patch.object(gui_main, "save_config"), patch.object(gui_main.time, "sleep"), \
+             self.assertLogs(level="INFO") as logs:
+            gui_main.MaximoApp.check_updates(app, notify)
+        return [line for line in logs.output if line.startswith("WARNING")]
+
+    def test_release_retry_success_does_not_warn_of_final_failure(self):
+        release = SimpleNamespace(tag="v0.9.2", html_url="https://example.invalid", checked_at="today")
+        self.assertEqual(self._check_releases([OSError("connection closed"), release]), [])
+
+    def test_release_exhaustion_warns_once_with_actual_attempt_count(self):
+        for notify, count in ((True, 3), (False, 1)):
+            warnings = self._check_releases([OSError("connection closed")] * count, notify)
+            self.assertEqual(len(warnings), 1)
+            self.assertIn(f"tras {count} intento(s)", warnings[0])
+
     def test_running_update_blocks_another_worker(self):
         app = SimpleNamespace(
             _ensure_credentials=Mock(return_value=True),

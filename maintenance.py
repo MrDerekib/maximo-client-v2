@@ -139,8 +139,8 @@ def cleanup_stale_temps(download_root, now=None):
                     shutil.rmtree(resolved)
                     removed += 1
                     freed += size
-                except OSError:
-                    logging.warning("Se conserva temporal inaccesible: %s", path)
+                except OSError as exc:
+                    logging.warning("No se pudo completar la limpieza de %s: %s", path, exc)
         except OSError:
             logging.warning("No se pudieron revisar temporales en %s", root)
     logging.info("Limpieza de temporales: %d carpetas, %.2f MiB", removed, freed / 1024**2)

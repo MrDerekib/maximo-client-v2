@@ -1,5 +1,15 @@
 # Historial de cambios
 
+## 0.9.5 — Diagnóstico de limpieza y reintentos
+
+- Los errores de limpieza incluyen el motivo exacto de Windows y la ruta que
+  falló. No se modifican permisos ni se fuerza la eliminación de archivos.
+- Se corrige el aviso de fallo al consultar GitHub: solo aparece después de
+  agotar los intentos, con el número real (tres al iniciar, uno en consulta manual).
+- Se comprobó en lectura que Windows deniega el acceso al temporal
+  `maximo-ot-36usz1p1`, incluso fuera del entorno restringido. La corrección mejora
+  el diagnóstico; no resuelve ni altera los permisos de estos restos.
+
 ## 0.9.4 — Limpieza automática
 
 - Al iniciar, en segundo plano, y después de importar correctamente, se eliminan
