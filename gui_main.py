@@ -10,6 +10,7 @@ from config import load_config, save_config, set_credentials, AppConfig, credent
 from db import fetch_data, init_db, update_seguimiento
 from maximo_client import open_ot
 from updater import run_update
+from filter_panel import FilterPanel
 import logging
 from logging.handlers import RotatingFileHandler
 from maintenance import run_maintenance
@@ -179,6 +180,9 @@ class MaximoApp(tk.Tk):
             command=lambda: self.update_now_threaded(show_popup=True)
         ).pack(side="right", padx=5)
 
+        self.filter_panel = FilterPanel(self.list_frame, self)
+        self.filter_panel.pack(fill="x")
+
         # Tabla
         columns = ("OT", "Descripción", "Nº de serie", "Fecha",
                    "Cliente", "Tipo de trabajo", "Seguimiento", "Planta")
@@ -298,14 +302,7 @@ class MaximoApp(tk.Tk):
         self.auto_update_var.set(self.cfg.auto_update_enabled)
         self.interval_var.set(self.cfg.auto_update_interval_min)
 
-        # Cargar lista de clientes para el combo
-        try:
-            with open("clientes_unicos.txt", "r", encoding="utf-8") as f:
-                clients = [line.strip() for line in f.readlines() if line.strip()]
-        except FileNotFoundError:
-            clients = []
-        self.client_combo["values"] = ["Todos"] + clients
-        self.client_combo.set("Todos")
+        self.filter_panel.refresh_choices()
 
     def save_config_from_ui(self):
         self.cfg.username = self.user_var.get().strip()
@@ -329,7 +326,14 @@ class MaximoApp(tk.Tk):
         search_by = self.search_by.get()
         client_filter = self.client_var.get()
 
-        data = fetch_data(filter_text, search_by, client_filter)
+        try:
+            advanced = self.filter_panel.filters()
+            data = fetch_data(filter_text, search_by, client_filter, advanced)
+        except ValueError as exc:
+            messagebox.showerror("Filtros", str(exc), parent=self)
+            return
+        self.filter_panel.refresh_choices()
+        self.filter_panel.show_result(len(data), advanced)
         # por defecto, ordenar por OT desc
         data.sort(key=lambda x: x[0], reverse=True)
 

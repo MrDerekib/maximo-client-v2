@@ -1,5 +1,25 @@
 # Historial de cambios
 
+## 0.9.5 — Filtros avanzados y perfiles de búsqueda
+
+- Nueva función: panel avanzado plegado por defecto, combinado con el buscador
+  sencillo. Equipo busca por palabras en la descripción. Selección múltiple de
+  clientes, estado/tipo de trabajo y seguimiento; intervalo de fechas inclusivo
+  en formato AAAA-MM-DD. No se añade filtro de planta.
+- Dentro de un campo se acepta cualquiera de las opciones; entre campos deben
+  cumplirse todos. Sin selección no se restringe ese campo. Los clientes del
+  panel avanzado prevalecen sobre el selector sencillo, como indica la interfaz.
+- Resumen persistente de filtros aplicados y contador de resultados; limpiar
+  filtros reinicia ambos modos. Cerrar el panel no desactiva sus filtros.
+- Perfiles con nombre: guardar, cargar, sustituir y eliminar. Se conservan en
+  `data/search_profiles.json`, separado de credenciales y configuración; no se
+  suben a Git. Se guardan criterios, no copias de las OT. Se arranca sin filtros.
+- Opciones de filtros obtenidas de SQLite y refrescadas al consultar, incluyendo
+  valores de seguimiento editados localmente. Los perfiles conservan selecciones
+  aunque temporalmente no existan registros con esos valores.
+- La numeración 0.9.5 corresponde a una función nueva; los parches posteriores
+  usarán 0.9.5.1, etc. Punto anterior: commit `41fabab`.
+
 Las correcciones menores usan un cuarto número: `0.9.4.1`, `0.9.4.2`, etc.
 Se mantienen commits independientes para poder revertir cada cambio.
 

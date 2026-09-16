@@ -87,7 +87,11 @@ def update_seguimiento(ot: str, value: str):
     logging.info(f"BD: Seguimiento actualizado OT={ot} -> {value}")
 
 
-def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str]) -> List[Tuple]:
+def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], advanced=None) -> List[Tuple]:
+    from search_filters import validate_filters
+    advanced = validate_filters(advanced or {})
+    if search_by not in ("OT", "Nº_de_serie", "Descripción"):
+        raise ValueError("Campo de búsqueda no válido")
 
     filter_words = filter_text.strip().split()
     query = "SELECT * FROM maximo"
@@ -98,9 +102,23 @@ def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str]) -
         conditions.append(" AND ".join([f"LOWER({search_by}) LIKE ?" for _ in filter_words]))
         params.extend(f"%{word.lower()}%" for word in filter_words)
 
-    if client_filter and client_filter != "Todos":
+    if client_filter and client_filter != "Todos" and not advanced.get("clients"):
         conditions.append("Cliente = ?")
         params.append(client_filter)
+
+    for key, column in (("clients", "Cliente"), ("types", "Tipo_de_trabajo"), ("tracking", "Seguimiento")):
+        values = advanced.get(key, [])
+        if values:
+            conditions.append(f"COALESCE({column}, '') IN ({','.join('?' for _ in values)})")
+            params.extend(values)
+    for word in advanced.get("equipment", "").split():
+        conditions.append("LOWER(Descripción) LIKE ? ESCAPE '\\'")
+        escaped = word.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        params.append(f"%{escaped}%")
+    for key, operator in (("date_from", ">="), ("date_to", "<=")):
+        if advanced.get(key):
+            conditions.append(f"Fecha {operator} ?")
+            params.append(advanced[key])
 
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
@@ -111,3 +129,13 @@ def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str]) -
     rows = cur.fetchall()
     conn.close()
     return rows
+
+
+def filter_choices():
+    conn = get_connection()
+    try:
+        return {key: [row[0] for row in conn.execute(
+            f"SELECT DISTINCT COALESCE({column}, '') FROM maximo ORDER BY 1"
+        )] for key, column in (("clients", "Cliente"), ("types", "Tipo_de_trabajo"), ("tracking", "Seguimiento"))}
+    finally:
+        conn.close()
