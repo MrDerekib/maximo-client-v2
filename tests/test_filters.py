@@ -33,6 +33,54 @@ class FilterTests(unittest.TestCase):
     def test_client_and_tracking(self):
         self.assertEqual(self.ids({"tracking": ["EN TALLER"]}, "TMB"), ["1"])
 
+    def test_import_normalizes_categories_and_repeat_has_no_changes(self):
+        import pandas as pd
+        frame = pd.DataFrame([("5", "Radio\u00a0cabina", "A\u00a0B", "2026-01-01",
+                               " TMB\u00a0 SUR ", " REP  TALLER ", "DAR\u00a0SALIDA", "LAB")])
+        self.assertEqual(db.update_database_from_df(frame), (1, 0))
+        self.assertEqual(db.update_database_from_df(frame), (0, 0))
+        with closing(sqlite3.connect(self.path)) as conn:
+            row = conn.execute("SELECT * FROM maximo WHERE OT='5'").fetchone()
+        self.assertEqual(row[1:3], ("Radio\u00a0cabina", "A\u00a0B"))
+        self.assertEqual(row[4:7], ("TMB SUR", "REP TALLER", "DAR SALIDA"))
+        db.update_seguimiento("5", " EN\u00a0TALLER  ")
+        self.assertEqual(self.ids({"tracking": ["EN TALLER"]}), ["1", "3", "5"])
+        with closing(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(conn.execute("SELECT Seguimiento FROM maximo WHERE OT='5'").fetchone()[0], "EN TALLER")
+
+    def test_migration_preserves_original_backup_and_runs_once(self):
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("DELETE FROM client_migrations")
+            conn.execute("UPDATE maximo SET Seguimiento = ? WHERE OT='1'", (" DAR\u00a0SALIDA ",))
+            before = conn.execute("SELECT * FROM maximo ORDER BY OT").fetchall()
+            conn.commit()
+        db.init_db()
+        backups = list((self.path.parent / "backups").glob("*.db"))
+        self.assertEqual(len(backups), 1)
+        with closing(sqlite3.connect(backups[0])) as conn:
+            self.assertEqual(conn.execute("SELECT * FROM maximo ORDER BY OT").fetchall(), before)
+        with closing(sqlite3.connect(self.path)) as conn:
+            after = conn.execute("SELECT * FROM maximo ORDER BY OT").fetchall()
+        expected = list(before[0])
+        expected[6] = "DAR SALIDA"
+        self.assertEqual(after, [tuple(expected)] + before[1:])
+        db.init_db()
+        self.assertEqual(list((self.path.parent / "backups").glob("*.db")), backups)
+
+    def test_failed_backup_leaves_original_data_and_allows_retry(self):
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("DELETE FROM client_migrations")
+            conn.execute("UPDATE maximo SET Seguimiento = ? WHERE OT='1'", ("DAR\u00a0SALIDA",))
+            conn.commit()
+        with patch.object(db.Path, "mkdir", side_effect=PermissionError("backup blocked")):
+            with self.assertRaises(PermissionError):
+                db.init_db()
+        with closing(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(conn.execute("SELECT Seguimiento FROM maximo WHERE OT='1'").fetchone()[0], "DAR\u00a0SALIDA")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM client_migrations").fetchone()[0], 0)
+        db.init_db()
+        self.assertEqual(self.ids({"tracking": ["DAR SALIDA"]}), ["1"])
+
     def test_invisible_spaces_share_choice_and_match_all_rows(self):
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute("UPDATE maximo SET Seguimiento = ? WHERE OT = '1'", ("DAR SALIDA",))

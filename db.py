@@ -1,6 +1,9 @@
 # db.py
 import sqlite3
 import logging
+from contextlib import closing
+from pathlib import Path
+from uuid import uuid4
 from typing import List, Tuple, Optional
 from config import load_config
 from search_filters import normalize_filter_value
@@ -27,14 +30,51 @@ def init_db():
         )
     """)
     conn.commit()
-    conn.close()
+    try:
+        _normalize_stored_categories(conn)
+    finally:
+        conn.close()
+
+
+def _normalize_stored_categories(conn):
+    """Migración única, con backup previo y actualización atómica de tres campos."""
+    migration = "normalize_categories_v1"
+    conn.execute("CREATE TABLE IF NOT EXISTS client_migrations (name TEXT PRIMARY KEY)")
+    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if conn.execute("SELECT 1 FROM client_migrations WHERE name = ?", (migration,)).fetchone():
+            conn.commit()
+            return
+        changes = []
+        for ot, *values in conn.execute("SELECT OT, Cliente, Tipo_de_trabajo, Seguimiento FROM maximo"):
+            normalized = [normalize_filter_value(value) if value is not None else None for value in values]
+            if normalized != values:
+                changes.append((*normalized, ot))
+        if changes:
+            database = Path(conn.execute("PRAGMA database_list").fetchone()[2]).resolve()
+            folder = database.parent / "backups"
+            folder.mkdir(parents=True, exist_ok=True)
+            backup = folder / f"{database.stem}-before-normalization-{uuid4().hex}.db"
+            # Otra conexión de lectura puede copiar el estado confirmado mientras
+            # BEGIN IMMEDIATE impide que otro escritor cambie los datos originales.
+            with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as source, \
+                 closing(sqlite3.connect(backup)) as destination:
+                source.backup(destination)
+            logging.info("Copia previa a normalización: %s", backup)
+            conn.executemany("UPDATE maximo SET Cliente=?, Tipo_de_trabajo=?, Seguimiento=? WHERE OT=?", changes)
+        conn.execute("INSERT INTO client_migrations (name) VALUES (?)", (migration,))
+        conn.commit()
+        logging.info("Normalización de categorías: %d OT actualizadas", len(changes))
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def update_database_from_df(df):
+    init_db()  # Incluye la migración antes de importar.
     conn = get_connection()
     cur = conn.cursor()
-
-    init_db()  # por si acaso
 
     new_entries = 0
     updated_entries = 0
@@ -46,6 +86,8 @@ def update_database_from_df(df):
         existing = cur.fetchone()
 
         new_data = tuple("" if v is None else str(v).replace(' ', ' ').strip() for v in row[1:])
+        new_data = tuple(normalize_filter_value(value) if index in (3, 4, 5) else value
+                         for index, value in enumerate(new_data))
 
         if existing:
             existing_data = tuple("" if v is None else str(v).replace(' ', ' ').strip() for v in existing[1:])
@@ -80,6 +122,7 @@ def update_database_from_df(df):
 
 
 def update_seguimiento(ot: str, value: str):
+    value = normalize_filter_value(value)
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("UPDATE maximo SET Seguimiento = ? WHERE OT = ?", (value, ot))

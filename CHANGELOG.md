@@ -1,5 +1,20 @@
 # Historial de cambios
 
+## 0.9.5.2 — Normalización al guardar y migración local
+
+- Se normalizan los espacios en cliente, tipo de trabajo y seguimiento antes
+  de importar en SQLite, así como en los cambios manuales de seguimiento.
+- Migración única al inicializar la BD: corrige también las OT históricas que
+  ya no aparecen en las descargas. Conserva NULL y el resto de columnas.
+- Antes de modificar registros existentes, crea una copia completa de SQLite
+  mediante su API de backup en `backups/`, junto a la base de datos. Si la copia
+  falla, no modifica los registros. La actualización y su marca de migración
+  se confirman en una sola transacción; no se repiten en siguientes arranques.
+- La limpieza automática no elimina estas copias. Para recuperar los valores
+  previos hay que cerrar la aplicación y restaurar la copia de la BD; revertir
+  el código mediante Git no revierte los datos. Se conservan las protecciones
+  de normalización al consultar y al cargar perfiles.
+
 ## 0.9.5.1 — Opciones duplicadas por espacios invisibles
 
 - Normalización de espacios normales/no separables, repetidos y exteriores en
