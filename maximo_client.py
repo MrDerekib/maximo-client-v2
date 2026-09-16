@@ -5,7 +5,9 @@ import shutil
 import pandas as pd
 import logging
 import tempfile
-from config import load_config, get_credentials, DATA_DIR
+from pathlib import Path
+from uuid import uuid4
+from config import load_config, get_credentials
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -13,10 +15,29 @@ from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import StaleElementReferenceException
+
+PAGE_TIMEOUT = 60
+DOWNLOAD_TIMEOUT = 180
 
 
-def setup_driver(headless=True, profile_dir=None):
+def wait_for(driver, condition, description, timeout=PAGE_TIMEOUT):
+    """Espera solo hasta que se cumple la condición y registra el tiempo real."""
+    started = time.monotonic()
+    try:
+        return WebDriverWait(
+            driver, timeout, poll_frequency=0.25,
+            ignored_exceptions=(StaleElementReferenceException,),
+        ).until(condition)
+    except TimeoutException as exc:
+        raise TimeoutException(
+            f"Tiempo agotado ({timeout}s): {description}"
+        ) from exc
+    finally:
+        logging.info("Espera %s: %.2fs", description, time.monotonic() - started)
+
+
+def setup_driver(headless=True, profile_dir=None, download_dir=None):
     cfg = load_config()
     logging.info("Inicializando Edge...")
 
@@ -37,9 +58,20 @@ def setup_driver(headless=True, profile_dir=None):
     options.add_argument(f"--user-data-dir={profile_dir}")
 
     # Descarga por defecto
-    options.add_argument(f"--download-default-directory={cfg.download_dir}")
+    target_dir = Path(download_dir or cfg.download_dir).resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    options.add_experimental_option("prefs", {
+        "download.default_directory": str(target_dir),
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+    })
 
     driver = webdriver.Edge(options=options)
+    try:
+        driver.set_page_load_timeout(PAGE_TIMEOUT)
+    except Exception:
+        driver.quit()
+        raise
     logging.info("Navegador inicializado.")
     return driver
 
@@ -56,16 +88,16 @@ def login(driver, headless=True):
     max_attempts = 3
     for attempt in range(max_attempts):
         logging.info(f"Cargando página de login (intento {attempt+1}/{max_attempts})...")
-        driver.get(url)
-        if headless:
-            driver.set_window_position(-32000, -32000)
-        time.sleep(1)
-        body_text = driver.find_element(By.TAG_NAME, "body").text
-        if "Maximo" in driver.title and len(body_text) > 50:
+        try:
+            driver.get(url)
+            wait_for(driver, EC.element_to_be_clickable((By.ID, "username")),
+                     "formulario de login")
+            wait_for(driver, EC.element_to_be_clickable((By.ID, "password")),
+                     "campo de contraseña")
             break
-        if attempt == max_attempts - 1:
-            logging.warning("No se pudo cargar la página de login")
-            raise RuntimeError("No se pudo cargar la página de login.")
+        except TimeoutException:
+            if attempt == max_attempts - 1:
+                raise RuntimeError("No se pudo cargar la página de login.")
 
 
     logging.info("Ingresando credenciales...")
@@ -74,32 +106,29 @@ def login(driver, headless=True):
     driver.find_element(By.ID, "password").clear()
     driver.find_element(By.ID, "password").send_keys(password + Keys.RETURN)
 
-    # Damos unos segundos para que Maximo muestre el posible mensaje de error
-    time.sleep(5)
-    if headless:
-        driver.set_window_position(-32000, -32000)
-
-    # Comprobar el mensaje de error BMXAA7901E en <div class="errorText">
-    try:
-        error_div = driver.find_element(By.CLASS_NAME, "errorText")
-        error_message = error_div.text.strip() if error_div else ""
-        if "BMXAA7901E" in error_message:
-            # Este es exactamente el mensaje de tu captura:
-            # "BMXAA7901E - No se puede iniciar sesión en este momento..."
+    def logged_in(browser):
+        for error_div in browser.find_elements(By.CLASS_NAME, "errorText"):
+            if not error_div.is_displayed() or not error_div.text.strip():
+                continue
             raise RuntimeError(
                 "Login rechazado por Maximo, compruebe que sus credenciales son correctas y Máximo funciona correctamente."
             )
-    except NoSuchElementException:
-        # No hay div de error -> asumimos que el login ha ido bien
-        logging.info("Login exitoso. Continuando...")
+        return (
+            EC.invisibility_of_element_located((By.ID, "username"))(browser)
+            and browser.execute_script("return typeof sendEvent === 'function';")
+        )
+
+    wait_for(driver, logged_in, "inicio de sesión")
+    logging.info("Login exitoso. Continuando...")
 
 
 def open_workorders_app(driver, headless=True):
     logging.info("Accediendo a la sección de filtros...")
-    time.sleep(2)
-    ##driver.find_element(By.ID, "FavoriteApp_WO_TR").click()
     driver.execute_script("sendEvent('changeapp','startcntr','WO_TR',3);")
-    time.sleep(12)
+    wait_for(driver, EC.element_to_be_clickable((By.ID, "mx38-lb4")),
+             "listado de órdenes de trabajo")
+    wait_for(driver, EC.element_to_be_clickable((By.ID, "quicksearch")),
+             "búsqueda de órdenes de trabajo")
     if headless:
         driver.set_window_position(-32000, -32000)
     logging.info("Sección de filtros abierta.")
@@ -120,36 +149,56 @@ def apply_filter(driver):
     logging.info("Filtros aplicados.")
 
 
-def download_file(driver):
+def download_file(driver, download_dir, timeout=DOWNLOAD_TIMEOUT):
     logging.info("Descargando archivo...")
-    time.sleep(10)
-    download_button = driver.find_element(By.ID, "mx38-lb4")
+    folder = Path(download_dir)
+    previous_files = set(folder.iterdir())
+    download_button = wait_for(
+        driver, EC.element_to_be_clickable((By.ID, "mx38-lb4")),
+        "botón de descarga",
+    )
     driver.execute_script("arguments[0].click();", download_button)
-    time.sleep(45)
-    logging.info("Archivo descargado.")
+    observations = {}
+
+    def completed(_):
+        files = set(folder.iterdir()) - previous_files
+        # Edge mantiene .crdownload hasta finalizar la descarga.
+        if any(p.suffix.lower() in (".crdownload", ".tmp", ".part") for p in files):
+            observations.clear()
+            return False
+        for path in sorted(files):
+            if path.suffix.lower() != ".xls" or not path.is_file():
+                continue
+            try:
+                stat = path.stat()
+                signature = (stat.st_size, stat.st_mtime_ns)
+                stable = observations.get(path) == signature
+                observations[path] = signature
+                if stat.st_size and stable:
+                    with path.open("rb") as stream:
+                        stream.read(1)
+                    return str(path)
+            except OSError:
+                observations.pop(path, None)
+        return False
+
+    file_path = wait_for(driver, completed, "finalización de la descarga XLS", timeout)
+    logging.info("Archivo descargado: %s", file_path)
+    return file_path
 
 
-def move_latest_file():
+def move_downloaded_file(file_path):
+    """Archiva exclusivamente el archivo devuelto por download_file."""
     cfg = load_config()
-    download_dir = cfg.download_dir
     dest_folder = cfg.dest_folder
     os.makedirs(dest_folder, exist_ok=True)
 
     logging.info("Moviendo archivo descargado...")
-    files = sorted(
-        [f for f in os.listdir(download_dir) if f.endswith(".xls")],
-        key=lambda x: os.path.getctime(os.path.join(download_dir, x)),
-        reverse=True
-    )
-    if not files:
-        logging.warning("No se encontró archivo .xls en la carpeta de descargas.")
-        return None
-
-    latest_file = os.path.join(download_dir, files[0])
-    new_location = os.path.join(dest_folder, files[0])
-    shutil.move(latest_file, new_location)
+    source = Path(file_path)
+    new_location = Path(dest_folder) / f"{source.stem}-{uuid4().hex}{source.suffix}"
+    shutil.move(str(source), str(new_location))
     logging.info(f"Archivo movido a {new_location}")
-    return new_location
+    return str(new_location)
 
 
 def process_html_table(file_path):
@@ -186,16 +235,19 @@ def open_ot(ot: str, headless: bool = False):
     profile_dir = tempfile.mkdtemp(prefix="maximo-ot-")
     logging.info(f"OT {ot}: usando perfil temporal {profile_dir}")
 
-    driver = setup_driver(headless=headless, profile_dir=profile_dir)
+    driver = None
     try:
+        driver = setup_driver(headless=headless, profile_dir=profile_dir)
         login(driver, headless=headless)
         logging.info("Login OK, abriendo aplicación de órdenes de trabajo favoritas...")
 
         open_workorders_app(driver, headless=headless)
 
-        wait = WebDriverWait(driver, 30)
         try:
-            search_box = wait.until(EC.presence_of_element_located((By.ID, "quicksearch")))
+            search_box = wait_for(
+                driver, EC.element_to_be_clickable((By.ID, "quicksearch")),
+                "búsqueda rápida de OT",
+            )
         except TimeoutException:
             logging.warning("No se encontró el cuadro de búsqueda rápida (id 'quicksearch')")
             raise RuntimeError(
@@ -210,7 +262,8 @@ def open_ot(ot: str, headless: bool = False):
         logging.info(f"OT {ot} enviada a Maximo.")
 
         if headless:
-            driver.quit()
+            if driver is not None:
+                driver.quit()
             shutil.rmtree(profile_dir, ignore_errors=True)
             logging.info(f"OT {ot}: navegador cerrado y perfil {profile_dir} eliminado (headless)")
             return None

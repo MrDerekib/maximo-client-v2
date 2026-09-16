@@ -47,6 +47,7 @@ class MaximoApp(tk.Tk):
 
         self.cfg: AppConfig = load_config()
         self.auto_update_job = None  # ID del after() del auto-update
+        self.update_lock = threading.Lock()
         self.ot_sessions = []  # sesiones Edge visibles (OT)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(500, lambda: self.check_updates(notify_popup=True))
@@ -432,9 +433,19 @@ class MaximoApp(tk.Tk):
         if not self._ensure_credentials():
             return
 
+        if not self.update_lock.acquire(blocking=False):
+            logging.info("Actualización omitida: ya hay una en curso.")
+            if show_popup:
+                messagebox.showinfo("Actualización", "Ya hay una actualización en curso.")
+            return
+
         t = threading.Thread(target=self._update_now_worker,
                              args=(show_popup,), daemon=True)
-        t.start()
+        try:
+            t.start()
+        except Exception:
+            self.update_lock.release()
+            raise
 
 
 
@@ -496,6 +507,8 @@ class MaximoApp(tk.Tk):
                     self.status_var.set("❌ Error en la última actualización.")
 
             self.after(0, on_error)
+        finally:
+            self.update_lock.release()
 
 
 
