@@ -10,6 +10,7 @@ from maximo_client import (
 )
 from db import update_database_from_df
 from config import load_config
+from maintenance import cleanup_exports
 from pathlib import Path
 import logging
 import tempfile
@@ -46,6 +47,7 @@ def run_update(headless=True):
         df = _timed("procesar XLS", process_html_table, file_path)
         new_entries, updated_entries = _timed("sincronizar BD", update_database_from_df, df)
         logging.info("Actualización de base de datos completada.")
+        cleanup_exports(Path(file_path).parent)
         return new_entries, updated_entries
     finally:
         try:

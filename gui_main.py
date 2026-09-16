@@ -11,6 +11,8 @@ from db import fetch_data, init_db, update_seguimiento
 from maximo_client import open_ot
 from updater import run_update
 import logging
+from logging.handlers import RotatingFileHandler
+from maintenance import run_maintenance
 import version
 from update_checker import fetch_latest_release, is_newer, format_version_tag
 from pathlib import Path
@@ -21,7 +23,9 @@ logging.basicConfig(
     level=logging.DEBUG,  # Establece el nivel de detalle
     format="%(asctime)s - %(levelname)s - %(message)s",  # Formato del log
     handlers=[
-        logging.FileHandler("maximo_client.log"),  # Guarda el log en archivo
+        RotatingFileHandler(Path(BASE_DIR) / "maximo_client.log",
+                            maxBytes=5 * 1024 * 1024, backupCount=3,
+                            encoding="utf-8", delay=True),
         logging.StreamHandler()  # También muestra los logs en consola
     ]
 )
@@ -56,6 +60,7 @@ class MaximoApp(tk.Tk):
         self._build_ui()
         self._load_config_into_ui()
         self.update_table()
+        threading.Thread(target=run_maintenance, args=(self.cfg,), daemon=True).start()
 
         # Si al arrancar no hay credenciales, abrimos directamente la pestaña de config
         if not self.cfg.username or not self.cfg.password:

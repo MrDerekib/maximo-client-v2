@@ -19,4 +19,5 @@ chromedriver*
 
 # Archivos temporales
 *.log
+*.log.[0-9]*
 *.tmp

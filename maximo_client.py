@@ -195,7 +195,7 @@ def move_downloaded_file(file_path):
 
     logging.info("Moviendo archivo descargado...")
     source = Path(file_path)
-    new_location = Path(dest_folder) / f"{source.stem}-{uuid4().hex}{source.suffix}"
+    new_location = Path(dest_folder) / f"maximo-export-{uuid4().hex}.xls"
     shutil.move(str(source), str(new_location))
     logging.info(f"Archivo movido a {new_location}")
     return str(new_location)

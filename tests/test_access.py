@@ -10,7 +10,7 @@ from selenium.common.exceptions import TimeoutException, StaleElementReferenceEx
 
 import maximo_client as client
 import updater
-with patch("logging.FileHandler", return_value=logging.NullHandler()), patch("logging.basicConfig"):
+with patch("logging.handlers.RotatingFileHandler", return_value=logging.NullHandler()), patch("logging.basicConfig"):
     import gui_main
 
 

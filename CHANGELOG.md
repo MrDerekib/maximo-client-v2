@@ -1,5 +1,27 @@
 # Historial de cambios
 
+## 0.9.4 — Limpieza automática
+
+- Al iniciar, en segundo plano, y después de importar correctamente, se eliminan
+  exportaciones antiguas de la carpeta configurada. Se conservan las cinco más
+  recientes y todas las del último día. Solo se reconocen los nombres numéricos
+  de ocho dígitos de versiones anteriores (con UUID opcional) y los nuevos
+  `maximo-export-<uuid>.xls`. Otros nombres se conservan.
+- Al iniciar se revisan las carpetas `maximo-ot-*`, `maximo-update-*`,
+  `maximo-edge-*` y `maximo-download-*` del temporal de Windows y de la carpeta de
+  descargas configurada. Solo se eliminan las de más de siete días que no estén
+  usadas por procesos Edge. Si no se pueden consultar los procesos, se omite la
+  limpieza. No se siguen enlaces ni junctions.
+- Las sesiones actuales mantienen su limpieza al finalizar; las carpetas
+  antiguas bloqueadas se conservan para intentar limpiarlas en otro arranque.
+- Log rotativo junto al programa: 5 MiB por archivo y tres copias anteriores
+  (aproximadamente 20 MiB en total). Los logs existentes en otros directorios
+  permanecen intactos. Los archivos de log rotados se excluyen de Git.
+- No se modifica la base de datos, la configuración ni el seguimiento local.
+- Versión anterior: commit `6d39afb`. La reversión del código no recupera los
+  archivos eliminados por la limpieza. La política se aplica al ejecutar esta
+  versión; las pruebas solo limpian carpetas creadas para los tests.
+
 ## 0.9.3 — Optimización de acceso a Máximo
 
 - Login y apertura del listado con esperas condicionadas (hasta 60 segundos por
