@@ -17,22 +17,23 @@ class LatestRelease:
 
 
 
-def _parse_version(v: str) -> tuple[int, int, int]:
+def _parse_version(v: str) -> tuple[int, int, int, int]:
     """
-    Extrae la primera versión estilo X.Y o X.Y.Z de un tag tipo:
+    Extrae la primera versión estilo X.Y, X.Y.Z o X.Y.Z.R de un tag tipo:
     'v0.8.3', 'v.0.8.3', 'release-0.8.3', '0.8.3', etc.
     """
     v = (v or "").strip()
 
     # Busca un patrón de versión dentro del string
-    m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", v)
+    m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?", v)
     if not m:
-        return (0, 0, 0)
+        return (0, 0, 0, 0)
 
     major = int(m.group(1))
     minor = int(m.group(2))
     patch = int(m.group(3) or 0)
-    return (major, minor, patch)
+    revision = int(m.group(4) or 0)
+    return (major, minor, patch, revision)
 
 
 def is_newer(remote_tag: str, local_version: str) -> bool:
@@ -55,12 +56,13 @@ def fetch_latest_release(timeout_sec: int = 5) -> LatestRelease:
 
 def format_version_tag(tag: str) -> str:
     """
-    Devuelve una versión bonita para UI: siempre 'vX.Y.Z'
+    Devuelve 'vX.Y.Z', conservando '.R' cuando el tag incluye una revisión.
     Acepta '0.8.3', 'v0.8.3', 'v.0.8.3', 'release-0.8.3', etc.
     """
     tag = (tag or "").strip()
-    m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", tag)
+    m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?", tag)
     if not m:
         return tag  # fallback: lo devolvemos tal cual
     major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
-    return f"v{major}.{minor}.{patch}"
+    revision = f".{int(m.group(4))}" if m.group(4) is not None else ""
+    return f"v{major}.{minor}.{patch}{revision}"

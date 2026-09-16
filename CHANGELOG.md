@@ -1,6 +1,12 @@
 # Historial de cambios
 
-## 0.9.5 — Diagnóstico de limpieza y reintentos
+Las correcciones menores usan un cuarto número: `0.9.4.1`, `0.9.4.2`, etc.
+Se mantienen commits independientes para poder revertir cada cambio.
+
+## 0.9.4.1 — Diagnóstico de limpieza y reintentos
+
+- Renombrada desde la versión local 0.9.5 (no publicada). El comparador de
+  actualizaciones y la interfaz reconocen el cuarto número de revisión.
 
 - Los errores de limpieza incluyen el motivo exacto de Windows y la ruta que
   falló. No se modifican permisos ni se fuerza la eliminación de archivos.
