@@ -22,8 +22,9 @@ def setup_driver(headless=True, profile_dir=None):
 
     options = EdgeOptions()
     if headless:
-        options.add_argument("--headless")
+        options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
+        options.add_argument("--window-position=-32000,-32000")
     options.add_argument("--no-sandbox")
 
     # PERFIL AISLADO (clave para que quit() no mate otras ventanas)
@@ -43,7 +44,7 @@ def setup_driver(headless=True, profile_dir=None):
     return driver
 
 
-def login(driver):
+def login(driver, headless=True):
     cfg = load_config()
     username, password = get_credentials()
     if not username or not password:
@@ -56,6 +57,8 @@ def login(driver):
     for attempt in range(max_attempts):
         logging.info(f"Cargando página de login (intento {attempt+1}/{max_attempts})...")
         driver.get(url)
+        if headless:
+            driver.set_window_position(-32000, -32000)
         time.sleep(1)
         body_text = driver.find_element(By.TAG_NAME, "body").text
         if "Maximo" in driver.title and len(body_text) > 50:
@@ -73,6 +76,8 @@ def login(driver):
 
     # Damos unos segundos para que Maximo muestre el posible mensaje de error
     time.sleep(5)
+    if headless:
+        driver.set_window_position(-32000, -32000)
 
     # Comprobar el mensaje de error BMXAA7901E en <div class="errorText">
     try:
@@ -89,12 +94,14 @@ def login(driver):
         logging.info("Login exitoso. Continuando...")
 
 
-def open_workorders_app(driver):
+def open_workorders_app(driver, headless=True):
     logging.info("Accediendo a la sección de filtros...")
     time.sleep(2)
     ##driver.find_element(By.ID, "FavoriteApp_WO_TR").click()
     driver.execute_script("sendEvent('changeapp','startcntr','WO_TR',3);")
     time.sleep(12)
+    if headless:
+        driver.set_window_position(-32000, -32000)
     logging.info("Sección de filtros abierta.")
 
 
@@ -181,10 +188,10 @@ def open_ot(ot: str, headless: bool = False):
 
     driver = setup_driver(headless=headless, profile_dir=profile_dir)
     try:
-        login(driver)
+        login(driver, headless=headless)
         logging.info("Login OK, abriendo aplicación de órdenes de trabajo favoritas...")
 
-        open_workorders_app(driver)
+        open_workorders_app(driver, headless=headless)
 
         wait = WebDriverWait(driver, 30)
         try:

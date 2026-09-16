@@ -7,7 +7,7 @@ from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
 
 from config import load_config, save_config, set_credentials, AppConfig, credentials_configured, BASE_DIR, DATA_DIR
-from db import fetch_data, init_db
+from db import fetch_data, init_db, update_seguimiento
 from maximo_client import open_ot
 from updater import run_update
 import logging
@@ -193,12 +193,19 @@ class MaximoApp(tk.Tk):
         self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
 
-        # Menú contextual copiar
+        # Menú contextual
         self._build_context_menu()
+
+    @property
+    def SEGUIMIENTO_VALUES(self):
+        path = Path(BASE_DIR) / "seguimiento_options.txt"
+        try:
+            return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        except FileNotFoundError:
+            return []
 
     def _build_context_menu(self):
         self.context_menu = tk.Menu(self, tearoff=0)
-        self.context_menu.add_command(label="Copiar", command=self.copy_cell_to_clipboard)
         self.selected_column_index = 0
 
         def on_right_click(event):
@@ -206,6 +213,20 @@ class MaximoApp(tk.Tk):
             if region == "cell":
                 col = self.tree.identify_column(event.x)
                 self.selected_column_index = int(col[1:]) - 1
+
+                self.context_menu.delete(0, "end")
+                self.context_menu.add_command(
+                    label="Copiar", command=self.copy_cell_to_clipboard
+                )
+
+                if (self.selected_column_index < len(self.columns)
+                        and self.columns[self.selected_column_index] == "Seguimiento"):
+                    self.context_menu.add_separator()
+                    self.context_menu.add_command(
+                        label="Cambiar seguimiento...",
+                        command=self.change_seguimiento
+                    )
+
                 self.context_menu.tk_popup(event.x_root, event.y_root)
 
         self.tree.bind("<Button-3>", on_right_click)
@@ -348,6 +369,62 @@ class MaximoApp(tk.Tk):
             self.clipboard_append(value)
             self.update()
             messagebox.showinfo("Copiado", f"Se copió: {value}")
+
+    def change_seguimiento(self):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        values = self.tree.item(selected[0], "values")
+        if not values:
+            return
+        ot = values[0]
+        current_seguimiento = values[6] if len(values) > 6 else ""
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Cambiar seguimiento")
+        dialog.geometry("400x220")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text=f"OT: {ot}", font=("", 10, "bold")).pack(pady=(10, 0))
+        ttk.Label(dialog, text=f"Actual: {current_seguimiento or '(vacío)'}").pack(pady=2)
+        ttk.Label(dialog, text="Nuevo valor:").pack(pady=(10, 0))
+
+        var = tk.StringVar()
+        combo = ttk.Combobox(
+            dialog, textvariable=var, values=self.SEGUIMIENTO_VALUES,
+            state="readonly", width=30
+        )
+        combo.pack(pady=5)
+        if current_seguimiento in self.SEGUIMIENTO_VALUES:
+            combo.set(current_seguimiento)
+
+        def on_accept():
+            new_value = var.get().strip()
+            if not new_value:
+                messagebox.showwarning("Selección requerida", "Selecciona un valor.", parent=dialog)
+                return
+            if not messagebox.askyesno(
+                "Confirmar cambio",
+                f"OT: {ot}\n"
+                f"Seguimiento actual: {current_seguimiento or '(vacío)'}\n"
+                f"Nuevo seguimiento: {new_value}\n\n"
+                "¿Aplicar cambio?",
+                parent=dialog
+            ):
+                return
+            update_seguimiento(ot, new_value)
+            dialog.destroy()
+            self.update_table()
+
+        def on_cancel():
+            dialog.destroy()
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=(15, 10))
+        ttk.Button(btn_frame, text="Aceptar", command=on_accept).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Cancelar", command=on_cancel).pack(side="left", padx=5)
 
     # ---------- Actualización (manual / auto) ----------
     def update_now_threaded(self, show_popup: bool = True):

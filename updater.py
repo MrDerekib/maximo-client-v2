@@ -20,10 +20,12 @@ def run_update(headless=True):
     driver = None
     try:
         driver = setup_driver(headless=headless, profile_dir=profile_dir)
-        login(driver)
-        open_workorders_app(driver)
+        login(driver, headless=headless)
+        open_workorders_app(driver, headless=headless)
         ##apply_filter(driver)
         download_file(driver)
+        if headless:
+            driver.set_window_position(-32000, -32000)
         file_path = move_latest_file()
         if not file_path:
             logging.warning("No se pudo mover el archivo descargado. Abortando actualización.")

@@ -78,6 +78,15 @@ def update_database_from_df(df):
 
 
 
+def update_seguimiento(ot: str, value: str):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE maximo SET Seguimiento = ? WHERE OT = ?", (value, ot))
+    conn.commit()
+    conn.close()
+    logging.info(f"BD: Seguimiento actualizado OT={ot} -> {value}")
+
+
 def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str]) -> List[Tuple]:
 
     filter_words = filter_text.strip().split()
