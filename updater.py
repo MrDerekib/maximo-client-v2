@@ -89,8 +89,22 @@ def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
             try:
                 status = read_workorder_status(driver, ot)
                 if apply_reconciled_status(ot, status):
-                    changed += int(bool(status and status != previous_status))
-                    logging.info("OT inactiva %s conciliada con estado: %s", ot, status or "(vacío)")
+                    if status and status != previous_status:
+                        changed += 1
+                        logging.info(
+                            "OT inactiva %s: seguimiento %s -> %s",
+                            ot, previous_status, status,
+                        )
+                    elif status:
+                        logging.info(
+                            "OT inactiva %s: estado confirmado sin cambios (%s)",
+                            ot, status,
+                        )
+                    else:
+                        logging.warning(
+                            "OT inactiva %s: Maximo no devolvió un estado; se reintentará en 24 h.",
+                            ot,
+                        )
             except Exception as exc:
                 logging.warning("No se pudo conciliar la OT inactiva %s: %s", ot, exc)
     finally:
