@@ -1,5 +1,15 @@
 # Historial de cambios
 
+## 0.9.7 — Comprobación de credenciales
+
+- Nuevo botón «Probar credenciales» en Configuración. Comprueba el acceso a
+  Maximo con los valores escritos, sin guardarlos ni actualizar la base de datos.
+  Ejecuta Edge en segundo plano con un perfil temporal que se cierra y elimina
+  siempre. El resultado se muestra en la barra de estado y en un mensaje claro.
+- La prueba no sobrescribe las credenciales ya guardadas, ni siquiera si falla.
+  Tras una comprobación correcta, el usuario decide si desea conservar los
+  valores mediante «Guardar configuración».
+
 ## 0.9.6.1 — Registro del arranque
 
 - El inicio fuerza la configuración del registro de la aplicación incluso si

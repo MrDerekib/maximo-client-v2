@@ -76,9 +76,10 @@ def setup_driver(headless=True, profile_dir=None, download_dir=None):
     return driver
 
 
-def login(driver, headless=True):
+def login(driver, headless=True, username=None, password=None):
     cfg = load_config()
-    username, password = get_credentials()
+    if username is None or password is None:
+        username, password = get_credentials()
     if not username or not password:
         logging.warning("No hay credenciales configuradas.")
         raise RuntimeError("No hay credenciales configuradas.")
@@ -120,6 +121,26 @@ def login(driver, headless=True):
 
     wait_for(driver, logged_in, "inicio de sesión")
     logging.info("Login exitoso. Continuando...")
+
+
+def verify_credentials(username: str, password: str) -> None:
+    """Comprueba un login sin guardar credenciales ni modificar datos locales."""
+    if not username.strip() or not password:
+        raise ValueError("Introduce usuario y contraseña antes de comprobarlos.")
+
+    profile_dir = tempfile.mkdtemp(prefix="maximo-credential-test-")
+    driver = None
+    try:
+        logging.info("Comprobando credenciales de Maximo...")
+        driver = setup_driver(headless=True, profile_dir=profile_dir)
+        login(driver, headless=True, username=username.strip(), password=password)
+        logging.info("Credenciales de Maximo verificadas correctamente.")
+    finally:
+        try:
+            if driver is not None:
+                driver.quit()
+        finally:
+            shutil.rmtree(profile_dir, ignore_errors=True)
 
 
 def open_workorders_app(driver, headless=True):

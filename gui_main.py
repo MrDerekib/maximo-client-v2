@@ -14,7 +14,7 @@ from app_paths import (
     TRACKING_OPTIONS_PATH,
 )
 from db import fetch_data, init_db, update_seguimiento
-from maximo_client import open_ot
+from maximo_client import open_ot, verify_credentials
 from updater import run_update
 from filter_panel import FilterPanel
 import logging
@@ -64,6 +64,7 @@ class MaximoApp(tk.Tk):
         self.cfg: AppConfig = load_config()
         self.auto_update_job = None  # ID del after() del auto-update
         self.update_lock = threading.Lock()
+        self.credential_test_lock = threading.Lock()
         self.ot_sessions = []  # sesiones Edge visibles (OT)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(500, lambda: self.check_updates(notify_popup=True))
@@ -279,7 +280,13 @@ class MaximoApp(tk.Tk):
         ttk.Entry(form, textvariable=self.interval_var, width=10).grid(row=3, column=1, sticky="w", padx=5, pady=5)
 
         ttk.Button(form, text="Guardar configuración", command=self.save_config_from_ui) \
-            .grid(row=4, column=0, columnspan=2, pady=15)
+            .grid(row=4, column=0, padx=5, pady=15, sticky="e")
+        self.btn_test_credentials = ttk.Button(
+            form,
+            text="Probar credenciales",
+            command=self.test_credentials_threaded,
+        )
+        self.btn_test_credentials.grid(row=4, column=1, padx=5, pady=15, sticky="w")
 
         # Subframe 2: actualizaciones (PACK)
         update_frame = ttk.LabelFrame(frame, text="Actualizaciones")
@@ -337,7 +344,7 @@ class MaximoApp(tk.Tk):
 
     def save_config_from_ui(self):
         self.cfg.username = self.user_var.get().strip()
-        self.cfg.password = self.pass_var.get().strip()
+        self.cfg.password = self.pass_var.get()
         self.cfg.auto_update_enabled = self.auto_update_var.get()
         self.cfg.auto_update_interval_min = max(1, self.interval_var.get() or 5)
 
@@ -348,6 +355,60 @@ class MaximoApp(tk.Tk):
 
         # Siempre reconfiguramos el auto-update según la nueva config
         self.schedule_auto_update()
+
+    def test_credentials_threaded(self):
+        """Prueba los valores escritos sin persistirlos ni bloquear la interfaz."""
+        username = self.user_var.get().strip()
+        password = self.pass_var.get()
+        if not username or not password:
+            messagebox.showwarning(
+                "Credenciales necesarias",
+                "Introduce usuario y contraseña antes de comprobarlos.",
+                parent=self,
+            )
+            return
+        if not self.credential_test_lock.acquire(blocking=False):
+            messagebox.showinfo(
+                "Comprobación en curso",
+                "Ya se están comprobando las credenciales.",
+                parent=self,
+            )
+            return
+
+        self.btn_test_credentials.configure(state="disabled")
+        self.status_var.set("Comprobando credenciales de Maximo…")
+
+        def worker():
+            try:
+                verify_credentials(username, password)
+            except Exception as exc:
+                logging.info("Comprobación de credenciales fallida: %s", exc)
+                self.after(0, lambda: self._finish_credential_test(False, str(exc)))
+            else:
+                self.after(0, lambda: self._finish_credential_test(True, ""))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_credential_test(self, success: bool, error: str):
+        self.credential_test_lock.release()
+        self.btn_test_credentials.configure(state="normal")
+        if success:
+            self.status_var.set("✓ Credenciales de Maximo verificadas.")
+            messagebox.showinfo(
+                "Credenciales válidas",
+                "El acceso a Maximo se ha comprobado correctamente.\n\n"
+                "La prueba no guarda cambios: pulsa «Guardar configuración» "
+                "si quieres conservar estos valores.",
+                parent=self,
+            )
+            return
+        self.status_var.set("No se pudieron verificar las credenciales.")
+        messagebox.showerror(
+            "No se pudo comprobar el acceso",
+            "Maximo no aceptó las credenciales o no respondió a tiempo.\n\n"
+            f"Detalle: {error}",
+            parent=self,
+        )
 
     def _open_data_folder(self):
         APP_ROOT.mkdir(parents=True, exist_ok=True)

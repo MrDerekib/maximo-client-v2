@@ -152,6 +152,38 @@ class AccessTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Login rechazado"):
                 client.login(driver)
 
+    def test_login_uses_explicit_credentials_without_reading_saved_values(self):
+        driver = Mock()
+        driver.find_elements.return_value = []
+
+        def wait(browser, condition, description, *args):
+            if description == "inicio de sesión":
+                with patch.object(client.EC, "invisibility_of_element_located") as invisible:
+                    invisible.return_value.return_value = True
+                    browser.execute_script.return_value = True
+                    return condition(browser)
+            return Mock()
+
+        with patch.object(client, "load_config", return_value=SimpleNamespace(maximo_url="https://example.invalid")), \
+             patch.object(client, "get_credentials") as saved, \
+             patch.object(client, "wait_for", side_effect=wait):
+            client.login(driver, username="nuevo-usuario", password="clave temporal")
+        saved.assert_not_called()
+        password_field = driver.find_element.call_args_list[-1].args[1]
+        self.assertEqual(password_field, "password")
+
+    def test_verify_credentials_closes_driver_and_profile(self):
+        driver = Mock()
+        with patch.object(client.tempfile, "mkdtemp", return_value="C:/test-profile"), \
+             patch.object(client, "setup_driver", return_value=driver) as setup, \
+             patch.object(client, "login") as login, \
+             patch.object(client.shutil, "rmtree") as cleanup:
+            client.verify_credentials(" usuario ", "clave temporal")
+        setup.assert_called_once_with(headless=True, profile_dir="C:/test-profile")
+        login.assert_called_once_with(driver, headless=True, username="usuario", password="clave temporal")
+        driver.quit.assert_called_once()
+        cleanup.assert_called_once_with("C:/test-profile", ignore_errors=True)
+
     def test_failed_download_never_updates_database_and_cleans_up(self):
         with tempfile.TemporaryDirectory() as directory:
             driver = Mock()

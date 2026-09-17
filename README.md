@@ -8,7 +8,7 @@ Es una herramienta **interna de productividad**, diseñada para simplificar el a
 
 ## 🧩 Funcionalidades principales
 
-- 🔐 Gestión de credenciales de IBM Maximo desde la GUI
+- 🔐 Gestión y comprobación de credenciales de IBM Maximo desde la GUI
 - 📥 Descarga automática del listado de OT desde Maximo (vía Selenium)
 - 🗃️ Almacenamiento local en base de datos SQLite
 - 🔄 Actualización manual y automática en segundo plano
