@@ -214,11 +214,6 @@ def process_html_table(file_path):
     df["Planta"] = df["Planta"].fillna("").astype(str).str.strip()
     df = df.where(pd.notnull(df), None)
 
-    # Clientes únicos (para el combo de la GUI)
-    unique_clients = [c.replace(" ", " ").strip() for c in df["Cliente"].dropna().unique().tolist()]
-    with open("clientes_unicos.txt", "w", encoding="utf-8") as f:
-        f.write("\n".join(unique_clients))
-
     logging.info("Archivo procesado.")
     return df
 

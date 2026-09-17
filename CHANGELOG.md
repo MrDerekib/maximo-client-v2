@@ -1,5 +1,24 @@
 # Historial de cambios
 
+## 0.9.6 — Almacenamiento persistente y descargas aisladas
+
+- Nuevo árbol fijo en `%LOCALAPPDATA%\MaximoDesktop`, separado del código y de
+  futuras actualizaciones del ejecutable. La GUI muestra las rutas y permite
+  abrir la carpeta principal; no se añaden selectores editables.
+- La primera ejecución copia la base de datos anterior mediante la API de backup
+  de SQLite y verifica integridad y número de registros antes de activarla.
+  También migra perfiles, backups y opciones de seguimiento. Los originales se
+  conservan y el proceso no se repite una vez completado.
+- Edge descarga cada exportación en una subcarpeta exclusiva dentro de
+  `cache/downloads`, evitando procesar otros Excel de Descargas. Exportaciones,
+  logs y temporales quedan agrupados bajo el mismo árbol.
+- Las credenciales dejan de guardarse en texto plano y se protegen con Windows
+  DPAPI para el usuario actual. Se eliminan del JSON anterior tras verificar la
+  migración y se redactan los logs antiguos. Selenium y urllib3 ya no registran
+  contenido de nivel DEBUG.
+- Se elimina el archivo obsoleto `clientes_unicos.txt`; la GUI obtiene los
+  clientes directamente de SQLite.
+
 ## 0.9.5.2 — Normalización al guardar y migración local
 
 - Se normalizan los espacios en cliente, tipo de trabajo y seguimiento antes

@@ -52,12 +52,10 @@ maximo-client-v2/
 ├── maximo_client.py  # Lógica de interacción con Maximo (Selenium)
 ├── updater.py        # Actualización de base de datos
 ├── db.py             # Acceso a SQLite
-├── config.py         # Configuración, credenciales y rutas
+├── config.py         # Configuración y migración de datos
+├── app_paths.py      # Árbol de rutas persistentes
+├── credential_store.py # Credenciales protegidas con Windows DPAPI
 ├── version.py        # Versión de la aplicación
-│
-├── data/              # Datos locales (DB, exports, etc.)
-│   ├── maximo_data.db
-│   └── exports/
 │
 ├── dist/              # Builds generados por Nuitka (no versionado)
 ├── requirements.txt
@@ -97,14 +95,24 @@ maximo-client-v2/
 
 ## 📂 Rutas y persistencia
 
-La aplicación gestiona sus propios datos locales:
+Los datos se separan del programa en `%LOCALAPPDATA%\MaximoDesktop`. La pestaña
+**Configuración** muestra las rutas efectivas y permite abrir la carpeta principal.
 
-- Configuración (`config.json`)
-- Base de datos SQLite
-- Logs
-- Archivos temporales descargados
+```text
+MaximoDesktop/
+├── config/     # configuración y credenciales protegidas con Windows DPAPI
+├── data/       # SQLite y perfiles de búsqueda
+├── backups/    # copias de seguridad de SQLite
+├── logs/       # logs rotatorios
+├── cache/
+│   ├── downloads/ # descarga aislada usada por Edge/Selenium
+│   ├── exports/   # XLS procesados y sujetos a limpieza
+│   └── updates/
+└── custom/     # opciones locales de seguimiento
+```
 
-Todo se guarda en directorios controlados por la aplicación, sin depender del usuario local ni del directorio de ejecución.
+En el primer arranque de esta versión se copia y verifica la base de datos
+anterior. Los datos originales se conservan para recuperación.
 
 ---
 

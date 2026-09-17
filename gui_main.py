@@ -2,11 +2,17 @@
 import threading
 import shutil
 import tkinter as tk
+import os
 import webbrowser
 from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
 
-from config import load_config, save_config, set_credentials, AppConfig, credentials_configured, BASE_DIR, DATA_DIR
+from config import load_config, save_config, AppConfig, credentials_configured
+from app_paths import (
+    APP_ROOT, BACKUP_DIR, BASE_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR,
+    EXPORT_DIR, LOG_DIR,
+    TRACKING_OPTIONS_PATH,
+)
 from db import fetch_data, init_db, update_seguimiento
 from maximo_client import open_ot
 from updater import run_update
@@ -19,17 +25,19 @@ from update_checker import fetch_latest_release, is_newer, format_version_tag
 from pathlib import Path
 import time
 
-# Configuración básica para los logs
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
-    level=logging.DEBUG,  # Establece el nivel de detalle
-    format="%(asctime)s - %(levelname)s - %(message)s",  # Formato del log
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        RotatingFileHandler(Path(BASE_DIR) / "maximo_client.log",
+        RotatingFileHandler(LOG_DIR / "maximo_client.log",
                             maxBytes=5 * 1024 * 1024, backupCount=3,
                             encoding="utf-8", delay=True),
-        logging.StreamHandler()  # También muestra los logs en consola
+        logging.StreamHandler()
     ]
 )
+logging.getLogger("selenium").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 logging.info(f"App Version: {version.APP_VERSION} - Iniciando la aplicación")
 
@@ -208,7 +216,7 @@ class MaximoApp(tk.Tk):
 
     @property
     def SEGUIMIENTO_VALUES(self):
-        path = Path(BASE_DIR) / "seguimiento_options.txt"
+        path = TRACKING_OPTIONS_PATH
         try:
             return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
         except FileNotFoundError:
@@ -292,6 +300,26 @@ class MaximoApp(tk.Tk):
 
         self._refresh_update_block()
 
+        paths_frame = ttk.LabelFrame(frame, text="Ubicación de los datos")
+        paths_frame.pack(fill="x", padx=10, pady=10)
+        paths = (
+            ("Carpeta principal:", APP_ROOT),
+            ("Configuración:", CONFIG_PATH),
+            ("Base de datos:", DB_PATH),
+            ("Copias de seguridad:", BACKUP_DIR),
+            ("Descargas temporales:", DOWNLOAD_DIR),
+            ("Exportaciones procesadas:", EXPORT_DIR),
+            ("Logs:", LOG_DIR),
+        )
+        for row, (label, path) in enumerate(paths):
+            ttk.Label(paths_frame, text=label).grid(row=row, column=0, sticky="ne", padx=8, pady=2)
+            ttk.Label(paths_frame, text=str(path), wraplength=1150).grid(
+                row=row, column=1, sticky="nw", padx=8, pady=2
+            )
+        ttk.Button(paths_frame, text="Abrir carpeta de datos", command=self._open_data_folder).grid(
+            row=len(paths), column=0, columnspan=2, sticky="w", padx=8, pady=8
+        )
+
         # Añadir el autor después del bloque de actualizaciones
         ttk.Label(frame, text="© Joan Camps (jcamp@indra.es)").pack(anchor="w", padx=10, pady=10)
 
@@ -310,7 +338,6 @@ class MaximoApp(tk.Tk):
         self.cfg.auto_update_enabled = self.auto_update_var.get()
         self.cfg.auto_update_interval_min = max(1, self.interval_var.get() or 5)
 
-        set_credentials(self.cfg.username, self.cfg.password)
         save_config(self.cfg)
 
         messagebox.showinfo("Configuración", "Configuración guardada correctamente.")
@@ -318,6 +345,13 @@ class MaximoApp(tk.Tk):
 
         # Siempre reconfiguramos el auto-update según la nueva config
         self.schedule_auto_update()
+
+    def _open_data_folder(self):
+        APP_ROOT.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(str(APP_ROOT))
+        except (AttributeError, OSError):
+            webbrowser.open(APP_ROOT.as_uri())
 
 
     # ---------- Listado ----------

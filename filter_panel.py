@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
-from config import DATA_DIR
+from app_paths import PROFILES_PATH
 from db import filter_choices
 from search_filters import validate_filters, load_profiles, save_profiles
 
@@ -10,7 +10,7 @@ class FilterPanel(ttk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
-        self.path = DATA_DIR / "search_profiles.json"
+        self.path = PROFILES_PATH
         self.profiles = {}
         self.profiles_error = None
         try:

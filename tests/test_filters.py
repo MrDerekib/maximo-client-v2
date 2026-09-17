@@ -14,6 +14,10 @@ class FilterTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / "data.db"
+        self.backup_dir = Path(self.temp.name) / "backups"
+        self.backup_patch = patch.object(db, "BACKUP_DIR", self.backup_dir)
+        self.backup_patch.start()
+        self.addCleanup(self.backup_patch.stop)
         self.connection_patch = patch.object(db, "get_connection", side_effect=lambda: sqlite3.connect(self.path))
         self.connection_patch.start()
         self.addCleanup(self.connection_patch.stop)
@@ -55,7 +59,7 @@ class FilterTests(unittest.TestCase):
             before = conn.execute("SELECT * FROM maximo ORDER BY OT").fetchall()
             conn.commit()
         db.init_db()
-        backups = list((self.path.parent / "backups").glob("*.db"))
+        backups = list(self.backup_dir.glob("*.db"))
         self.assertEqual(len(backups), 1)
         with closing(sqlite3.connect(backups[0])) as conn:
             self.assertEqual(conn.execute("SELECT * FROM maximo ORDER BY OT").fetchall(), before)
@@ -65,7 +69,7 @@ class FilterTests(unittest.TestCase):
         expected[6] = "DAR SALIDA"
         self.assertEqual(after, [tuple(expected)] + before[1:])
         db.init_db()
-        self.assertEqual(list((self.path.parent / "backups").glob("*.db")), backups)
+        self.assertEqual(list(self.backup_dir.glob("*.db")), backups)
 
     def test_failed_backup_leaves_original_data_and_allows_retry(self):
         with closing(sqlite3.connect(self.path)) as conn:
@@ -148,7 +152,7 @@ class FilterTests(unittest.TestCase):
         root.client_var = tk.StringVar(root, value="Todos")
         root.client_combo = ttk.Combobox(root, textvariable=root.client_var)
         root.update_table = Mock()
-        with patch.object(filter_panel, "DATA_DIR", Path(self.temp.name)):
+        with patch.object(filter_panel, "PROFILES_PATH", Path(self.temp.name) / "search_profiles.json"):
             panel = filter_panel.FilterPanel(root, root)
         panel.pack()
         panel.profiles = {"TMB pendientes": {"search": "", "search_by": "OT", "client": "TMB",
@@ -174,7 +178,7 @@ class FilterTests(unittest.TestCase):
             import gui_main
         with patch.object(gui_main, "load_config", return_value=AppConfig()), \
              patch.object(gui_main.threading, "Thread"), \
-             patch.object(filter_panel, "DATA_DIR", Path(self.temp.name)):
+             patch.object(filter_panel, "PROFILES_PATH", Path(self.temp.name) / "search_profiles.json"):
             app = gui_main.MaximoApp()
             app.withdraw()
             try:

@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 from typing import List, Tuple, Optional
 from config import load_config
+from app_paths import BACKUP_DIR
 from search_filters import normalize_filter_value
 
 
@@ -53,7 +54,7 @@ def _normalize_stored_categories(conn):
                 changes.append((*normalized, ot))
         if changes:
             database = Path(conn.execute("PRAGMA database_list").fetchone()[2]).resolve()
-            folder = database.parent / "backups"
+            folder = BACKUP_DIR
             folder.mkdir(parents=True, exist_ok=True)
             backup = folder / f"{database.stem}-before-normalization-{uuid4().hex}.db"
             # Otra conexión de lectura puede copiar el estado confirmado mientras
