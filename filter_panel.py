@@ -175,8 +175,6 @@ class FilterPanel(ttk.Frame):
         typed = self.variables["equipment"].get().casefold().strip()
         matches = [value for value in self.equipment_values if typed in value.casefold()] if typed else self.equipment_values
         self.equipment_combo["values"] = matches
-        if typed and matches:
-            self.after_idle(lambda: self.equipment_combo.tk.call("ttk::combobox::Post", str(self.equipment_combo)))
 
     def state(self):
         return {"search": self.app.search_var.get(), "search_by": self.app.search_by.get(),
