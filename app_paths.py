@@ -37,6 +37,7 @@ CREDENTIAL_PATH = CONFIG_DIR / "credentials.dat"
 DB_PATH = DATA_DIR / "maximo_data.db"
 PROFILES_PATH = DATA_DIR / "search_profiles.json"
 TRACKING_OPTIONS_PATH = CUSTOM_DIR / "seguimiento_options.txt"
+DEFAULT_TRACKING_OPTIONS_PATH = PROGRAM_DIR / "seguimiento_options.txt"
 
 USER_DIRECTORIES = (
     CONFIG_DIR, DATA_DIR, BACKUP_DIR, LOG_DIR, DOWNLOAD_DIR,

@@ -155,6 +155,15 @@ Instalación de dependencias:
 ```bash
 pip install -r requirements.txt
 ```
+
+Compilación para distribución:
+
+```powershell
+.\build_app.ps1
+```
+
+El resultado se crea en `release\MaximoDesktop-<versión>\*.dist`. Distribuye
+la carpeta `.dist` completa; contiene el ejecutable y sus dependencias.
 ---
 ## 🧪 Estado del proyecto
 

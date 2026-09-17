@@ -25,6 +25,20 @@ class CredentialStoreTests(unittest.TestCase):
 
 
 class StorageMigrationTests(unittest.TestCase):
+    def test_new_installation_copies_default_tracking_options(self):
+        with temporary_directory() as folder:
+            root = Path(folder)
+            default = root / "program" / "seguimiento_options.txt"
+            target = root / "MaximoDesktop" / "custom" / "seguimiento_options.txt"
+            default.parent.mkdir()
+            default.write_text("EN TALLER\nRETENIDO\n", encoding="utf-8")
+
+            with patch.object(config, "DEFAULT_TRACKING_OPTIONS_PATH", default), \
+                 patch.object(config, "TRACKING_OPTIONS_PATH", target):
+                config._ensure_tracking_options()
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "EN TALLER\nRETENIDO\n")
+
     def test_migration_copies_and_verifies_data_and_removes_plaintext_secrets(self):
         with temporary_directory() as folder:
             root = Path(folder)
