@@ -34,7 +34,10 @@ logging.basicConfig(
                             maxBytes=5 * 1024 * 1024, backupCount=3,
                             encoding="utf-8", delay=True),
         logging.StreamHandler()
-    ]
+    ],
+    # Selenium puede haber creado antes un handler de consola. Lo sustituimos
+    # para asegurar el archivo de log y no registrar sus trazas DEBUG.
+    force=True,
 )
 logging.getLogger("selenium").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)

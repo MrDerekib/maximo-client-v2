@@ -1,5 +1,11 @@
 # Historial de cambios
 
+## 0.9.6.1 — Registro del arranque
+
+- El inicio fuerza la configuración del registro de la aplicación incluso si
+  Selenium u otra librería había añadido antes un handler de consola. Los logs
+  vuelven a escribirse en `MaximoDesktop/logs` con nivel INFO.
+
 ## 0.9.6 — Almacenamiento persistente y descargas aisladas
 
 - Nuevo árbol fijo en `%LOCALAPPDATA%\MaximoDesktop`, separado del código y de
