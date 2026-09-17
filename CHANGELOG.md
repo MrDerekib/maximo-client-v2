@@ -1,5 +1,20 @@
 # Historial de cambios
 
+## 0.9.8.3 — Estado de sincronización y filtros ágiles
+
+- Cada OT guarda si apareció en la última actualización correcta y cuándo se
+  vio por última vez. La tabla muestra «Activo» o «No activo» como primera
+  columna, con ayuda al pasar el ratón y un aspecto atenuado para el histórico.
+- Una actualización fallida no modifica ese estado. Al volver a aparecer, una
+  OT se reactiva automáticamente. Los cambios de seguimiento de una OT no
+  activa permanecen locales mientras siga fuera del listado.
+- El menú contextual permite copiar OT, número de serie o descripción, abrir la
+  OT y consultar su sincronización sin depender de la celda seleccionada.
+- La búsqueda rápida empieza por «Nº de serie» e incorpora acciones de cortar,
+  copiar, pegar y seleccionar todo con clic derecho.
+- Los filtros avanzados ofrecen calendario para las fechas y autocompletado de
+  equipos por coincidencia parcial en su descripción.
+
 ## 0.9.8 — Perfiles temporales de Edge controlados
 
 - Los perfiles de Edge usados para actualizar, abrir OT o probar credenciales

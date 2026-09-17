@@ -24,7 +24,9 @@ class FilterTests(unittest.TestCase):
         self.addCleanup(self.connection_patch.stop)
         db.init_db()
         with closing(sqlite3.connect(self.path)) as conn:
-            conn.executemany("INSERT INTO maximo VALUES (?,?,?,?,?,?,?,?)", [
+            conn.executemany("""INSERT INTO maximo (
+                OT, Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo, Seguimiento, Planta
+            ) VALUES (?,?,?,?,?,?,?,?)""", [
                 ("1", "Radio cabina", "001", "2026-01-01", "TMB", "REP", "EN TALLER", "LAB"),
                 ("2", "Radio cabina", "002", "2026-02-01", "TMB", "REP", "RETENIDO", "LAB"),
                 ("3", "Radio taller", "003", "2026-03-01", "OTRO", "GAR", "EN TALLER", "LAB"),
@@ -52,6 +54,22 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(self.ids({"tracking": ["EN TALLER"]}), ["1", "3", "5"])
         with closing(sqlite3.connect(self.path)) as conn:
             self.assertEqual(conn.execute("SELECT Seguimiento FROM maximo WHERE OT='5'").fetchone()[0], "EN TALLER")
+
+    def test_successful_import_marks_missing_rows_inactive_and_reactivates_them(self):
+        import pandas as pd
+        frame = pd.DataFrame([("1", "Radio cabina", "001", "2026-01-01", "TMB", "REP", "EN TALLER", "LAB")])
+        db.update_database_from_df(frame)
+        with closing(sqlite3.connect(self.path)) as conn:
+            states = dict(conn.execute("SELECT OT, Activo FROM maximo"))
+            last_seen = conn.execute("SELECT Ultima_vez_visto FROM maximo WHERE OT='1'").fetchone()[0]
+        self.assertEqual(states["1"], 1)
+        self.assertEqual(states["2"], 0)
+        self.assertTrue(last_seen)
+
+        restored = pd.DataFrame([("2", "Radio cabina", "002", "2026-02-01", "TMB", "REP", "RETENIDO", "LAB")])
+        db.update_database_from_df(restored)
+        with closing(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(conn.execute("SELECT Activo FROM maximo WHERE OT='2'").fetchone()[0], 1)
 
     def test_migration_preserves_original_backup_and_runs_once(self):
         with closing(sqlite3.connect(self.path)) as conn:

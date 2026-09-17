@@ -16,7 +16,7 @@ from app_paths import (
 from db import fetch_data, init_db, update_seguimiento
 from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
 from updater import run_update
-from filter_panel import FilterPanel
+from filter_panel import FilterPanel, bind_edit_menu
 import logging
 from logging.handlers import RotatingFileHandler
 from maintenance import run_maintenance
@@ -177,8 +177,9 @@ class MaximoApp(tk.Tk):
         self.search_entry = ttk.Entry(top_frame, textvariable=self.search_var, width=40)
         self.search_entry.pack(side="left", padx=5)
         self.search_entry.bind("<Return>", lambda e: self.update_table())
+        bind_edit_menu(self.search_entry)
 
-        self.search_by = tk.StringVar(value="OT")
+        self.search_by = tk.StringVar(value="Nº_de_serie")
         rb_frame = ttk.Frame(top_frame)
         rb_frame.pack(side="left", padx=10)
         ttk.Radiobutton(rb_frame, text="OT", variable=self.search_by, value="OT").pack(anchor="w")
@@ -196,8 +197,8 @@ class MaximoApp(tk.Tk):
         self.filter_panel.pack(fill="x")
 
         # Tabla
-        columns = ("OT", "Descripción", "Nº de serie", "Fecha",
-                   "Cliente", "Tipo de trabajo", "Seguimiento", "Planta")
+        columns = ("Sincronización", "OT", "Descripción", "Nº de serie", "Fecha",
+                   "Cliente", "Tipo de trabajo", "Seguimiento", "Planta", "Última vez visto")
         self.columns = columns
         self.sort_order = {c: False for c in columns}
 
@@ -206,7 +207,11 @@ class MaximoApp(tk.Tk):
             self.tree.heading(col, text=col,
                               command=lambda c=col: self.sort_by_column(c))
             self.tree.column(col, width=100)
+        self.tree.column("Sincronización", width=115, anchor="center")
+        self.tree.column("Descripción", width=240)
+        self.tree.column("Última vez visto", width=145, anchor="center")
         self.tree.pack(fill="both", expand=True)
+        self.tree.tag_configure("inactive", background="#f2f2f2", foreground="#666666")
 
         self.tree.bind("<Double-1>", self.on_double_click)
 
@@ -217,6 +222,9 @@ class MaximoApp(tk.Tk):
 
         # Menú contextual
         self._build_context_menu()
+        self.sync_tooltip = None
+        self.tree.bind("<Motion>", self._show_sync_tooltip)
+        self.tree.bind("<Leave>", lambda event: self._hide_sync_tooltip())
 
     @property
     def SEGUIMIENTO_VALUES(self):
@@ -233,21 +241,27 @@ class MaximoApp(tk.Tk):
         def on_right_click(event):
             region = self.tree.identify_region(event.x, event.y)
             if region == "cell":
+                row = self.tree.identify_row(event.y)
+                if not row:
+                    return
+                self.tree.selection_set(row)
+                self.tree.focus(row)
                 col = self.tree.identify_column(event.x)
                 self.selected_column_index = int(col[1:]) - 1
-
                 self.context_menu.delete(0, "end")
-                self.context_menu.add_command(
-                    label="Copiar", command=self.copy_cell_to_clipboard
-                )
-
-                if (self.selected_column_index < len(self.columns)
-                        and self.columns[self.selected_column_index] == "Seguimiento"):
-                    self.context_menu.add_separator()
-                    self.context_menu.add_command(
-                        label="Cambiar seguimiento...",
-                        command=self.change_seguimiento
-                    )
+                values = self.tree.item(row, "values")
+                self.context_menu.add_command(label="Copiar valor", command=self.copy_cell_to_clipboard)
+                self.context_menu.add_command(label="Copiar OT", command=lambda: self.copy_value(self._row_value(values, "OT")))
+                self.context_menu.add_command(label="Copiar Nº de serie", command=lambda: self.copy_value(self._row_value(values, "Nº de serie")))
+                self.context_menu.add_command(label="Copiar descripción", command=lambda: self.copy_value(self._row_value(values, "Descripción")))
+                self.context_menu.add_separator()
+                self.context_menu.add_command(label="Abrir OT en Maximo", command=self.open_selected_ot)
+                self.context_menu.add_command(label="Cambiar seguimiento…", command=self.change_seguimiento)
+                self.context_menu.add_separator()
+                state = self._row_value(values, "Sincronización") or "Sin comprobar"
+                self.context_menu.add_command(label=f"Sincronización: {state}", state="disabled")
+                last_seen = self._row_value(values, "Última vez visto") or "—"
+                self.context_menu.add_command(label=f"Última vez visto: {last_seen}", state="disabled")
 
                 self.context_menu.tk_popup(event.x_root, event.y_root)
 
@@ -427,20 +441,73 @@ class MaximoApp(tk.Tk):
 
         try:
             advanced = self.filter_panel.filters()
-            data = fetch_data(filter_text, search_by, client_filter, advanced)
+            data = fetch_data(filter_text, search_by, client_filter, advanced, include_sync=True)
         except ValueError as exc:
             messagebox.showerror("Filtros", str(exc), parent=self)
             return
         self.filter_panel.refresh_choices()
         self.filter_panel.show_result(len(data), advanced)
         # por defecto, ordenar por OT desc
-        data.sort(key=lambda x: x[0], reverse=True)
+        data.sort(key=lambda x: x[2], reverse=True)
 
         for row in self.tree.get_children():
             self.tree.delete(row)
 
         for row in data:
-            self.tree.insert("", "end", values=row)
+            values, tags = self._display_row(row)
+            self.tree.insert("", "end", values=values, tags=tags)
+
+    def _display_row(self, row):
+        active, last_seen, *data = row
+        if active == 1:
+            status, tags = "● Activo", ()
+        elif active == 0:
+            status, tags = "○ No activo", ("inactive",)
+        else:
+            status, tags = "", ()
+        try:
+            last_seen = datetime.fromisoformat(last_seen).strftime("%d/%m/%Y %H:%M") if last_seen else ""
+        except (TypeError, ValueError):
+            last_seen = last_seen or ""
+        return (status, *data, last_seen), tags
+
+    def _row_value(self, values, column):
+        try:
+            return values[self.columns.index(column)]
+        except (ValueError, IndexError):
+            return ""
+
+    def _sync_help(self, state):
+        if state == "● Activo":
+            return "Apareció en la última actualización correcta. Maximo puede actualizar sus datos."
+        if state == "○ No activo":
+            return "No apareció en la última actualización correcta. Los cambios locales se mantendrán mientras siga fuera del listado."
+        return "Esta OT existía antes de activar la sincronización. Se clasificará tras la próxima actualización correcta."
+
+    def _show_sync_tooltip(self, event):
+        if self.tree.identify_column(event.x) != "#1":
+            self._hide_sync_tooltip()
+            return
+        item = self.tree.identify_row(event.y)
+        if not item:
+            self._hide_sync_tooltip()
+            return
+        state = self._row_value(self.tree.item(item, "values"), "Sincronización")
+        text = self._sync_help(state)
+        if self.sync_tooltip and self.sync_tooltip.label["text"] == text:
+            return
+        self._hide_sync_tooltip()
+        tip = tk.Toplevel(self)
+        tip.wm_overrideredirect(True)
+        tip.geometry(f"+{event.x_root + 14}+{event.y_root + 14}")
+        tip.label = ttk.Label(tip, text=text, padding=6, wraplength=340)
+        tip.label.pack()
+        self.sync_tooltip = tip
+
+    def _hide_sync_tooltip(self):
+        if self.sync_tooltip:
+            self.sync_tooltip.destroy()
+            self.sync_tooltip = None
 
     def sort_by_column(self, column):
         data = [self.tree.item(i, "values") for i in self.tree.get_children()]
@@ -461,8 +528,13 @@ class MaximoApp(tk.Tk):
         selected = self.tree.selection()
         if not selected:
             return
-        ot = self.tree.item(selected[0], "values")[0]
+        ot = self._row_value(self.tree.item(selected[0], "values"), "OT")
         self.open_ot_threaded(ot)
+
+    def open_selected_ot(self):
+        selected = self.tree.selection()
+        if selected:
+            self.open_ot_threaded(self._row_value(self.tree.item(selected[0], "values"), "OT"))
 
     def copy_cell_to_clipboard(self):
         selected = self.tree.selection()
@@ -473,11 +545,13 @@ class MaximoApp(tk.Tk):
             return
         idx = self.selected_column_index
         if 0 <= idx < len(values):
-            value = values[idx]
-            self.clipboard_clear()
-            self.clipboard_append(value)
-            self.update()
-            messagebox.showinfo("Copiado", f"Se copió: {value}")
+            self.copy_value(values[idx])
+
+    def copy_value(self, value):
+        self.clipboard_clear()
+        self.clipboard_append(value)
+        self.update()
+        self.status_var.set("Valor copiado al portapapeles.")
 
     def change_seguimiento(self):
         selected = self.tree.selection()
@@ -486,8 +560,9 @@ class MaximoApp(tk.Tk):
         values = self.tree.item(selected[0], "values")
         if not values:
             return
-        ot = values[0]
-        current_seguimiento = values[6] if len(values) > 6 else ""
+        ot = self._row_value(values, "OT")
+        current_seguimiento = self._row_value(values, "Seguimiento")
+        sync_state = self._row_value(values, "Sincronización")
 
         dialog = tk.Toplevel(self)
         dialog.title("Cambiar seguimiento")
@@ -519,7 +594,9 @@ class MaximoApp(tk.Tk):
                 f"OT: {ot}\n"
                 f"Seguimiento actual: {current_seguimiento or '(vacío)'}\n"
                 f"Nuevo seguimiento: {new_value}\n\n"
-                "¿Aplicar cambio?",
+                + ("Esta OT sigue activa y Maximo puede reemplazar este valor en la próxima actualización.\n\n"
+                   if sync_state == "● Activo" else "")
+                + "¿Aplicar cambio?",
                 parent=dialog
             ):
                 return

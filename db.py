@@ -1,6 +1,7 @@
 # db.py
 import sqlite3
 import logging
+from datetime import datetime
 from contextlib import closing
 from pathlib import Path
 from uuid import uuid4
@@ -33,6 +34,7 @@ def init_db():
     conn.commit()
     try:
         _normalize_stored_categories(conn)
+        _migrate_sync_status(conn)
     finally:
         conn.close()
 
@@ -72,6 +74,21 @@ def _normalize_stored_categories(conn):
         raise
 
 
+def _migrate_sync_status(conn):
+    """Añade el estado de presencia sin clasificar datos heredados aún."""
+    migration = "sync_status_v1"
+    conn.execute("CREATE TABLE IF NOT EXISTS client_migrations (name TEXT PRIMARY KEY)")
+    if conn.execute("SELECT 1 FROM client_migrations WHERE name = ?", (migration,)).fetchone():
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(maximo)")}
+    if "Activo" not in columns:
+        conn.execute("ALTER TABLE maximo ADD COLUMN Activo INTEGER")
+    if "Ultima_vez_visto" not in columns:
+        conn.execute("ALTER TABLE maximo ADD COLUMN Ultima_vez_visto TEXT")
+    conn.execute("INSERT INTO client_migrations (name) VALUES (?)", (migration,))
+    conn.commit()
+
+
 def update_database_from_df(df):
     init_db()  # Incluye la migración antes de importar.
     conn = get_connection()
@@ -80,43 +97,54 @@ def update_database_from_df(df):
     new_entries = 0
     updated_entries = 0
 
-    for row in df.itertuples(index=False, name=None):
-        ot = str(row[0]).replace('\u00a0', ' ').strip()
-
-        cur.execute("SELECT * FROM maximo WHERE REPLACE(OT, ' ', ' ') = REPLACE(?, ' ', ' ')", (ot,))
-        existing = cur.fetchone()
-
-        new_data = tuple("" if v is None else str(v).replace(' ', ' ').strip() for v in row[1:])
-        new_data = tuple(normalize_filter_value(value) if index in (3, 4, 5) else value
-                         for index, value in enumerate(new_data))
-
-        if existing:
-            existing_data = tuple("" if v is None else str(v).replace(' ', ' ').strip() for v in existing[1:])
-            if existing_data != new_data:
-                cur.execute(
-                    """
-                    UPDATE maximo SET
-                        Descripción = ?,
-                        Nº_de_serie = ?,
-                        Fecha = ?,
-                        Cliente = ?,
-                        Tipo_de_trabajo = ?,
-                        Seguimiento = ?,
-                        Planta = ?
-                    WHERE OT = ?
-                    """,
-                    new_data + (ot,)
-                )
-                updated_entries += 1
-        else:
+    seen_at = datetime.now().isoformat(timespec="seconds")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        for row in df.itertuples(index=False, name=None):
+            ot = str(row[0]).replace('\u00a0', ' ').strip()
             cur.execute(
-                "INSERT INTO maximo VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (ot,) + new_data
+                "SELECT Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo, Seguimiento, Planta "
+                "FROM maximo WHERE REPLACE(OT, ' ', ' ') = REPLACE(?, ' ', ' ')",
+                (ot,),
             )
-            new_entries += 1
+            existing = cur.fetchone()
 
-    conn.commit()
-    conn.close()
+            new_data = tuple("" if v is None else str(v).replace(' ', ' ').strip() for v in row[1:])
+            new_data = tuple(normalize_filter_value(value) if index in (3, 4, 5) else value
+                             for index, value in enumerate(new_data))
+
+            if existing:
+                existing_data = tuple("" if v is None else str(v).replace(' ', ' ').strip() for v in existing)
+                if existing_data != new_data:
+                    cur.execute(
+                        """
+                        UPDATE maximo SET
+                            Descripción = ?, Nº_de_serie = ?, Fecha = ?, Cliente = ?,
+                            Tipo_de_trabajo = ?, Seguimiento = ?, Planta = ?
+                        WHERE OT = ?
+                        """,
+                        new_data + (ot,),
+                    )
+                    updated_entries += 1
+                cur.execute("UPDATE maximo SET Activo = 1, Ultima_vez_visto = ? WHERE OT = ?", (seen_at, ot))
+            else:
+                cur.execute(
+                    """INSERT INTO maximo (
+                        OT, Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo,
+                        Seguimiento, Planta, Activo, Ultima_vez_visto
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+                    (ot,) + new_data + (seen_at,),
+                )
+                new_entries += 1
+
+        # Solo una importación completa y correcta puede desactivar las OT ausentes.
+        cur.execute("UPDATE maximo SET Activo = 0 WHERE Activo IS NULL OR Activo = 1 AND Ultima_vez_visto <> ?", (seen_at,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
     logging.info(f"BD: nuevas entradas={new_entries}, actualizadas={updated_entries}")
     return new_entries, updated_entries
 
@@ -132,14 +160,17 @@ def update_seguimiento(ot: str, value: str):
     logging.info(f"BD: Seguimiento actualizado OT={ot} -> {value}")
 
 
-def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], advanced=None) -> List[Tuple]:
+def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], advanced=None,
+               include_sync: bool = False) -> List[Tuple]:
     from search_filters import validate_filters
     advanced = validate_filters(advanced or {})
     if search_by not in ("OT", "Nº_de_serie", "Descripción"):
         raise ValueError("Campo de búsqueda no válido")
 
     filter_words = filter_text.strip().split()
-    query = "SELECT * FROM maximo"
+    columns = "Activo, Ultima_vez_visto, OT, Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo, Seguimiento, Planta" \
+        if include_sync else "OT, Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo, Seguimiento, Planta"
+    query = "SELECT " + columns + " FROM maximo"
     params = []
 
     conditions = []
@@ -181,8 +212,12 @@ def filter_choices():
     conn = get_connection()
     try:
         conn.create_function("FILTER_VALUE", 1, normalize_filter_value)
-        return {key: [row[0] for row in conn.execute(
+        values = {key: [row[0] for row in conn.execute(
             f"SELECT DISTINCT FILTER_VALUE({column}) FROM maximo ORDER BY 1"
         )] for key, column in (("clients", "Cliente"), ("types", "Tipo_de_trabajo"), ("tracking", "Seguimiento"))}
+        values["equipment"] = [row[0] for row in conn.execute(
+            "SELECT DISTINCT Descripción FROM maximo WHERE Descripción IS NOT NULL AND Descripción <> '' ORDER BY 1"
+        )]
+        return values
     finally:
         conn.close()

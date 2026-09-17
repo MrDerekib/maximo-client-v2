@@ -1,9 +1,76 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
+import calendar
+from datetime import date
 
 from app_paths import PROFILES_PATH
 from db import filter_choices
 from search_filters import validate_filters, load_profiles, save_profiles
+
+MONTH_NAMES = ("", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+               "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre")
+
+
+def bind_edit_menu(widget):
+    """Añade acciones de portapapeles para usar el ratón en campos editables."""
+    menu = tk.Menu(widget, tearoff=0)
+    for label, event in (("Cortar", "<<Cut>>"), ("Copiar", "<<Copy>>"),
+                         ("Pegar", "<<Paste>>"), ("Seleccionar todo", "<<SelectAll>>")):
+        menu.add_command(label=label, command=lambda value=event: widget.event_generate(value))
+
+    def show_menu(event):
+        widget.focus_set()
+        menu.tk_popup(event.x_root, event.y_root)
+
+    widget.bind("<Button-3>", show_menu, add=True)
+
+
+class CalendarPicker:
+    """Calendario ligero que escribe una fecha ISO en el campo indicado."""
+    def __init__(self, parent, variable):
+        self.variable = variable
+        try:
+            selected = date.fromisoformat(variable.get())
+        except ValueError:
+            selected = date.today()
+        self.year, self.month = selected.year, selected.month
+        self.window = tk.Toplevel(parent)
+        self.window.title("Seleccionar fecha")
+        self.window.resizable(False, False)
+        self.window.transient(parent.winfo_toplevel())
+        self.header = ttk.Frame(self.window)
+        self.header.pack(fill="x", padx=8, pady=8)
+        ttk.Button(self.header, text="‹", width=3, command=lambda: self.change_month(-1)).pack(side="left")
+        self.title = ttk.Label(self.header, anchor="center", font=("", 10, "bold"))
+        self.title.pack(side="left", fill="x", expand=True)
+        ttk.Button(self.header, text="›", width=3, command=lambda: self.change_month(1)).pack(side="right")
+        self.days = ttk.Frame(self.window)
+        self.days.pack(padx=8, pady=(0, 8))
+        self.render()
+
+    def change_month(self, offset):
+        self.month += offset
+        if self.month == 13:
+            self.year, self.month = self.year + 1, 1
+        elif self.month == 0:
+            self.year, self.month = self.year - 1, 12
+        self.render()
+
+    def render(self):
+        for child in self.days.winfo_children():
+            child.destroy()
+        self.title.configure(text=f"{MONTH_NAMES[self.month]} {self.year}")
+        for column, name in enumerate(("Lu", "Ma", "Mi", "Ju", "Vi", "Sa", "Do")):
+            ttk.Label(self.days, text=name, width=3, anchor="center").grid(row=0, column=column, pady=(0, 3))
+        for row, week in enumerate(calendar.monthcalendar(self.year, self.month), start=1):
+            for column, day in enumerate(week):
+                if day:
+                    ttk.Button(self.days, text=str(day), width=3,
+                               command=lambda value=day: self.select(value)).grid(row=row, column=column)
+
+    def select(self, day):
+        self.variable.set(date(self.year, self.month, day).isoformat())
+        self.window.destroy()
 
 
 class FilterPanel(ttk.Frame):
@@ -32,15 +99,24 @@ class FilterPanel(ttk.Frame):
         self.details = ttk.LabelFrame(self, text="Combinar filtros")
         self.visible = False
         self.variables = {key: tk.StringVar() for key in ("equipment", "date_from", "date_to")}
+        self.equipment_values = []
         text_row = ttk.Frame(self.details)
         text_row.pack(fill="x", padx=8, pady=5)
-        for key, title, width in (("equipment", "Equipo (descripción):", 30),
-                                  ("date_from", "Desde (AAAA-MM-DD):", 12),
-                                  ("date_to", "Hasta:", 12)):
+        ttk.Label(text_row, text="Equipo (descripción):").pack(side="left", padx=4)
+        self.equipment_combo = ttk.Combobox(text_row, textvariable=self.variables["equipment"], width=30)
+        self.equipment_combo.pack(side="left")
+        self.equipment_combo.bind("<KeyRelease>", self.suggest_equipment)
+        self.equipment_combo.bind("<<ComboboxSelected>>", lambda event: self.app.update_table())
+        self.equipment_combo.bind("<Return>", lambda event: self.app.update_table())
+        bind_edit_menu(self.equipment_combo)
+        for key, title in (("date_from", "Desde (AAAA-MM-DD):"), ("date_to", "Hasta:")):
             ttk.Label(text_row, text=title).pack(side="left", padx=4)
-            entry = ttk.Entry(text_row, textvariable=self.variables[key], width=width)
+            entry = ttk.Entry(text_row, textvariable=self.variables[key], width=12)
             entry.pack(side="left")
             entry.bind("<Return>", lambda event: self.app.update_table())
+            bind_edit_menu(entry)
+            ttk.Button(text_row, text="📅", width=3,
+                       command=lambda value=key: CalendarPicker(self, self.variables[value])).pack(side="left", padx=(2, 4))
         choices_row = ttk.Frame(self.details)
         choices_row.pack(fill="x", padx=8)
         self.boxes = {}
@@ -83,6 +159,8 @@ class FilterPanel(ttk.Frame):
         if selected is None:
             selected = {key: [self.values[key][i] for i in box.curselection()] for key, box in self.boxes.items()}
         choices = filter_choices()
+        self.equipment_values = choices.get("equipment", [])
+        self.equipment_combo["values"] = self.equipment_values
         for key, box in self.boxes.items():
             self.values[key] = sorted(set(choices[key]) | set(selected.get(key, [])))
             box.delete(0, "end")
@@ -93,13 +171,20 @@ class FilterPanel(ttk.Frame):
         current = self.app.client_var.get()
         self.app.client_combo["values"] = ["Todos"] + sorted(set(v for v in choices["clients"] if v) | ({current} if current != "Todos" else set()))
 
+    def suggest_equipment(self, event=None):
+        typed = self.variables["equipment"].get().casefold().strip()
+        matches = [value for value in self.equipment_values if typed in value.casefold()] if typed else self.equipment_values
+        self.equipment_combo["values"] = matches
+        if typed and matches:
+            self.after_idle(lambda: self.equipment_combo.tk.call("ttk::combobox::Post", str(self.equipment_combo)))
+
     def state(self):
         return {"search": self.app.search_var.get(), "search_by": self.app.search_by.get(),
                 "client": self.app.client_var.get(), "advanced": self.filters()}
 
     def clear(self):
         self.app.search_var.set("")
-        self.app.search_by.set("OT")
+        self.app.search_by.set("Nº_de_serie")
         self.app.client_var.set("Todos")
         self.profile.set("")
         for var in self.variables.values():
