@@ -193,21 +193,14 @@ def read_workorder_status(driver, ot: str) -> str:
     search_box.clear()
     search_box.send_keys(ot)
     search_box.send_keys(Keys.RETURN)
-    # El campo de estado de la ficha anterior puede permanecer visible durante
-    # la navegación. Esperar solo a que mx73-tb sea visible permitiría leer
-    # ese valor antiguo (especialmente en búsquedas consecutivas rápidas).
+    # El estado de la ficha anterior puede permanecer visible durante la
+    # navegación. Primero se verifica el campo de OT de la ficha (mx45-tb)
+    # para no leer mx73-tb hasta que Maximo haya cargado la OT solicitada.
     target_ot = str(ot).strip()
 
     def current_workorder_is_loaded(browser):
-        return browser.execute_script(
-            """
-            const target = arguments[0];
-            return Array.from(document.querySelectorAll('input[id], textarea[id]'))
-              .some(element => element.id !== 'quicksearch'
-                && String(element.value || '').trim() === target);
-            """,
-            target_ot,
-        )
+        current_ot = browser.find_element(By.ID, "mx45-tb").get_attribute("value")
+        return str(current_ot or "").strip() == target_ot
 
     wait_for(
         driver,

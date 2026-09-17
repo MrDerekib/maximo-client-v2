@@ -196,11 +196,12 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(wait.call_args_list[1].args[2], "carga de la OT 100 para conciliación")
         self.assertEqual(wait.call_args_list[2].args[2], "estado real de la OT 100")
         loaded = wait.call_args_list[1].args[1]
-        driver.execute_script.return_value = False
+        workorder_field = driver.find_element.return_value
+        workorder_field.get_attribute.return_value = "99"
         self.assertFalse(loaded(driver))
-        driver.execute_script.return_value = True
+        workorder_field.get_attribute.return_value = "100"
         self.assertTrue(loaded(driver))
-        self.assertIn("element.id !== 'quicksearch'", driver.execute_script.call_args.args[0])
+        driver.find_element.assert_called_with(client.By.ID, "mx45-tb")
 
     def test_reconciliation_reuses_one_headless_session(self):
         driver = Mock()
