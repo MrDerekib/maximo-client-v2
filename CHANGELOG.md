@@ -9,7 +9,8 @@
   OT se reactiva automáticamente. Los cambios de seguimiento de una OT no
   activa permanecen locales mientras siga fuera del listado.
 - El menú contextual permite copiar OT, número de serie o descripción, abrir la
-  OT y consultar su sincronización sin depender de la celda seleccionada.
+  OT, cambiar seguimiento desde un submenú, eliminar OT no activas y consultar
+  su sincronización sin depender de la celda seleccionada.
 - La búsqueda rápida empieza por «Nº de serie» e incorpora acciones de cortar,
   copiar, pegar y seleccionar todo con clic derecho.
 - Los filtros avanzados ofrecen calendario para las fechas y autocompletado de

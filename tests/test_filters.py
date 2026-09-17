@@ -71,6 +71,16 @@ class FilterTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as conn:
             self.assertEqual(conn.execute("SELECT Activo FROM maximo WHERE OT='2'").fetchone()[0], 1)
 
+    def test_only_inactive_records_can_be_deleted(self):
+        import pandas as pd
+        db.update_database_from_df(pd.DataFrame([
+            ("1", "Radio cabina", "001", "2026-01-01", "TMB", "REP", "EN TALLER", "LAB")
+        ]))
+        self.assertFalse(db.delete_inactive_record("1"))
+        self.assertTrue(db.delete_inactive_record("2"))
+        with closing(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM maximo WHERE OT='2'").fetchone()[0], 0)
+
     def test_migration_preserves_original_backup_and_runs_once(self):
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute("DELETE FROM client_migrations")

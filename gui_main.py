@@ -13,7 +13,7 @@ from app_paths import (
     EXPORT_DIR, LOG_DIR,
     TRACKING_OPTIONS_PATH,
 )
-from db import fetch_data, init_db, update_seguimiento
+from db import delete_inactive_record, fetch_data, init_db, update_seguimiento
 from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
 from updater import run_update
 from filter_panel import FilterPanel, bind_edit_menu
@@ -256,7 +256,15 @@ class MaximoApp(tk.Tk):
                 self.context_menu.add_command(label="Copiar descripción", command=lambda: self.copy_value(self._row_value(values, "Descripción")))
                 self.context_menu.add_separator()
                 self.context_menu.add_command(label="Abrir OT en Maximo", command=self.open_selected_ot)
-                self.context_menu.add_command(label="Cambiar seguimiento…", command=self.change_seguimiento)
+                tracking_menu = tk.Menu(self.context_menu, tearoff=0)
+                for value in self.SEGUIMIENTO_VALUES:
+                    tracking_menu.add_command(
+                        label=value,
+                        command=lambda new_value=value: self.set_seguimiento_from_menu(new_value),
+                    )
+                self.context_menu.add_cascade(label="Cambiar seguimiento", menu=tracking_menu)
+                if self._row_value(values, "Sincronización") == "○ No activo":
+                    self.context_menu.add_command(label="Eliminar registro local…", command=self.delete_selected_inactive)
                 self.context_menu.add_separator()
                 state = self._row_value(values, "Sincronización") or "Sin comprobar"
                 self.context_menu.add_command(label=f"Sincronización: {state}", state="disabled")
@@ -553,7 +561,7 @@ class MaximoApp(tk.Tk):
         self.update()
         self.status_var.set("Valor copiado al portapapeles.")
 
-    def change_seguimiento(self):
+    def set_seguimiento_from_menu(self, new_value):
         selected = self.tree.selection()
         if not selected:
             return
@@ -563,54 +571,38 @@ class MaximoApp(tk.Tk):
         ot = self._row_value(values, "OT")
         current_seguimiento = self._row_value(values, "Seguimiento")
         sync_state = self._row_value(values, "Sincronización")
+        if new_value == current_seguimiento:
+            return
+        if sync_state == "● Activo" and not messagebox.askyesno(
+            "Seguimiento sincronizado con Maximo",
+            f"OT: {ot}\nNuevo seguimiento: {new_value}\n\n"
+            "Esta OT sigue activa y Maximo puede reemplazar este valor en la próxima actualización.\n\n"
+            "¿Aplicar cambio?",
+            parent=self,
+        ):
+            return
+        update_seguimiento(ot, new_value)
+        self.update_table()
 
-        dialog = tk.Toplevel(self)
-        dialog.title("Cambiar seguimiento")
-        dialog.geometry("400x220")
-        dialog.resizable(False, False)
-        dialog.transient(self)
-        dialog.grab_set()
-
-        ttk.Label(dialog, text=f"OT: {ot}", font=("", 10, "bold")).pack(pady=(10, 0))
-        ttk.Label(dialog, text=f"Actual: {current_seguimiento or '(vacío)'}").pack(pady=2)
-        ttk.Label(dialog, text="Nuevo valor:").pack(pady=(10, 0))
-
-        var = tk.StringVar()
-        combo = ttk.Combobox(
-            dialog, textvariable=var, values=self.SEGUIMIENTO_VALUES,
-            state="readonly", width=30
-        )
-        combo.pack(pady=5)
-        if current_seguimiento in self.SEGUIMIENTO_VALUES:
-            combo.set(current_seguimiento)
-
-        def on_accept():
-            new_value = var.get().strip()
-            if not new_value:
-                messagebox.showwarning("Selección requerida", "Selecciona un valor.", parent=dialog)
-                return
-            if not messagebox.askyesno(
-                "Confirmar cambio",
-                f"OT: {ot}\n"
-                f"Seguimiento actual: {current_seguimiento or '(vacío)'}\n"
-                f"Nuevo seguimiento: {new_value}\n\n"
-                + ("Esta OT sigue activa y Maximo puede reemplazar este valor en la próxima actualización.\n\n"
-                   if sync_state == "● Activo" else "")
-                + "¿Aplicar cambio?",
-                parent=dialog
-            ):
-                return
-            update_seguimiento(ot, new_value)
-            dialog.destroy()
-            self.update_table()
-
-        def on_cancel():
-            dialog.destroy()
-
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(pady=(15, 10))
-        ttk.Button(btn_frame, text="Aceptar", command=on_accept).pack(side="left", padx=5)
-        ttk.Button(btn_frame, text="Cancelar", command=on_cancel).pack(side="left", padx=5)
+    def delete_selected_inactive(self):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        values = self.tree.item(selected[0], "values")
+        if self._row_value(values, "Sincronización") != "○ No activo":
+            return
+        ot = self._row_value(values, "OT")
+        if not messagebox.askyesno(
+            "Eliminar registro local",
+            f"La OT {ot} ya no aparece en el listado de Maximo.\n\n"
+            "Se eliminará solo de la base de datos local. Esta acción no se puede deshacer desde la aplicación.\n\n"
+            "¿Eliminar registro?",
+            parent=self,
+        ):
+            return
+        if not delete_inactive_record(ot):
+            messagebox.showwarning("Registro no eliminado", "La OT ya no cumple la condición de no activa.", parent=self)
+        self.update_table()
 
     # ---------- Actualización (manual / auto) ----------
     def update_now_threaded(self, show_popup: bool = True):

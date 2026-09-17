@@ -160,6 +160,20 @@ def update_seguimiento(ot: str, value: str):
     logging.info(f"BD: Seguimiento actualizado OT={ot} -> {value}")
 
 
+def delete_inactive_record(ot: str) -> bool:
+    """Elimina solo una OT que ya no aparece en la última importación."""
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM maximo WHERE OT = ? AND Activo = 0", (ot,))
+        conn.commit()
+        deleted = cur.rowcount == 1
+    finally:
+        conn.close()
+    if deleted:
+        logging.info("BD: OT inactiva eliminada: %s", ot)
+    return deleted
+
+
 def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], advanced=None,
                include_sync: bool = False) -> List[Tuple]:
     from search_filters import validate_filters
