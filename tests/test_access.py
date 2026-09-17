@@ -196,11 +196,11 @@ class AccessTests(unittest.TestCase):
 
     def test_reconciliation_reuses_one_headless_session(self):
         driver = Mock()
-        with patch.object(updater, "inactive_en_taller_candidates", return_value=["1", "2"]), \
+        with patch.object(updater, "inactive_tracking_candidates", return_value=[("1", "EN TALLER"), ("2", "APPR")]), \
              patch.object(updater, "create_edge_profile", return_value="C:/reconcile-profile"), \
              patch.object(updater, "setup_driver", return_value=driver) as setup, \
              patch.object(updater, "login"), patch.object(updater, "open_workorders_app"), \
-             patch.object(updater, "read_workorder_status", side_effect=["DAR SALIDA", "EN TALLER"]), \
+            patch.object(updater, "read_workorder_status", side_effect=["DAR SALIDA", "APPR"]), \
              patch.object(updater, "apply_reconciled_status", return_value=True) as apply, \
              patch.object(updater, "cleanup_edge_profile") as cleanup:
             self.assertEqual(updater.reconcile_inactive_tracking(), 1)

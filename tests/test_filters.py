@@ -81,17 +81,20 @@ class FilterTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM maximo WHERE OT='2'").fetchone()[0], 0)
 
-    def test_inactive_en_taller_candidates_are_reconciled_safely(self):
+    def test_inactive_tracking_candidates_are_reconciled_safely(self):
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute("UPDATE maximo SET Activo = 0, Seguimiento = 'EN TALLER' WHERE OT = '1'")
-            conn.execute("UPDATE maximo SET Activo = 0, Seguimiento = 'RETENIDO' WHERE OT = '2'")
+            conn.execute("UPDATE maximo SET Activo = 0, Seguimiento = 'APPR' WHERE OT = '2'")
+            conn.execute("UPDATE maximo SET Activo = 0, Seguimiento = 'RETENIDO' WHERE OT = '3'")
             conn.commit()
-        self.assertEqual(db.inactive_en_taller_candidates(), ["1"])
+        self.assertEqual(db.inactive_tracking_candidates(), [("1", "EN TALLER"), ("2", "APPR")])
         self.assertTrue(db.apply_reconciled_status("1", " DAR\u00a0SALIDA ", "2026-09-18T10:00:00"))
         with closing(sqlite3.connect(self.path)) as conn:
             self.assertEqual(conn.execute("SELECT Seguimiento FROM maximo WHERE OT='1'").fetchone()[0], "DAR SALIDA")
             self.assertEqual(conn.execute("SELECT Ultima_comprobacion_estado FROM maximo WHERE OT='1'").fetchone()[0], "2026-09-18T10:00:00")
-        self.assertFalse(db.apply_reconciled_status("2", "DAR SALIDA"))
+            self.assertEqual(conn.execute("SELECT Seguimiento FROM maximo WHERE OT='2'").fetchone()[0], "APPR")
+        self.assertTrue(db.apply_reconciled_status("2", "DAR SALIDA"))
+        self.assertFalse(db.apply_reconciled_status("3", "DAR SALIDA"))
 
     def test_migration_preserves_original_backup_and_runs_once(self):
         with closing(sqlite3.connect(self.path)) as conn:

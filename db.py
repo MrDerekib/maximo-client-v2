@@ -188,42 +188,49 @@ def delete_inactive_record(ot: str) -> bool:
     return deleted
 
 
-def inactive_en_taller_candidates(limit: int = 5, minimum_age_hours: int = 24) -> List[str]:
-    """Devuelve OT históricas pendientes de una comprobación prudente en Maximo."""
+INACTIVE_RECONCILIATION_TRACKING = ("PDTE CONFIRMAR", "EN TALLER", "APPR", "INPRG")
+
+
+def inactive_tracking_candidates(limit: int = 5, minimum_age_hours: int = 24) -> List[Tuple[str, str]]:
+    """Devuelve OT históricas con seguimientos que deben contrastarse en Maximo."""
     cutoff = (datetime.now() - timedelta(hours=minimum_age_hours)).isoformat(timespec="seconds")
     conn = get_connection()
     try:
+        placeholders = ", ".join("?" for _ in INACTIVE_RECONCILIATION_TRACKING)
         rows = conn.execute(
-            """SELECT OT FROM maximo
-               WHERE Activo = 0 AND Seguimiento = 'EN TALLER'
+            f"""SELECT OT, Seguimiento FROM maximo
+               WHERE Activo = 0 AND Seguimiento IN ({placeholders})
                  AND (Ultima_comprobacion_estado IS NULL OR Ultima_comprobacion_estado < ?)
                ORDER BY COALESCE(Ultima_comprobacion_estado, ''), OT
                LIMIT ?""",
-            (cutoff, limit),
+            (*INACTIVE_RECONCILIATION_TRACKING, cutoff, limit),
         ).fetchall()
-        return [row[0] for row in rows]
+        return rows
     finally:
         conn.close()
 
 
 def apply_reconciled_status(ot: str, status: str, checked_at: str | None = None) -> bool:
-    """Guarda el estado real solo si la OT sigue siendo histórica y EN TALLER."""
+    """Guarda el estado real solo si la OT sigue siendo histórica y es candidata."""
     checked_at = checked_at or datetime.now().isoformat(timespec="seconds")
     status = normalize_filter_value(status)
     conn = get_connection()
     try:
+        placeholders = ", ".join("?" for _ in INACTIVE_RECONCILIATION_TRACKING)
         if status:
             cur = conn.execute(
-                """UPDATE maximo
+                f"""UPDATE maximo
                    SET Seguimiento = ?, Ultima_comprobacion_estado = ?
-                   WHERE OT = ? AND Activo = 0 AND Seguimiento = 'EN TALLER'""",
-                (status, checked_at, ot),
+                   WHERE OT = ? AND Activo = 0
+                     AND Seguimiento IN ({placeholders})""",
+                (status, checked_at, ot, *INACTIVE_RECONCILIATION_TRACKING),
             )
         else:
             cur = conn.execute(
-                """UPDATE maximo SET Ultima_comprobacion_estado = ?
-                   WHERE OT = ? AND Activo = 0 AND Seguimiento = 'EN TALLER'""",
-                (checked_at, ot),
+                f"""UPDATE maximo SET Ultima_comprobacion_estado = ?
+                   WHERE OT = ? AND Activo = 0
+                     AND Seguimiento IN ({placeholders})""",
+                (checked_at, ot, *INACTIVE_RECONCILIATION_TRACKING),
             )
         conn.commit()
         return cur.rowcount == 1

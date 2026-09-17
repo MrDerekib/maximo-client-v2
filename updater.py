@@ -11,7 +11,7 @@ from maximo_client import (
     move_downloaded_file,
     process_html_table,
 )
-from db import apply_reconciled_status, inactive_en_taller_candidates, update_database_from_df
+from db import apply_reconciled_status, inactive_tracking_candidates, update_database_from_df
 from config import load_config
 from maintenance import cleanup_exports
 from pathlib import Path
@@ -71,8 +71,8 @@ def run_update(headless=True):
 
 def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
                                 minimum_age_hours=INACTIVE_RECONCILIATION_HOURS):
-    """Contrasta en Maximo OT históricas que aún figuran localmente EN TALLER."""
-    candidates = inactive_en_taller_candidates(limit, minimum_age_hours)
+    """Contrasta en Maximo OT históricas con seguimiento que requiere revisión."""
+    candidates = inactive_tracking_candidates(limit, minimum_age_hours)
     if not candidates:
         logging.info("Conciliación de OT inactivas: no hay candidatas pendientes.")
         return 0
@@ -85,11 +85,11 @@ def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
         driver = setup_driver(headless=True, profile_dir=profile_dir)
         login(driver, headless=True)
         open_workorders_app(driver, headless=True)
-        for ot in candidates:
+        for ot, previous_status in candidates:
             try:
                 status = read_workorder_status(driver, ot)
                 if apply_reconciled_status(ot, status):
-                    changed += int(bool(status and status != "EN TALLER"))
+                    changed += int(bool(status and status != previous_status))
                     logging.info("OT inactiva %s conciliada con estado: %s", ot, status or "(vacío)")
             except Exception as exc:
                 logging.warning("No se pudo conciliar la OT inactiva %s: %s", ot, exc)
