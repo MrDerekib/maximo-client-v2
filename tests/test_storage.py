@@ -1,6 +1,5 @@
 import json
 import sqlite3
-import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -8,11 +7,12 @@ from unittest.mock import patch
 
 import config
 import credential_store
+from tests.test_support import temporary_directory
 
 
 class CredentialStoreTests(unittest.TestCase):
     def test_encrypted_credentials_round_trip_without_plaintext(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with temporary_directory() as folder:
             path = Path(folder) / "credentials.dat"
             with patch.object(credential_store, "_protect", side_effect=lambda value: value[::-1]), \
                  patch.object(credential_store, "_unprotect", side_effect=lambda value: value[::-1]):
@@ -26,7 +26,7 @@ class CredentialStoreTests(unittest.TestCase):
 
 class StorageMigrationTests(unittest.TestCase):
     def test_migration_copies_and_verifies_data_and_removes_plaintext_secrets(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with temporary_directory() as folder:
             root = Path(folder)
             legacy_root = root / "program"
             old_data = root / "old-data"

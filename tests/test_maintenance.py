@@ -1,16 +1,16 @@
 import os
 from pathlib import Path
-import tempfile
 import time
 import unittest
 from unittest.mock import patch
 
 import maintenance as m
+from tests.test_support import temporary_directory
 
 
 class MaintenanceTests(unittest.TestCase):
     def test_retention_keeps_latest_five_recent_and_unrelated_files(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             now = time.time()
             exports = []
@@ -31,14 +31,14 @@ class MaintenanceTests(unittest.TestCase):
             self.assertTrue(all(not path.exists() for path in exports[4:]))
 
     def test_all_exports_under_one_day_survive(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             for i in range(10):
                 (root / f"{i:08}.xls").write_bytes(b"recent")
             self.assertEqual(m.cleanup_exports(root), (0, 0))
 
     def test_links_are_not_deleted(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             linked = root / "12345678.xls"
             linked.write_bytes(b"keep")
@@ -53,7 +53,7 @@ class MaintenanceTests(unittest.TestCase):
             remove.assert_not_called()
 
     def test_old_unused_temp_removed_but_active_recent_and_unknown_survive(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             now = time.time()
             names = ["maximo-ot-abcdefgh", "maximo-ot-12345678", "maximo-update-abcdefgh", "other-folder"]
@@ -71,7 +71,7 @@ class MaintenanceTests(unittest.TestCase):
             self.assertTrue(all(folder.exists() for folder in folders[1:]))
 
     def test_nested_link_prevents_recursive_removal(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             folder = root / "maximo-ot-abcdefgh"
             folder.mkdir()
@@ -87,7 +87,7 @@ class MaintenanceTests(unittest.TestCase):
             self.assertTrue(folder.exists())
 
     def test_old_profile_in_application_cache_is_removed(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             profiles = root / "edge-profiles"
             profiles.mkdir()

@@ -3,7 +3,7 @@ from datetime import date
 import json
 import os
 from pathlib import Path
-import tempfile
+from app_paths import create_unique_file
 
 
 def normalize_filter_value(value):
@@ -66,9 +66,9 @@ def load_profiles(path):
 def save_profiles(path, profiles):
     data = {name: validate_profile(value) for name, value in profiles.items()}
     path = Path(path)
-    fd, temporary = tempfile.mkstemp(dir=path.parent, suffix=".tmp", prefix="profiles-")
+    temporary = create_unique_file(path.parent, "profiles-", ".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        with temporary.open("w", encoding="utf-8") as stream:
             json.dump(data, stream, ensure_ascii=False, indent=2)
         os.replace(temporary, path)
     finally:

@@ -1,6 +1,7 @@
 """Rutas persistentes de la aplicación, separadas del código actualizable."""
 import os
 from pathlib import Path
+from uuid import uuid4
 
 
 def _program_dir() -> Path:
@@ -46,3 +47,36 @@ USER_DIRECTORIES = (
 def ensure_user_directories() -> None:
     for directory in USER_DIRECTORIES:
         directory.mkdir(parents=True, exist_ok=True)
+
+
+def create_unique_directory(parent: Path | str, prefix: str) -> Path:
+    """Crea una carpeta única con permisos normales de usuario.
+
+    ``tempfile.mkdtemp`` aplica ACL restrictivas en algunos equipos corporativos
+    con Python 3.14, por lo que se evita para las carpetas de trabajo propias.
+    """
+    parent = Path(parent)
+    parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(100):
+        candidate = parent / f"{prefix}{uuid4().hex}"
+        try:
+            candidate.mkdir()
+            return candidate
+        except FileExistsError:
+            continue
+    raise RuntimeError(f"No se pudo crear una carpeta temporal en {parent}")
+
+
+def create_unique_file(parent: Path | str, prefix: str, suffix: str = "") -> Path:
+    """Reserva un fichero temporal con permisos normales de usuario."""
+    parent = Path(parent)
+    parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(100):
+        candidate = parent / f"{prefix}{uuid4().hex}{suffix}"
+        try:
+            with candidate.open("x"):
+                pass
+            return candidate
+        except FileExistsError:
+            continue
+    raise RuntimeError(f"No se pudo crear un fichero temporal en {parent}")

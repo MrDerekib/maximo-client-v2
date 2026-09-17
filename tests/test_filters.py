@@ -1,5 +1,4 @@
 import sqlite3
-import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -7,14 +6,16 @@ from unittest.mock import patch
 
 import db
 from search_filters import load_profiles, save_profiles, validate_filters
+from tests.test_support import temporary_directory
 
 
 class FilterTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.path = Path(self.temp.name) / "data.db"
-        self.backup_dir = Path(self.temp.name) / "backups"
+        self.temp = temporary_directory()
+        self.temp_path = self.temp.__enter__()
+        self.addCleanup(self.temp.__exit__, None, None, None)
+        self.path = Path(self.temp_path) / "data.db"
+        self.backup_dir = Path(self.temp_path) / "backups"
         self.backup_patch = patch.object(db, "BACKUP_DIR", self.backup_dir)
         self.backup_patch.start()
         self.addCleanup(self.backup_patch.stop)
@@ -123,7 +124,7 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(len(self.ids({})), 4)
 
     def test_profiles_roundtrip_and_delete(self):
-        path = Path(self.temp.name) / "profiles.json"
+        path = Path(self.temp_path) / "profiles.json"
         profile = {"search": "", "search_by": "OT", "client": "TMB",
                    "advanced": {"tracking": ["EN TALLER"]}}
         save_profiles(path, {"TMB pendientes": profile})
@@ -133,7 +134,7 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(load_profiles(path), {})
 
     def test_invalid_profile_does_not_replace_existing_file(self):
-        path = Path(self.temp.name) / "profiles.json"
+        path = Path(self.temp_path) / "profiles.json"
         save_profiles(path, {})
         with self.assertRaises(ValueError):
             save_profiles(path, {"bad": {"search_by": "sql"}})
@@ -152,7 +153,7 @@ class FilterTests(unittest.TestCase):
         root.client_var = tk.StringVar(root, value="Todos")
         root.client_combo = ttk.Combobox(root, textvariable=root.client_var)
         root.update_table = Mock()
-        with patch.object(filter_panel, "PROFILES_PATH", Path(self.temp.name) / "search_profiles.json"):
+        with patch.object(filter_panel, "PROFILES_PATH", Path(self.temp_path) / "search_profiles.json"):
             panel = filter_panel.FilterPanel(root, root)
         panel.pack()
         panel.profiles = {"TMB pendientes": {"search": "", "search_by": "OT", "client": "TMB",
@@ -178,7 +179,7 @@ class FilterTests(unittest.TestCase):
             import gui_main
         with patch.object(gui_main, "load_config", return_value=AppConfig()), \
              patch.object(gui_main.threading, "Thread"), \
-             patch.object(filter_panel, "PROFILES_PATH", Path(self.temp.name) / "search_profiles.json"):
+            patch.object(filter_panel, "PROFILES_PATH", Path(self.temp_path) / "search_profiles.json"):
             app = gui_main.MaximoApp()
             app.withdraw()
             try:

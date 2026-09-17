@@ -1,12 +1,14 @@
-import tempfile
 import threading
 import logging
+import shutil
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
+
+from tests.test_support import temporary_directory
 
 import maximo_client as client
 import updater
@@ -70,7 +72,7 @@ class AccessTests(unittest.TestCase):
             client.wait_for(Mock(), lambda _: False, "pantalla de prueba", timeout=0)
 
     def test_download_ignores_old_and_partial_files(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             folder = Path(directory)
             old = folder / "old.xls"
             old.write_bytes(b"old")
@@ -94,7 +96,7 @@ class AccessTests(unittest.TestCase):
             self.assertEqual(old.read_bytes(), b"old")
 
     def test_empty_download_times_out(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             driver = Mock()
             driver.find_element.return_value.is_displayed.return_value = True
             driver.find_element.return_value.is_enabled.return_value = True
@@ -102,7 +104,7 @@ class AccessTests(unittest.TestCase):
                 client.download_file(driver, directory, timeout=0)
 
     def test_archive_preserves_existing_exports(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             folder = Path(directory)
             exports = folder / "exports"
             exports.mkdir()
@@ -185,9 +187,10 @@ class AccessTests(unittest.TestCase):
         cleanup.assert_called_once_with(Path("C:/test-profile"))
 
     def test_failed_download_never_updates_database_and_cleans_up(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             driver = Mock()
             with patch.object(updater, "load_config", return_value=SimpleNamespace(download_dir=directory)), \
+                 patch.object(client, "EDGE_PROFILE_DIR", Path(directory) / "edge-profiles"), \
                  patch.object(updater, "setup_driver", return_value=driver) as setup, \
                  patch.object(updater, "login"), patch.object(updater, "open_workorders_app"), \
                  patch.object(updater, "download_file", side_effect=TimeoutException("failed")), \
@@ -203,7 +206,9 @@ class AccessTests(unittest.TestCase):
         drivers = [Mock(), Mock()]
         sessions = []
         try:
-            with patch.object(client, "setup_driver", side_effect=drivers), \
+            with temporary_directory() as directory, \
+                 patch.object(client, "EDGE_PROFILE_DIR", Path(directory) / "edge-profiles"), \
+                 patch.object(client, "setup_driver", side_effect=drivers), \
                  patch.object(client, "login"), patch.object(client, "open_workorders_app"), \
                  patch.object(client, "wait_for", return_value=Mock()):
                 sessions.append(client.open_ot("100"))
@@ -215,7 +220,7 @@ class AccessTests(unittest.TestCase):
                 driver.quit.assert_not_called()
         finally:
             for _, profile in sessions:
-                Path(profile).rmdir()
+                shutil.rmtree(profile, ignore_errors=True)
 
 
 if __name__ == "__main__":

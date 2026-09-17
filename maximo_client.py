@@ -4,11 +4,10 @@ import time
 import shutil
 import pandas as pd
 import logging
-import tempfile
 from pathlib import Path
 from uuid import uuid4
 from config import load_config, get_credentials
-from app_paths import EDGE_PROFILE_DIR
+from app_paths import EDGE_PROFILE_DIR, create_unique_directory
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -25,7 +24,7 @@ DOWNLOAD_TIMEOUT = 180
 def create_edge_profile(prefix: str) -> str:
     """Crea un perfil de Edge en la caché controlada por la aplicación."""
     EDGE_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    return tempfile.mkdtemp(prefix=prefix, dir=EDGE_PROFILE_DIR)
+    return str(create_unique_directory(EDGE_PROFILE_DIR, prefix))
 
 
 def cleanup_edge_profile(profile_dir: str | Path) -> bool:

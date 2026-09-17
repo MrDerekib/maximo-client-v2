@@ -4,7 +4,6 @@ import logging
 import os
 import shutil
 import sqlite3
-import tempfile
 from dataclasses import dataclass, asdict, fields
 from contextlib import closing
 from pathlib import Path
@@ -12,7 +11,7 @@ from pathlib import Path
 from app_paths import (
     BACKUP_DIR, BASE_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR,
     EXPORT_DIR, LOG_DIR, PROFILES_PATH, TRACKING_OPTIONS_PATH,
-    ensure_user_directories,
+    create_unique_file, ensure_user_directories,
 )
 from credential_store import load_credentials, save_credentials
 
@@ -46,9 +45,9 @@ class AppConfig:
 
 def _atomic_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent, text=True)
+    temporary = create_unique_file(path.parent, path.name + ".", ".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        with temporary.open("w", encoding="utf-8") as stream:
             json.dump(data, stream, indent=2, ensure_ascii=False)
             stream.flush()
             os.fsync(stream.fileno())

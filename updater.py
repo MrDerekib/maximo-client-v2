@@ -14,8 +14,8 @@ from db import update_database_from_df
 from config import load_config
 from maintenance import cleanup_exports
 from pathlib import Path
+from app_paths import create_unique_directory
 import logging
-import tempfile
 import shutil
 import time
 
@@ -38,7 +38,7 @@ def run_update(headless=True):
         # Carpeta vacía y exclusiva: nunca importar un XLS de otra ejecución.
         download_root = Path(load_config().download_dir).resolve()
         download_root.mkdir(parents=True, exist_ok=True)
-        download_dir = tempfile.mkdtemp(prefix="maximo-download-", dir=download_root)
+        download_dir = str(create_unique_directory(download_root, "maximo-download-"))
         driver = _timed("abrir Edge", setup_driver, headless=headless,
                         profile_dir=profile_dir, download_dir=download_dir)
         _timed("login", login, driver, headless=headless)

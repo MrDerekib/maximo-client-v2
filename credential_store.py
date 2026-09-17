@@ -1,10 +1,9 @@
 """Almacén de credenciales ligado al usuario de Windows mediante DPAPI."""
 import json
 import os
-import tempfile
 from pathlib import Path
 
-from app_paths import CREDENTIAL_PATH
+from app_paths import CREDENTIAL_PATH, create_unique_file
 
 
 class CredentialStoreError(RuntimeError):
@@ -63,9 +62,9 @@ def save_credentials(username: str, password: str, path: Path | None = None) -> 
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"username": username, "password": password}).encode("utf-8")
     encrypted = _protect(payload)
-    fd, temporary = tempfile.mkstemp(prefix=target.name + ".", dir=target.parent)
+    temporary = create_unique_file(target.parent, target.name + ".", ".tmp")
     try:
-        with os.fdopen(fd, "wb") as stream:
+        with temporary.open("wb") as stream:
             stream.write(encrypted)
             stream.flush()
             os.fsync(stream.fileno())

@@ -21,3 +21,9 @@ chromedriver*
 *.log
 *.log.[0-9]*
 *.tmp
+
+# Artefactos de compilación y distribución
+build/
+dist/
+release/
+nuitka-crash-report.xml

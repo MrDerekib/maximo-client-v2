@@ -22,7 +22,7 @@ Es una herramienta **interna de productividad**, diseñada para simplificar el a
 ## 🛠️ Tecnologías utilizadas
 
 ### Backend / Core
-- **Python 3.13**
+- **Python 3.14.1**
 - **SQLite** (base de datos local)
 - **Pandas** (procesado del archivo descargado)
 - **lxml** (parseo del contenido HTML/XLS)
@@ -145,7 +145,7 @@ La aplicación se distribuye como **ejecutable Windows standalone**:
 
 ## 📦 Requisitos para desarrollo
 
-- Python 3.13
+- Python 3.14.1
 - Microsoft Edge
 - Edge WebDriver compatible
 - Entorno virtual recomendado
