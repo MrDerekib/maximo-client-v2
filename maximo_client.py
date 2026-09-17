@@ -193,6 +193,27 @@ def read_workorder_status(driver, ot: str) -> str:
     search_box.clear()
     search_box.send_keys(ot)
     search_box.send_keys(Keys.RETURN)
+    # El campo de estado de la ficha anterior puede permanecer visible durante
+    # la navegación. Esperar solo a que mx73-tb sea visible permitiría leer
+    # ese valor antiguo (especialmente en búsquedas consecutivas rápidas).
+    target_ot = str(ot).strip()
+
+    def current_workorder_is_loaded(browser):
+        return browser.execute_script(
+            """
+            const target = arguments[0];
+            return Array.from(document.querySelectorAll('input[id], textarea[id]'))
+              .some(element => element.id !== 'quicksearch'
+                && String(element.value || '').trim() === target);
+            """,
+            target_ot,
+        )
+
+    wait_for(
+        driver,
+        current_workorder_is_loaded,
+        f"carga de la OT {target_ot} para conciliación",
+    )
     status_field = wait_for(
         driver, EC.visibility_of_element_located((By.ID, "mx73-tb")),
         f"estado real de la OT {ot}",

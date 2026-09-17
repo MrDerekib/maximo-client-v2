@@ -190,9 +190,17 @@ class AccessTests(unittest.TestCase):
         search = Mock()
         status = Mock()
         status.get_attribute.return_value = " DAR\u00a0SALIDA "
-        with patch.object(client, "wait_for", side_effect=[search, status]) as wait:
-            self.assertEqual(client.read_workorder_status(Mock(), "100"), "DAR SALIDA")
-        self.assertEqual(wait.call_args_list[1].args[2], "estado real de la OT 100")
+        driver = Mock()
+        with patch.object(client, "wait_for", side_effect=[search, True, status]) as wait:
+            self.assertEqual(client.read_workorder_status(driver, "100"), "DAR SALIDA")
+        self.assertEqual(wait.call_args_list[1].args[2], "carga de la OT 100 para conciliación")
+        self.assertEqual(wait.call_args_list[2].args[2], "estado real de la OT 100")
+        loaded = wait.call_args_list[1].args[1]
+        driver.execute_script.return_value = False
+        self.assertFalse(loaded(driver))
+        driver.execute_script.return_value = True
+        self.assertTrue(loaded(driver))
+        self.assertIn("element.id !== 'quicksearch'", driver.execute_script.call_args.args[0])
 
     def test_reconciliation_reuses_one_headless_session(self):
         driver = Mock()
