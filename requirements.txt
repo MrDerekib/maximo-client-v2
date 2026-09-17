@@ -1,6 +1,6 @@
 # Dependencias directas para ejecutar y compilar MaximoDesktop.
 # Las dependencias transitivas se resuelven automáticamente con pip.
-Nuitka==4.2
+Nuitka==4.2.1
 pandas==2.3.3
 lxml==6.0.2
 selenium==4.38.0

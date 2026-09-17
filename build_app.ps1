@@ -11,7 +11,8 @@ Reemplaza la compilación existente de la versión actual.
 #>
 [CmdletBinding()]
 param(
-    [switch]$Force
+    [switch]$Force,
+    [switch]$KeepBuild
 )
 
 Set-StrictMode -Version Latest
@@ -38,7 +39,13 @@ if (Test-Path -LiteralPath $outputDir) {
 }
 New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 
-$cacheDir = Join-Path $projectRoot ".nuitka-cache"
+$localAppData = [Environment]::GetFolderPath("LocalApplicationData")
+$cacheDir = if ($localAppData) {
+    Join-Path $localAppData "MaximoDesktop\build-cache\nuitka"
+}
+else {
+    Join-Path $projectRoot ".nuitka-cache"
+}
 $previousCacheDir = $env:NUITKA_CACHE_DIR
 $env:NUITKA_CACHE_DIR = $cacheDir
 
@@ -81,6 +88,12 @@ $distribution = Get-ChildItem -LiteralPath $outputDir -Directory |
     Select-Object -First 1
 if ($null -eq $distribution) {
     throw "Nuitka no generó la carpeta .dist esperada."
+}
+
+if (-not $KeepBuild) {
+    Get-ChildItem -LiteralPath $outputDir -Directory |
+        Where-Object { $_.Name -like "*.build" } |
+        Remove-Item -Recurse -Force
 }
 
 Write-Host "Compilación completada: $($distribution.FullName)" -ForegroundColor Green
