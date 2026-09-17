@@ -15,7 +15,7 @@ from app_paths import (
 )
 from db import delete_inactive_record, fetch_data, init_db, update_seguimiento
 from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
-from updater import run_update
+from updater import reconcile_inactive_tracking, run_update
 from filter_panel import FilterPanel, bind_edit_menu
 import logging
 from logging.handlers import RotatingFileHandler
@@ -64,6 +64,7 @@ class MaximoApp(tk.Tk):
         self.cfg: AppConfig = load_config()
         self.auto_update_job = None  # ID del after() del auto-update
         self.update_lock = threading.Lock()
+        self.reconcile_lock = threading.Lock()
         self.credential_test_lock = threading.Lock()
         self.ot_sessions = []  # sesiones Edge visibles (OT)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -649,6 +650,7 @@ class MaximoApp(tk.Tk):
                     "updated_entries": int(updated_entries),
                 }
                 save_config(self.cfg)
+                self.start_inactive_reconciliation()
 
                 if show_popup:
                     # Si algún día quieres popup en actualización manual, lo pones aquí
@@ -686,6 +688,22 @@ class MaximoApp(tk.Tk):
             self.after(0, on_error)
         finally:
             self.update_lock.release()
+
+    def start_inactive_reconciliation(self):
+        """Inicia una revisión silenciosa sin bloquear el siguiente listado."""
+        if not self.reconcile_lock.acquire(blocking=False):
+            return
+        threading.Thread(target=self._reconcile_inactive_worker, daemon=True).start()
+
+    def _reconcile_inactive_worker(self):
+        try:
+            changed = reconcile_inactive_tracking()
+            if changed:
+                self.after(0, self.update_table)
+        except Exception as exc:
+            logging.warning("Conciliación en segundo plano falló: %s", exc)
+        finally:
+            self.reconcile_lock.release()
 
 
 

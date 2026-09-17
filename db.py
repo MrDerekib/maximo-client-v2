@@ -1,7 +1,7 @@
 # db.py
 import sqlite3
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import closing
 from pathlib import Path
 from uuid import uuid4
@@ -35,6 +35,7 @@ def init_db():
     try:
         _normalize_stored_categories(conn)
         _migrate_sync_status(conn)
+        _migrate_reconciliation_status(conn)
     finally:
         conn.close()
 
@@ -85,6 +86,19 @@ def _migrate_sync_status(conn):
         conn.execute("ALTER TABLE maximo ADD COLUMN Activo INTEGER")
     if "Ultima_vez_visto" not in columns:
         conn.execute("ALTER TABLE maximo ADD COLUMN Ultima_vez_visto TEXT")
+    conn.execute("INSERT INTO client_migrations (name) VALUES (?)", (migration,))
+    conn.commit()
+
+
+def _migrate_reconciliation_status(conn):
+    """Registra cuándo se comprobó una OT histórica por última vez."""
+    migration = "inactive_reconciliation_v1"
+    conn.execute("CREATE TABLE IF NOT EXISTS client_migrations (name TEXT PRIMARY KEY)")
+    if conn.execute("SELECT 1 FROM client_migrations WHERE name = ?", (migration,)).fetchone():
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(maximo)")}
+    if "Ultima_comprobacion_estado" not in columns:
+        conn.execute("ALTER TABLE maximo ADD COLUMN Ultima_comprobacion_estado TEXT")
     conn.execute("INSERT INTO client_migrations (name) VALUES (?)", (migration,))
     conn.commit()
 
@@ -172,6 +186,49 @@ def delete_inactive_record(ot: str) -> bool:
     if deleted:
         logging.info("BD: OT inactiva eliminada: %s", ot)
     return deleted
+
+
+def inactive_en_taller_candidates(limit: int = 5, minimum_age_hours: int = 24) -> List[str]:
+    """Devuelve OT históricas pendientes de una comprobación prudente en Maximo."""
+    cutoff = (datetime.now() - timedelta(hours=minimum_age_hours)).isoformat(timespec="seconds")
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT OT FROM maximo
+               WHERE Activo = 0 AND Seguimiento = 'EN TALLER'
+                 AND (Ultima_comprobacion_estado IS NULL OR Ultima_comprobacion_estado < ?)
+               ORDER BY COALESCE(Ultima_comprobacion_estado, ''), OT
+               LIMIT ?""",
+            (cutoff, limit),
+        ).fetchall()
+        return [row[0] for row in rows]
+    finally:
+        conn.close()
+
+
+def apply_reconciled_status(ot: str, status: str, checked_at: str | None = None) -> bool:
+    """Guarda el estado real solo si la OT sigue siendo histórica y EN TALLER."""
+    checked_at = checked_at or datetime.now().isoformat(timespec="seconds")
+    status = normalize_filter_value(status)
+    conn = get_connection()
+    try:
+        if status:
+            cur = conn.execute(
+                """UPDATE maximo
+                   SET Seguimiento = ?, Ultima_comprobacion_estado = ?
+                   WHERE OT = ? AND Activo = 0 AND Seguimiento = 'EN TALLER'""",
+                (status, checked_at, ot),
+            )
+        else:
+            cur = conn.execute(
+                """UPDATE maximo SET Ultima_comprobacion_estado = ?
+                   WHERE OT = ? AND Activo = 0 AND Seguimiento = 'EN TALLER'""",
+                (checked_at, ot),
+            )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
 
 
 def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], advanced=None,

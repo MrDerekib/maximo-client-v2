@@ -5,12 +5,13 @@ from maximo_client import (
     cleanup_edge_profile,
     login,
     open_workorders_app,
+    read_workorder_status,
     apply_filter,
     download_file,
     move_downloaded_file,
     process_html_table,
 )
-from db import update_database_from_df
+from db import apply_reconciled_status, inactive_en_taller_candidates, update_database_from_df
 from config import load_config
 from maintenance import cleanup_exports
 from pathlib import Path
@@ -18,6 +19,9 @@ from app_paths import create_unique_directory
 import logging
 import shutil
 import time
+
+INACTIVE_RECONCILIATION_LIMIT = 5
+INACTIVE_RECONCILIATION_HOURS = 24
 
 
 def _timed(label, operation, *args, **kwargs):
@@ -63,3 +67,37 @@ def run_update(headless=True):
             logging.info("Actualización total: %.2fs", time.monotonic() - started)
 
         logging.info("Navegador cerrado.")
+
+
+def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
+                                minimum_age_hours=INACTIVE_RECONCILIATION_HOURS):
+    """Contrasta en Maximo OT históricas que aún figuran localmente EN TALLER."""
+    candidates = inactive_en_taller_candidates(limit, minimum_age_hours)
+    if not candidates:
+        logging.info("Conciliación de OT inactivas: no hay candidatas pendientes.")
+        return 0
+
+    profile_dir = create_edge_profile("maximo-reconcile-")
+    driver = None
+    changed = 0
+    try:
+        logging.info("Conciliación de OT inactivas: revisando hasta %d OT.", len(candidates))
+        driver = setup_driver(headless=True, profile_dir=profile_dir)
+        login(driver, headless=True)
+        open_workorders_app(driver, headless=True)
+        for ot in candidates:
+            try:
+                status = read_workorder_status(driver, ot)
+                if apply_reconciled_status(ot, status):
+                    changed += int(bool(status and status != "EN TALLER"))
+                    logging.info("OT inactiva %s conciliada con estado: %s", ot, status or "(vacío)")
+            except Exception as exc:
+                logging.warning("No se pudo conciliar la OT inactiva %s: %s", ot, exc)
+    finally:
+        try:
+            if driver is not None:
+                driver.quit()
+        finally:
+            cleanup_edge_profile(profile_dir)
+    logging.info("Conciliación de OT inactivas completada: %d seguimientos actualizados.", changed)
+    return changed

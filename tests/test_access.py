@@ -186,6 +186,29 @@ class AccessTests(unittest.TestCase):
         driver.quit.assert_called_once()
         cleanup.assert_called_once_with(Path("C:/test-profile"))
 
+    def test_read_workorder_status_uses_mx73_field(self):
+        search = Mock()
+        status = Mock()
+        status.get_attribute.return_value = " DAR\u00a0SALIDA "
+        with patch.object(client, "wait_for", side_effect=[search, status]) as wait:
+            self.assertEqual(client.read_workorder_status(Mock(), "100"), "DAR SALIDA")
+        self.assertEqual(wait.call_args_list[1].args[2], "estado real de la OT 100")
+
+    def test_reconciliation_reuses_one_headless_session(self):
+        driver = Mock()
+        with patch.object(updater, "inactive_en_taller_candidates", return_value=["1", "2"]), \
+             patch.object(updater, "create_edge_profile", return_value="C:/reconcile-profile"), \
+             patch.object(updater, "setup_driver", return_value=driver) as setup, \
+             patch.object(updater, "login"), patch.object(updater, "open_workorders_app"), \
+             patch.object(updater, "read_workorder_status", side_effect=["DAR SALIDA", "EN TALLER"]), \
+             patch.object(updater, "apply_reconciled_status", return_value=True) as apply, \
+             patch.object(updater, "cleanup_edge_profile") as cleanup:
+            self.assertEqual(updater.reconcile_inactive_tracking(), 1)
+        setup.assert_called_once_with(headless=True, profile_dir="C:/reconcile-profile")
+        self.assertEqual(apply.call_count, 2)
+        driver.quit.assert_called_once()
+        cleanup.assert_called_once_with("C:/reconcile-profile")
+
     def test_failed_download_never_updates_database_and_cleans_up(self):
         with temporary_directory() as directory:
             driver = Mock()

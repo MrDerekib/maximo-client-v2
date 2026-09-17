@@ -184,6 +184,23 @@ def open_workorders_app(driver, headless=True):
     logging.info("Sección de filtros abierta.")
 
 
+def read_workorder_status(driver, ot: str) -> str:
+    """Busca una OT y devuelve el valor actual del campo de estado mx73-tb."""
+    search_box = wait_for(
+        driver, EC.element_to_be_clickable((By.ID, "quicksearch")),
+        "búsqueda rápida de OT para conciliación",
+    )
+    search_box.clear()
+    search_box.send_keys(ot)
+    search_box.send_keys(Keys.RETURN)
+    status_field = wait_for(
+        driver, EC.visibility_of_element_located((By.ID, "mx73-tb")),
+        f"estado real de la OT {ot}",
+    )
+    value = status_field.get_attribute("value") or status_field.text
+    return " ".join((value or "").split())
+
+
 def apply_filter(driver):
     cfg = load_config()
     filters = cfg.filters

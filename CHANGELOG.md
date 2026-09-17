@@ -15,6 +15,10 @@
   copiar, pegar y seleccionar todo con clic derecho.
 - Los filtros avanzados ofrecen calendario para las fechas y autocompletado de
   equipos por coincidencia parcial en su descripción.
+- Tras una actualización correcta, se revisan en segundo plano hasta cinco OT
+  no activas cuyo seguimiento siga siendo «EN TALLER». La aplicación lee su
+  estado real en Maximo, lo normaliza y actualiza el seguimiento local. Cada OT
+  se consulta como máximo una vez cada 24 horas.
 
 ## 0.9.8 — Perfiles temporales de Edge controlados
 
