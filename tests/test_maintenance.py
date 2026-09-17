@@ -86,6 +86,20 @@ class MaintenanceTests(unittest.TestCase):
                 self.assertEqual(m.cleanup_stale_temps(root, now), (0, 0))
             self.assertTrue(folder.exists())
 
+    def test_old_profile_in_application_cache_is_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profiles = root / "edge-profiles"
+            profiles.mkdir()
+            profile = profiles / "maximo-update-abcdefgh"
+            profile.mkdir()
+            (profile / "cache").write_bytes(b"profile")
+            now = time.time()
+            os.utime(profile, (now - 10 * m.DAY,) * 2)
+            with patch.object(m, "_edge_commands", return_value=[]):
+                self.assertEqual(m.cleanup_stale_temps(root, now, edge_profile_root=profiles), (1, 7))
+            self.assertFalse(profile.exists())
+
     def test_unreadable_process_command_disables_cleanup(self):
         result = type("Result", (), {"stdout": '{"ProcessId":1,"CommandLine":null}'})()
         with patch.object(m.subprocess, "run", return_value=result):

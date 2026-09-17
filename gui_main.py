@@ -1,6 +1,5 @@
 # gui_main.py
 import threading
-import shutil
 import tkinter as tk
 import os
 import webbrowser
@@ -10,11 +9,12 @@ from datetime import datetime, timedelta
 from config import load_config, save_config, AppConfig, credentials_configured
 from app_paths import (
     APP_ROOT, BACKUP_DIR, BASE_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR,
+    EDGE_PROFILE_DIR,
     EXPORT_DIR, LOG_DIR,
     TRACKING_OPTIONS_PATH,
 )
 from db import fetch_data, init_db, update_seguimiento
-from maximo_client import open_ot, verify_credentials
+from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
 from updater import run_update
 from filter_panel import FilterPanel
 import logging
@@ -319,6 +319,7 @@ class MaximoApp(tk.Tk):
             ("Copias de seguridad:", BACKUP_DIR),
             ("Descargas temporales:", DOWNLOAD_DIR),
             ("Exportaciones procesadas:", EXPORT_DIR),
+            ("Perfiles temporales de Edge:", EDGE_PROFILE_DIR),
             ("Logs:", LOG_DIR),
         )
         for row, (label, path) in enumerate(paths):
@@ -807,7 +808,7 @@ class MaximoApp(tk.Tk):
             except Exception:
                 pass
             try:
-                shutil.rmtree(profile_dir, ignore_errors=True)
+                cleanup_edge_profile(profile_dir)
             except Exception:
                 pass
         self.destroy()

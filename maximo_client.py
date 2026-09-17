@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 from uuid import uuid4
 from config import load_config, get_credentials
+from app_paths import EDGE_PROFILE_DIR
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -19,6 +20,35 @@ from selenium.common.exceptions import StaleElementReferenceException
 
 PAGE_TIMEOUT = 60
 DOWNLOAD_TIMEOUT = 180
+
+
+def create_edge_profile(prefix: str) -> str:
+    """Crea un perfil de Edge en la caché controlada por la aplicación."""
+    EDGE_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    return tempfile.mkdtemp(prefix=prefix, dir=EDGE_PROFILE_DIR)
+
+
+def cleanup_edge_profile(profile_dir: str | Path) -> bool:
+    """Elimina un perfil tras dar a Edge tiempo breve para terminar procesos hijos."""
+    profile = Path(profile_dir)
+    last_error = None
+    for delay in (0.0, 0.5, 1.0):
+        if delay:
+            time.sleep(delay)
+        try:
+            shutil.rmtree(profile)
+            logging.info("Perfil temporal de Edge eliminado: %s", profile)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError as exc:
+            last_error = exc
+    logging.warning(
+        "No se pudo eliminar el perfil temporal de Edge %s tras varios intentos: %s",
+        profile,
+        last_error,
+    )
+    return False
 
 
 def wait_for(driver, condition, description, timeout=PAGE_TIMEOUT):
@@ -50,7 +80,7 @@ def setup_driver(headless=True, profile_dir=None, download_dir=None):
 
     # PERFIL AISLADO (clave para que quit() no mate otras ventanas)
     if profile_dir is None:
-        profile_dir = tempfile.mkdtemp(prefix="maximo-edge-")
+        profile_dir = create_edge_profile("maximo-edge-")
         logging.warning(
             f"setup_driver llamado sin profile_dir explícito. "
             f"Usando perfil temporal por defecto: {profile_dir}"
@@ -128,7 +158,7 @@ def verify_credentials(username: str, password: str) -> None:
     if not username.strip() or not password:
         raise ValueError("Introduce usuario y contraseña antes de comprobarlos.")
 
-    profile_dir = tempfile.mkdtemp(prefix="maximo-credential-test-")
+    profile_dir = create_edge_profile("maximo-edge-")
     driver = None
     try:
         logging.info("Comprobando credenciales de Maximo...")
@@ -140,7 +170,7 @@ def verify_credentials(username: str, password: str) -> None:
             if driver is not None:
                 driver.quit()
         finally:
-            shutil.rmtree(profile_dir, ignore_errors=True)
+            cleanup_edge_profile(profile_dir)
 
 
 def open_workorders_app(driver, headless=True):
@@ -248,7 +278,7 @@ def open_ot(ot: str, headless: bool = False):
       La GUI debe conservar la referencia y decidir cuándo cerrar/limpiar.
     - Si headless=True, cerramos y eliminamos el perfil temporal.
     """
-    profile_dir = tempfile.mkdtemp(prefix="maximo-ot-")
+    profile_dir = create_edge_profile("maximo-ot-")
     logging.info(f"OT {ot}: usando perfil temporal {profile_dir}")
 
     driver = None
@@ -280,7 +310,7 @@ def open_ot(ot: str, headless: bool = False):
         if headless:
             if driver is not None:
                 driver.quit()
-            shutil.rmtree(profile_dir, ignore_errors=True)
+            cleanup_edge_profile(profile_dir)
             logging.info(f"OT {ot}: navegador cerrado y perfil {profile_dir} eliminado (headless)")
             return None
 
@@ -293,5 +323,5 @@ def open_ot(ot: str, headless: bool = False):
             driver.quit()
         except Exception:
             pass
-        shutil.rmtree(profile_dir, ignore_errors=True)
+        cleanup_edge_profile(profile_dir)
         raise

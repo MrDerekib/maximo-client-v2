@@ -1,6 +1,8 @@
 # updater.py
 from maximo_client import (
     setup_driver,
+    create_edge_profile,
+    cleanup_edge_profile,
     login,
     open_workorders_app,
     apply_filter,
@@ -28,7 +30,7 @@ def _timed(label, operation, *args, **kwargs):
 
 def run_update(headless=True):
     started = time.monotonic()
-    profile_dir = tempfile.mkdtemp(prefix="maximo-update-")
+    profile_dir = create_edge_profile("maximo-update-")
     logging.info(f"Updater: usando perfil temporal {profile_dir}")
     driver = None
     download_dir = None
@@ -54,7 +56,7 @@ def run_update(headless=True):
             if driver is not None:
                 driver.quit()
         finally:
-            shutil.rmtree(profile_dir, ignore_errors=True)
+            cleanup_edge_profile(profile_dir)
             if download_dir is not None:
                 shutil.rmtree(download_dir, ignore_errors=True)
             logging.info(f"Updater: navegador cerrado y perfil {profile_dir} eliminado")

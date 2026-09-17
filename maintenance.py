@@ -9,6 +9,7 @@ import stat
 import subprocess
 import tempfile
 import time
+from app_paths import EDGE_PROFILE_DIR
 
 EXPORT_NAME = re.compile(r"(?:\d{8}(?:-[0-9a-f]{32})?|maximo-export-[0-9a-f]{32})\.xls", re.I)
 TEMP_NAME = re.compile(r"maximo-(?:ot|update|edge|download)-[a-z0-9_]{8}")
@@ -107,11 +108,12 @@ def _raise_walk_error(error):
     raise error
 
 
-def cleanup_stale_temps(download_root, now=None):
+def cleanup_stale_temps(download_root, now=None, edge_profile_root=None):
     now = time.time() if now is None else now
     removed = 0
     freed = 0
-    roots = {Path(tempfile.gettempdir()).resolve(), Path(download_root).resolve()}
+    profile_root = Path(edge_profile_root or EDGE_PROFILE_DIR).resolve()
+    roots = {Path(tempfile.gettempdir()).resolve(), Path(download_root).resolve(), profile_root}
     commands = _edge_commands()
     if commands is None:
         return 0, 0

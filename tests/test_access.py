@@ -174,7 +174,7 @@ class AccessTests(unittest.TestCase):
 
     def test_verify_credentials_closes_driver_and_profile(self):
         driver = Mock()
-        with patch.object(client.tempfile, "mkdtemp", return_value="C:/test-profile"), \
+        with patch.object(client, "create_edge_profile", return_value="C:/test-profile"), \
              patch.object(client, "setup_driver", return_value=driver) as setup, \
              patch.object(client, "login") as login, \
              patch.object(client.shutil, "rmtree") as cleanup:
@@ -182,7 +182,7 @@ class AccessTests(unittest.TestCase):
         setup.assert_called_once_with(headless=True, profile_dir="C:/test-profile")
         login.assert_called_once_with(driver, headless=True, username="usuario", password="clave temporal")
         driver.quit.assert_called_once()
-        cleanup.assert_called_once_with("C:/test-profile", ignore_errors=True)
+        cleanup.assert_called_once_with(Path("C:/test-profile"))
 
     def test_failed_download_never_updates_database_and_cleans_up(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,5 +1,14 @@
 # Historial de cambios
 
+## 0.9.8 — Perfiles temporales de Edge controlados
+
+- Los perfiles de Edge usados para actualizar, abrir OT o probar credenciales
+  pasan de `%TEMP%` a `MaximoDesktop/cache/edge-profiles`. Esto evita las
+  restricciones de permisos observadas en temporales corporativos.
+- Tras cerrar Edge se reintenta la eliminación del perfil durante unos segundos.
+  Si un proceso tarda en terminar, el mantenimiento puede retirarlo más adelante
+  desde la carpeta controlada por la aplicación.
+
 ## 0.9.7 — Comprobación de credenciales
 
 - Nuevo botón «Probar credenciales» en Configuración. Comprueba el acceso a

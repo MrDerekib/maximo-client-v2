@@ -107,6 +107,7 @@ MaximoDesktop/
 ├── cache/
 │   ├── downloads/ # descarga aislada usada por Edge/Selenium
 │   ├── exports/   # XLS procesados y sujetos a limpieza
+│   ├── edge-profiles/ # perfiles temporales aislados de Edge
 │   └── updates/
 └── custom/     # opciones locales de seguimiento
 ```
