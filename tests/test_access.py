@@ -63,6 +63,24 @@ class AccessTests(unittest.TestCase):
             gui_main.MaximoApp._update_now_worker(app, show_popup=False)
         self.assertFalse(app.update_lock.locked())
 
+    def test_close_worker_closes_visible_sessions_and_profiles(self):
+        driver = Mock()
+        finish = Mock()
+        app = SimpleNamespace(
+            update_lock=threading.Lock(),
+            reconcile_lock=threading.Lock(),
+            credential_test_lock=threading.Lock(),
+            ot_sessions=[(driver, "C:/profile")],
+            _finish_close=finish,
+            after=lambda _delay, callback: callback(),
+        )
+        status = Mock()
+        with patch.object(gui_main, "cleanup_edge_profile") as cleanup:
+            gui_main.MaximoApp._close_worker(app, Mock(), status)
+        driver.quit.assert_called_once()
+        cleanup.assert_called_once_with("C:/profile")
+        finish.assert_called_once()
+
     def test_wait_retries_stale_elements(self):
         condition = Mock(side_effect=[StaleElementReferenceException(), "ready"])
         self.assertEqual(client.wait_for(Mock(), condition, "pantalla", timeout=1), "ready")

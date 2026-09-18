@@ -79,6 +79,7 @@ class MaximoApp(tk.Tk):
         self.reconcile_lock = threading.Lock()
         self.credential_test_lock = threading.Lock()
         self.ot_sessions = []  # sesiones Edge visibles (OT)
+        self._closing = False
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(500, lambda: self.check_updates(notify_popup=True))
         init_db()
@@ -696,6 +697,8 @@ class MaximoApp(tk.Tk):
 
     def start_priority_reconciliation(self):
         """Revisa todas las OT pendientes, reservando la actualización normal."""
+        if getattr(self, "_closing", False):
+            return
         if not self._ensure_credentials():
             return
         count = inactive_tracking_candidate_count(minimum_age_hours=None)
@@ -744,6 +747,8 @@ class MaximoApp(tk.Tk):
     # ---------- Actualización (manual / auto) ----------
     def update_now_threaded(self, show_popup: bool = True):
         # Comprobar credenciales antes de lanzar el hilo
+        if getattr(self, "_closing", False):
+            return
         if not self._ensure_credentials():
             return
 
@@ -771,6 +776,8 @@ class MaximoApp(tk.Tk):
             new_entries, updated_entries = run_update(headless=True)
 
             def on_done():
+                if getattr(self, "_closing", False):
+                    return
                 # Momento en que terminamos correctamente
                 dt = datetime.now()
 
@@ -827,6 +834,8 @@ class MaximoApp(tk.Tk):
 
     def start_inactive_reconciliation(self):
         """Inicia una revisión silenciosa sin bloquear el siguiente listado."""
+        if getattr(self, "_closing", False):
+            return
         if not getattr(self.cfg, "reconciliation_enabled", True):
             logging.info("Conciliación automática de OT inactivas desactivada por configuración.")
             return
@@ -1046,18 +1055,88 @@ class MaximoApp(tk.Tk):
             logging.exception("No se pudo registrar la sesión OT")
 
     def on_close(self):
-        """Cierre ordenado: cierra navegadores visibles y elimina sus perfiles temporales."""
+        """Muestra el cierre ordenado y evita dejar perfiles Edge en uso."""
+        if self._closing:
+            return
+        self._closing = True
+        if self.auto_update_job is not None:
+            try:
+                self.after_cancel(self.auto_update_job)
+            except Exception:
+                pass
+            self.auto_update_job = None
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Cerrando Cliente Maximo")
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+        dialog.grab_set()
+
+        status = tk.StringVar(value="Preparando cierre ordenado…")
+        ttk.Label(dialog, text="Cerrando Cliente Maximo", font=("Segoe UI", 11, "bold")).pack(
+            anchor="w", padx=22, pady=(18, 6)
+        )
+        ttk.Label(
+            dialog,
+            text="La aplicación terminará cuando finalicen las tareas indicadas.",
+            wraplength=400,
+        ).pack(anchor="w", padx=22, pady=(0, 10))
+        ttk.Label(dialog, textvariable=status, wraplength=400).pack(
+            anchor="w", padx=22, pady=(0, 18)
+        )
+        dialog.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+        threading.Thread(
+            target=self._close_worker,
+            args=(dialog, status),
+            daemon=True,
+        ).start()
+
+    def _close_worker(self, dialog, status_var):
+        """Espera las tareas activas, cierra Edge y elimina los perfiles propios."""
+        labels = (
+            (self.update_lock, "Esperando a que termine la actualización de Maximo…"),
+            (self.reconcile_lock, "Esperando a que termine la conciliación de OT no activas…"),
+            (self.credential_test_lock, "Esperando a que termine la prueba de credenciales…"),
+        )
+        while True:
+            pending = [label for lock, label in labels if lock.locked()]
+            if not pending:
+                break
+            message = pending[0]
+            self.after(0, lambda text=message: status_var.set(text))
+            time.sleep(0.25)
+
         sessions = list(getattr(self, "ot_sessions", []) or [])
-        for driver, profile_dir in sessions:
+        for index, (driver, profile_dir) in enumerate(sessions, start=1):
+            self.after(0, lambda i=index, total=len(sessions): status_var.set(
+                f"Cerrando sesión de Edge {i} de {total}…"
+            ))
             try:
                 driver.quit()
             except Exception:
-                pass
+                logging.warning("No se pudo cerrar una sesión Edge durante el cierre.", exc_info=True)
+            self.after(0, lambda i=index, total=len(sessions): status_var.set(
+                f"Eliminando perfil temporal de Edge {i} de {total}…"
+            ))
             try:
                 cleanup_edge_profile(profile_dir)
             except Exception:
-                pass
-        self.destroy()
+                logging.warning("No se pudo limpiar un perfil Edge durante el cierre.", exc_info=True)
+
+        self.after(0, lambda: self._finish_close(dialog, status_var))
+
+    def _finish_close(self, dialog, status_var):
+        status_var.set("Cierre completado.")
+        try:
+            dialog.grab_release()
+            dialog.destroy()
+        finally:
+            self.destroy()
 
 if __name__ == "__main__":
     app = MaximoApp()
