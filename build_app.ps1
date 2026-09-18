@@ -52,6 +52,7 @@ $env:NUITKA_CACHE_DIR = $cacheDir
 $nuitkaArguments = @(
     "gui_main.py",
     "--standalone",
+    "--assume-yes-for-downloads",
     "--enable-plugin=tk-inter",
     "--include-package=lxml",
     "--include-data-file=$projectRoot\icon.ico=icon.ico",
