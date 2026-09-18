@@ -60,6 +60,10 @@ class MaximoApp(tk.Tk):
         super().__init__()
         self.title(f"Cliente Maximo {format_version_tag(version.APP_VERSION)}")
         self.geometry("1600x800")
+        if os.name == "nt":
+            # Aprovecha el área de trabajo real del monitor y evita que la
+            # barra de estado quede fuera de una resolución más baja.
+            self.after_idle(lambda: self.state("zoomed"))
         icon_path = Path(BASE_DIR) / "icon.ico"
         if icon_path.exists():
             try:
@@ -128,7 +132,6 @@ class MaximoApp(tk.Tk):
     # ---------- UI ----------
     def _build_ui(self):
         self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill="both", expand=True)
 
         # Pestaña LISTADO
         self.list_frame = ttk.Frame(self.notebook)
@@ -145,6 +148,9 @@ class MaximoApp(tk.Tk):
         status_bar = ttk.Label(self, textvariable=self.status_var,
                                anchor="w", relief="sunken")
         status_bar.pack(fill="x", side="bottom")
+        # Empaquetar el Notebook después garantiza que ceda espacio a la barra
+        # inferior, incluso cuando la tabla necesita mucha altura.
+        self.notebook.pack(fill="both", expand=True)
 
         # Mostrar, si existe, el último estado correcto guardado
         self._load_last_status_into_statusbar()
@@ -831,11 +837,30 @@ class MaximoApp(tk.Tk):
 
     def _reconcile_inactive_worker(self, batch_size):
         try:
+            pending = inactive_tracking_candidate_count()
+            reviewed = min(batch_size, pending)
+            if not pending:
+                self.after(0, lambda: self.status_var.set("✓ Sin OT no activas pendientes de revisar."))
+                return
+            self.after(
+                0,
+                lambda: self.status_var.set(
+                    f"⏳ Revisando {reviewed} OT no activas en segundo plano…"
+                ),
+            )
             changed = reconcile_inactive_tracking(limit=batch_size)
-            if changed:
-                self.after(0, self.update_table)
+
+            def on_done():
+                if changed:
+                    self.update_table()
+                self.status_var.set(
+                    f"✓ Conciliación automática: {reviewed} OT revisadas, "
+                    f"{changed} seguimientos actualizados."
+                )
+            self.after(0, on_done)
         except Exception as exc:
             logging.warning("Conciliación en segundo plano falló: %s", exc)
+            self.after(0, lambda: self.status_var.set("⚠ Error al conciliar OT no activas; consulta el log."))
         finally:
             self.reconcile_lock.release()
 
