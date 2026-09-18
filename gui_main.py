@@ -1209,6 +1209,9 @@ class MaximoApp(tk.Tk):
             self.destroy()
 
 if __name__ == "__main__":
+    # Ejecuta la migración de datos usando la carpeta desde la que se abrió el
+    # exe antiguo antes de redirigirlo a la instalación gestionada.
+    load_config()
     if not start_managed_install_if_needed():
         app = MaximoApp()
         app.mainloop()
