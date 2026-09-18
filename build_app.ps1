@@ -98,5 +98,9 @@ if (-not $KeepBuild) {
         Remove-Item -Recurse -Force
 }
 
+$packagePath = Join-Path $outputDir "MaximoDesktop-v$version-windows.zip"
+Compress-Archive -Path (Join-Path $distribution.FullName "*") -DestinationPath $packagePath -Force
+
 Write-Host "Compilación completada: $($distribution.FullName)" -ForegroundColor Green
 Write-Host "Distribuye el contenido completo de esa carpeta, no solo el .exe."
+Write-Host "Paquete para la release: $packagePath" -ForegroundColor Green

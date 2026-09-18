@@ -2,13 +2,14 @@
 import threading
 import tkinter as tk
 import os
+import sys
 import webbrowser
 from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
 
 from config import load_config, save_config, AppConfig, credentials_configured
 from app_paths import (
-    APP_ROOT, BACKUP_DIR, BASE_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR,
+    APP_ROOT, BACKUP_DIR, BASE_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR, UPDATE_CACHE_DIR,
     EDGE_PROFILE_DIR,
     EXPORT_DIR, LOG_DIR,
     TRACKING_OPTIONS_PATH,
@@ -29,7 +30,9 @@ import logging
 from logging.handlers import RotatingFileHandler
 from maintenance import run_maintenance
 import version
-from update_checker import fetch_latest_release, is_newer, format_version_tag
+from update_checker import (LatestRelease, download_release_asset, fetch_latest_release,
+                            format_version_tag, is_newer)
+from update_installer import start_update
 from pathlib import Path
 import time
 
@@ -82,6 +85,8 @@ class MaximoApp(tk.Tk):
         self.credential_test_lock = threading.Lock()
         self.ot_sessions = []  # sesiones Edge visibles (OT)
         self._closing = False
+        self._latest_release: LatestRelease | None = None
+        self._update_installing = False
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(500, lambda: self.check_updates(notify_popup=True))
         init_db()
@@ -347,6 +352,8 @@ class MaximoApp(tk.Tk):
         ttk.Button(btns, text="Buscar actualizaciones", command=lambda: self.check_updates(False)).pack(side="left")
         self.btn_open = ttk.Button(btns, text="Abrir release", command=self._open_latest_release)
         self.btn_open.pack(side="left", padx=8)
+        self.btn_install = ttk.Button(btns, text="Descargar e instalar", command=self._install_latest_release)
+        self.btn_install.pack(side="left", padx=8)
 
         self._refresh_update_block()
 
@@ -982,6 +989,7 @@ class MaximoApp(tk.Tk):
             self.cfg.latest_release_tag = latest.tag
             self.cfg.latest_release_url = latest.html_url
             self.cfg.latest_release_checked_at = latest.checked_at
+            self._latest_release = latest
             save_config(self.cfg)
 
             def on_ui():
@@ -1021,6 +1029,55 @@ class MaximoApp(tk.Tk):
         if url:
             webbrowser.open(url)
 
+    def _install_latest_release(self):
+        release = self._latest_release
+        if not release or not is_newer(release.tag, version.APP_VERSION):
+            messagebox.showinfo("Actualización", "No hay una actualización disponible para instalar.", parent=self)
+            return
+        if not release.asset_url:
+            messagebox.showwarning("Actualización", "La release no incluye el ZIP de Windows.", parent=self)
+            return
+        if not messagebox.askyesno(
+            "Instalar actualización",
+            f"Se descargará {format_version_tag(release.tag)} y Maximo Desktop se reiniciará.\n\n"
+            "La configuración, credenciales y base de datos no se modificarán.", parent=self):
+            return
+        self._update_installing = True
+        self.status_var.set(f"Descargando {format_version_tag(release.tag)}…")
+        self.btn_install.config(state="disabled")
+        threading.Thread(target=self._download_and_install, args=(release,), daemon=True).start()
+
+    def _download_and_install(self, release: LatestRelease):
+        try:
+            package_dir = download_release_asset(release, UPDATE_CACHE_DIR / release.tag)
+            self.after(0, lambda: self._apply_downloaded_update(package_dir, release.tag))
+        except Exception as exc:
+            logging.exception("No se pudo descargar la actualización")
+            self.after(0, lambda: self._update_install_failed(str(exc)))
+
+    def _update_install_failed(self, error: str):
+        self._update_installing = False
+        self._refresh_update_block()
+        self.status_var.set("No se pudo descargar la actualización.")
+        messagebox.showerror("Actualización", f"No se pudo preparar la actualización:\n{error}", parent=self)
+
+    def _apply_downloaded_update(self, package_dir: Path, tag: str):
+        if not messagebox.askyesno(
+            "Actualizar ahora",
+            f"{format_version_tag(tag)} está lista. La aplicación se cerrará y se reiniciará actualizada.", parent=self):
+            self._update_installing = False
+            self._refresh_update_block()
+            return
+        executable = Path(sys.executable)
+        if executable.suffix.lower() != ".exe":
+            self._update_install_failed("La instalación automática solo está disponible en la versión distribuida para Windows.")
+            return
+        try:
+            start_update(executable, package_dir)
+            self.destroy()
+        except Exception as exc:
+            self._update_install_failed(str(exc))
+
     def _refresh_update_block(self):
         """
         Actualiza labels/botones del bloque de Actualizaciones en Configuración.
@@ -1045,6 +1102,10 @@ class MaximoApp(tk.Tk):
 
         if hasattr(self, "btn_open"):
             self.btn_open.config(state=("normal" if url else "disabled"))
+        if hasattr(self, "btn_install"):
+            can_install = bool(self._latest_release and self._latest_release.asset_url and
+                               is_newer(raw_tag, version.APP_VERSION) and not self._update_installing)
+            self.btn_install.config(state=("normal" if can_install else "disabled"))
 
 
 
