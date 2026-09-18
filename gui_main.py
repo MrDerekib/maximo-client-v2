@@ -50,6 +50,8 @@ logging.basicConfig(
 logging.getLogger("selenium").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
+CLOSE_PROGRESS_MIN_SECONDS = 0.8
+
 logging.info(f"App Version: {version.APP_VERSION} - Iniciando la aplicación")
 
 
@@ -1098,6 +1100,7 @@ class MaximoApp(tk.Tk):
 
     def _close_worker(self, dialog, status_var):
         """Espera las tareas activas, cierra Edge y elimina los perfiles propios."""
+        started = time.monotonic()
         labels = (
             (self.update_lock, "Esperando a que termine la actualización de Maximo…"),
             (self.reconcile_lock, "Esperando a que termine la conciliación de OT no activas…"),
@@ -1128,6 +1131,11 @@ class MaximoApp(tk.Tk):
             except Exception:
                 logging.warning("No se pudo limpiar un perfil Edge durante el cierre.", exc_info=True)
 
+        # Sin tareas pendientes el diálogo podría cerrarse antes del primer
+        # repintado de Windows. Se mantiene visible un instante breve.
+        remaining = CLOSE_PROGRESS_MIN_SECONDS - (time.monotonic() - started)
+        if remaining > 0:
+            time.sleep(remaining)
         self.after(0, lambda: self._finish_close(dialog, status_var))
 
     def _finish_close(self, dialog, status_var):

@@ -75,7 +75,8 @@ class AccessTests(unittest.TestCase):
             after=lambda _delay, callback: callback(),
         )
         status = Mock()
-        with patch.object(gui_main, "cleanup_edge_profile") as cleanup:
+        with patch.object(gui_main, "cleanup_edge_profile") as cleanup, \
+             patch.object(gui_main, "CLOSE_PROGRESS_MIN_SECONDS", 0):
             gui_main.MaximoApp._close_worker(app, Mock(), status)
         driver.quit.assert_called_once()
         cleanup.assert_called_once_with("C:/profile")
