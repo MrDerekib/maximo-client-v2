@@ -33,6 +33,7 @@ import version
 from update_checker import (LatestRelease, download_release_asset, fetch_latest_release,
                             format_version_tag, is_newer)
 from update_installer import start_update
+from managed_install import start_managed_install_if_needed
 from pathlib import Path
 import time
 
@@ -1208,5 +1209,6 @@ class MaximoApp(tk.Tk):
             self.destroy()
 
 if __name__ == "__main__":
-    app = MaximoApp()
-    app.mainloop()
+    if not start_managed_install_if_needed():
+        app = MaximoApp()
+        app.mainloop()

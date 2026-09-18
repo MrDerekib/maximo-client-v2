@@ -31,6 +31,7 @@ EXPORT_DIR = CACHE_DIR / "exports"
 UPDATE_CACHE_DIR = CACHE_DIR / "updates"
 EDGE_PROFILE_DIR = CACHE_DIR / "edge-profiles"
 CUSTOM_DIR = APP_ROOT / "custom"
+MANAGED_APP_DIR = APP_ROOT / "app"
 
 CONFIG_PATH = CONFIG_DIR / "config.json"
 CREDENTIAL_PATH = CONFIG_DIR / "credentials.dat"
