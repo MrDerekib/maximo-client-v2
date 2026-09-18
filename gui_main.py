@@ -380,9 +380,14 @@ class MaximoApp(tk.Tk):
             maintenance_frame, from_=1, to=100, width=6,
             textvariable=self.reconciliation_batch_var,
         ).grid(row=1, column=1, sticky="w", pady=4)
-        ttk.Label(maintenance_frame, text="(1–100; se aplica tras guardar la configuración)").grid(
+        ttk.Label(maintenance_frame, text="(1–100; se aplica tras guardar mantenimiento)").grid(
             row=1, column=2, sticky="w", padx=6, pady=4
         )
+        ttk.Button(
+            maintenance_frame,
+            text="Guardar mantenimiento",
+            command=self.save_maintenance_from_ui,
+        ).grid(row=1, column=3, sticky="w", padx=8, pady=4)
 
         maintenance_buttons = ttk.Frame(maintenance_frame)
         maintenance_buttons.grid(row=2, column=0, columnspan=3, sticky="w", padx=8, pady=(6, 8))
@@ -426,6 +431,20 @@ class MaximoApp(tk.Tk):
 
         # Siempre reconfiguramos el auto-update según la nueva config
         self.schedule_auto_update()
+
+    def save_maintenance_from_ui(self):
+        """Guarda solo los ajustes de conciliación, sin tocar credenciales."""
+        self.cfg.reconciliation_enabled = self.reconciliation_enabled_var.get()
+        self.cfg.reconciliation_batch_size = min(100, max(1, self.reconciliation_batch_var.get() or 5))
+        self.reconciliation_batch_var.set(self.cfg.reconciliation_batch_size)
+        save_config(self.cfg)
+        logging.info(
+            "Mantenimiento guardado: conciliación automática=%s, lote=%d",
+            self.cfg.reconciliation_enabled,
+            self.cfg.reconciliation_batch_size,
+        )
+        self.status_var.set("✓ Ajustes de mantenimiento guardados.")
+        messagebox.showinfo("Mantenimiento", "Ajustes de mantenimiento guardados.", parent=self)
 
     def test_credentials_threaded(self):
         """Prueba los valores escritos sin persistirlos ni bloquear la interfaz."""
