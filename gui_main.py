@@ -13,7 +13,15 @@ from app_paths import (
     EXPORT_DIR, LOG_DIR,
     TRACKING_OPTIONS_PATH,
 )
-from db import delete_inactive_record, fetch_data, init_db, update_seguimiento
+from db import (
+    delete_all_inactive_records,
+    delete_inactive_record,
+    fetch_data,
+    inactive_record_count,
+    inactive_tracking_candidate_count,
+    init_db,
+    update_seguimiento,
+)
 from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
 from updater import reconcile_inactive_tracking, run_update
 from filter_panel import FilterPanel, bind_edit_menu
@@ -354,6 +362,41 @@ class MaximoApp(tk.Tk):
             row=len(paths), column=0, columnspan=2, sticky="w", padx=8, pady=8
         )
 
+        maintenance_frame = ttk.LabelFrame(frame, text="Mantenimiento")
+        maintenance_frame.pack(fill="x", padx=10, pady=10)
+
+        self.reconciliation_enabled_var = tk.BooleanVar()
+        ttk.Checkbutton(
+            maintenance_frame,
+            text="Actualizar en segundo plano el estado de OT no activas",
+            variable=self.reconciliation_enabled_var,
+        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=8, pady=(8, 4))
+
+        ttk.Label(maintenance_frame, text="OT por lote automático:").grid(
+            row=1, column=0, sticky="e", padx=8, pady=4
+        )
+        self.reconciliation_batch_var = tk.IntVar()
+        tk.Spinbox(
+            maintenance_frame, from_=1, to=100, width=6,
+            textvariable=self.reconciliation_batch_var,
+        ).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(maintenance_frame, text="(1–100; se aplica tras guardar la configuración)").grid(
+            row=1, column=2, sticky="w", padx=6, pady=4
+        )
+
+        maintenance_buttons = ttk.Frame(maintenance_frame)
+        maintenance_buttons.grid(row=2, column=0, columnspan=3, sticky="w", padx=8, pady=(6, 8))
+        ttk.Button(
+            maintenance_buttons,
+            text="Revisar todas las OT pendientes ahora…",
+            command=self.start_priority_reconciliation,
+        ).pack(side="left")
+        ttk.Button(
+            maintenance_buttons,
+            text="Eliminar todos los registros no activos…",
+            command=self.delete_all_inactive_from_ui,
+        ).pack(side="left", padx=8)
+
         # Añadir el autor después del bloque de actualizaciones
         ttk.Label(frame, text="© Joan Camps (jcamp@indra.es)").pack(anchor="w", padx=10, pady=10)
 
@@ -363,6 +406,8 @@ class MaximoApp(tk.Tk):
         self.pass_var.set(self.cfg.password)
         self.auto_update_var.set(self.cfg.auto_update_enabled)
         self.interval_var.set(self.cfg.auto_update_interval_min)
+        self.reconciliation_enabled_var.set(getattr(self.cfg, "reconciliation_enabled", True))
+        self.reconciliation_batch_var.set(getattr(self.cfg, "reconciliation_batch_size", 5))
 
         self.filter_panel.refresh_choices()
 
@@ -371,6 +416,8 @@ class MaximoApp(tk.Tk):
         self.cfg.password = self.pass_var.get()
         self.cfg.auto_update_enabled = self.auto_update_var.get()
         self.cfg.auto_update_interval_min = max(1, self.interval_var.get() or 5)
+        self.cfg.reconciliation_enabled = self.reconciliation_enabled_var.get()
+        self.cfg.reconciliation_batch_size = min(100, max(1, self.reconciliation_batch_var.get() or 5))
 
         save_config(self.cfg)
 
@@ -605,6 +652,70 @@ class MaximoApp(tk.Tk):
             messagebox.showwarning("Registro no eliminado", "La OT ya no cumple la condición de no activa.", parent=self)
         self.update_table()
 
+    def delete_all_inactive_from_ui(self):
+        count = inactive_record_count()
+        if not count:
+            messagebox.showinfo("Mantenimiento", "No hay registros no activos para eliminar.", parent=self)
+            return
+        if not messagebox.askyesno(
+            "Eliminar registros no activos",
+            f"Se eliminarán {count} registros que ya no aparecen en el último listado de Maximo.\n\n"
+            "Solo se borrarán de la base local y esta acción no se puede deshacer desde la aplicación.\n\n"
+            "¿Continuar?",
+            parent=self,
+        ):
+            return
+        deleted = delete_all_inactive_records()
+        self.update_table()
+        messagebox.showinfo("Mantenimiento", f"Se han eliminado {deleted} registros no activos.", parent=self)
+
+    def start_priority_reconciliation(self):
+        """Revisa todas las OT pendientes, reservando la actualización normal."""
+        if not self._ensure_credentials():
+            return
+        count = inactive_tracking_candidate_count(minimum_age_hours=None)
+        if not count:
+            messagebox.showinfo("Mantenimiento", "No hay OT no activas pendientes de revisar.", parent=self)
+            return
+        if not messagebox.askyesno(
+            "Revisión prioritaria",
+            f"Se revisarán ahora {count} OT no activas.\n\n"
+            "La actualización normal de Maximo quedará en espera hasta que termine. "
+            "La operación puede tardar varios minutos.\n\n¿Iniciar revisión?",
+            parent=self,
+        ):
+            return
+        if not self.update_lock.acquire(blocking=False):
+            messagebox.showinfo("Mantenimiento", "Hay una actualización de Maximo en curso. Inténtalo al terminar.", parent=self)
+            return
+        if not self.reconcile_lock.acquire(blocking=False):
+            self.update_lock.release()
+            messagebox.showinfo("Mantenimiento", "Ya hay una revisión de OT en curso. Inténtalo al terminar.", parent=self)
+            return
+        threading.Thread(target=self._priority_reconcile_worker, args=(count,), daemon=True).start()
+
+    def _priority_reconcile_worker(self, expected_count):
+        try:
+            self.after(0, lambda: self.status_var.set("⏳ Revisando OT no activas de forma prioritaria…"))
+            changed = reconcile_inactive_tracking(limit=None, minimum_age_hours=None)
+
+            def on_done():
+                self.update_table()
+                self.status_var.set(f"✅ Revisión prioritaria completada: {changed} seguimientos actualizados.")
+                messagebox.showinfo(
+                    "Mantenimiento",
+                    f"Revisión completada.\n\nOT revisadas: {expected_count}\nSeguimientos actualizados: {changed}",
+                    parent=self,
+                )
+            self.after(0, on_done)
+        except Exception as exc:
+            logging.warning("Revisión prioritaria de OT inactivas falló: %s", exc)
+            error = str(exc)
+            self.after(0, lambda: messagebox.showerror("Mantenimiento", f"Error en la revisión prioritaria:\n{error}", parent=self))
+        finally:
+            self.reconcile_lock.release()
+            self.update_lock.release()
+
     # ---------- Actualización (manual / auto) ----------
     def update_now_threaded(self, show_popup: bool = True):
         # Comprobar credenciales antes de lanzar el hilo
@@ -691,13 +802,17 @@ class MaximoApp(tk.Tk):
 
     def start_inactive_reconciliation(self):
         """Inicia una revisión silenciosa sin bloquear el siguiente listado."""
+        if not getattr(self.cfg, "reconciliation_enabled", True):
+            logging.info("Conciliación automática de OT inactivas desactivada por configuración.")
+            return
         if not self.reconcile_lock.acquire(blocking=False):
             return
-        threading.Thread(target=self._reconcile_inactive_worker, daemon=True).start()
+        batch_size = min(100, max(1, int(getattr(self.cfg, "reconciliation_batch_size", 5))))
+        threading.Thread(target=self._reconcile_inactive_worker, args=(batch_size,), daemon=True).start()
 
-    def _reconcile_inactive_worker(self):
+    def _reconcile_inactive_worker(self, batch_size):
         try:
-            changed = reconcile_inactive_tracking()
+            changed = reconcile_inactive_tracking(limit=batch_size)
             if changed:
                 self.after(0, self.update_table)
         except Exception as exc:

@@ -1,6 +1,7 @@
 import sqlite3
 import unittest
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -81,6 +82,16 @@ class FilterTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM maximo WHERE OT='2'").fetchone()[0], 0)
 
+    def test_delete_all_inactive_records_keeps_active_rows(self):
+        import pandas as pd
+        db.update_database_from_df(pd.DataFrame([
+            ("1", "Radio cabina", "001", "2026-01-01", "TMB", "REP", "EN TALLER", "LAB")
+        ]))
+        self.assertEqual(db.inactive_record_count(), 3)
+        self.assertEqual(db.delete_all_inactive_records(), 3)
+        with closing(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(conn.execute("SELECT OT FROM maximo ORDER BY OT").fetchall(), [("1",)])
+
     def test_inactive_tracking_candidates_are_reconciled_safely(self):
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute("UPDATE maximo SET Activo = 0, Seguimiento = 'EN TALLER' WHERE OT = '1'")
@@ -95,6 +106,16 @@ class FilterTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT Seguimiento FROM maximo WHERE OT='2'").fetchone()[0], "APPR")
         self.assertTrue(db.apply_reconciled_status("2", "DAR SALIDA"))
         self.assertFalse(db.apply_reconciled_status("3", "DAR SALIDA"))
+
+    def test_priority_candidates_ignore_the_24_hour_cooldown(self):
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute(
+                "UPDATE maximo SET Activo = 0, Seguimiento = 'EN TALLER', Ultima_comprobacion_estado = ? WHERE OT = '1'",
+                (datetime.now().isoformat(timespec="seconds"),),
+            )
+            conn.commit()
+        self.assertEqual(db.inactive_tracking_candidates(), [])
+        self.assertEqual(db.inactive_tracking_candidates(limit=None, minimum_age_hours=None), [("1", "EN TALLER")])
 
     def test_migration_preserves_original_backup_and_runs_once(self):
         with closing(sqlite3.connect(self.path)) as conn:

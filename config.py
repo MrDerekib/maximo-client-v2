@@ -30,6 +30,8 @@ class AppConfig:
     db_path: str = str(DB_PATH)
     auto_update_enabled: bool = False
     auto_update_interval_min: int = 10
+    reconciliation_enabled: bool = True
+    reconciliation_batch_size: int = 5
     filters: dict | None = None
     last_status: dict | None = None
     latest_release_tag: str = ""
@@ -40,6 +42,10 @@ class AppConfig:
         self.download_dir = str(DOWNLOAD_DIR)
         self.dest_folder = str(EXPORT_DIR)
         self.db_path = str(DB_PATH)
+        try:
+            self.reconciliation_batch_size = min(100, max(1, int(self.reconciliation_batch_size)))
+        except (TypeError, ValueError):
+            self.reconciliation_batch_size = 5
         if self.filters is None:
             self.filters = {"mx38_tfrow_[C:26]_txt-tb": "=LAB-BAD"}
 

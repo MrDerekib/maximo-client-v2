@@ -188,26 +188,56 @@ def delete_inactive_record(ot: str) -> bool:
     return deleted
 
 
+def inactive_record_count() -> int:
+    """Cuenta los registros que ya no aparecieron en la última importación correcta."""
+    conn = get_connection()
+    try:
+        return conn.execute("SELECT COUNT(*) FROM maximo WHERE Activo = 0").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def delete_all_inactive_records() -> int:
+    """Elimina exclusivamente registros no activos de la base local."""
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM maximo WHERE Activo = 0")
+        conn.commit()
+        deleted = cur.rowcount
+    finally:
+        conn.close()
+    logging.info("BD: %d registros no activos eliminados.", deleted)
+    return deleted
+
+
 INACTIVE_RECONCILIATION_TRACKING = ("PDTE CONFIRMAR", "EN TALLER", "APPR", "INPRG")
 
 
-def inactive_tracking_candidates(limit: int = 5, minimum_age_hours: int = 24) -> List[Tuple[str, str]]:
+def inactive_tracking_candidates(limit: int | None = 5,
+                                minimum_age_hours: int | None = 24) -> List[Tuple[str, str]]:
     """Devuelve OT históricas con seguimientos que deben contrastarse en Maximo."""
-    cutoff = (datetime.now() - timedelta(hours=minimum_age_hours)).isoformat(timespec="seconds")
     conn = get_connection()
     try:
         placeholders = ", ".join("?" for _ in INACTIVE_RECONCILIATION_TRACKING)
-        rows = conn.execute(
-            f"""SELECT OT, Seguimiento FROM maximo
-               WHERE Activo = 0 AND Seguimiento IN ({placeholders})
-                 AND (Ultima_comprobacion_estado IS NULL OR Ultima_comprobacion_estado < ?)
-               ORDER BY COALESCE(Ultima_comprobacion_estado, ''), OT
-               LIMIT ?""",
-            (*INACTIVE_RECONCILIATION_TRACKING, cutoff, limit),
-        ).fetchall()
+        query = f"SELECT OT, Seguimiento FROM maximo WHERE Activo = 0 AND Seguimiento IN ({placeholders})"
+        params = list(INACTIVE_RECONCILIATION_TRACKING)
+        if minimum_age_hours is not None:
+            cutoff = (datetime.now() - timedelta(hours=minimum_age_hours)).isoformat(timespec="seconds")
+            query += " AND (Ultima_comprobacion_estado IS NULL OR Ultima_comprobacion_estado < ?)"
+            params.append(cutoff)
+        query += " ORDER BY COALESCE(Ultima_comprobacion_estado, ''), OT"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        rows = conn.execute(query, params).fetchall()
         return rows
     finally:
         conn.close()
+
+
+def inactive_tracking_candidate_count(minimum_age_hours: int | None = 24) -> int:
+    """Cuenta las OT que una conciliación tendría que revisar."""
+    return len(inactive_tracking_candidates(limit=None, minimum_age_hours=minimum_age_hours))
 
 
 def apply_reconciled_status(ot: str, status: str, checked_at: str | None = None) -> bool:

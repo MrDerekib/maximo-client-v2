@@ -1,5 +1,14 @@
 # Historial de cambios
 
+## 0.9.8.4 — Mantenimiento de registros históricos
+
+- Configuración permite activar o desactivar la conciliación automática de OT
+  no activas y elegir el tamaño de lote, entre 1 y 100 OT.
+- Añadida una revisión prioritaria manual: procesa todas las OT pendientes en
+  una sola sesión y reserva las actualizaciones normales mientras termina.
+- Añadida una purga confirmada de todos los registros no activos, limitada a la
+  base de datos local.
+
 ## 0.9.8.3 — Estado de sincronización y filtros ágiles
 
 - Cada OT guarda si apareció en la última actualización correcta y cuándo se

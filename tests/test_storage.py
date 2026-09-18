@@ -23,6 +23,11 @@ class CredentialStoreTests(unittest.TestCase):
                     ("usuario-prueba", "secreto-prueba"),
                 )
 
+    def test_reconciliation_configuration_defaults_and_bounds(self):
+        self.assertTrue(config.AppConfig().reconciliation_enabled)
+        self.assertEqual(config.AppConfig(reconciliation_batch_size=0).reconciliation_batch_size, 1)
+        self.assertEqual(config.AppConfig(reconciliation_batch_size=500).reconciliation_batch_size, 100)
+
 
 class StorageMigrationTests(unittest.TestCase):
     def test_new_installation_copies_default_tracking_options(self):
