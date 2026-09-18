@@ -1,5 +1,10 @@
 # Historial de cambios
 
+## Próxima versión
+
+- El nombre visible de la aplicación y sus metadatos de Windows pasan a ser
+  «Maximo Desktop».
+
 ## 0.9.8.4 — Mantenimiento de registros históricos
 
 - Configuración permite activar o desactivar la conciliación automática de OT

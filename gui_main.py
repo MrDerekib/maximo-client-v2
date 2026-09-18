@@ -60,7 +60,7 @@ logging.info(f"App Version: {version.APP_VERSION} - Iniciando la aplicación")
 class MaximoApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"Cliente Maximo {format_version_tag(version.APP_VERSION)}")
+        self.title(f"Maximo Desktop {format_version_tag(version.APP_VERSION)}")
         self.geometry("1600x800")
         if os.name == "nt":
             # Aprovecha el área de trabajo real del monitor y evita que la
@@ -1069,14 +1069,14 @@ class MaximoApp(tk.Tk):
             self.auto_update_job = None
 
         dialog = tk.Toplevel(self)
-        dialog.title("Cerrando Cliente Maximo")
+        dialog.title("Cerrando Maximo Desktop")
         dialog.transient(self)
         dialog.resizable(False, False)
         dialog.protocol("WM_DELETE_WINDOW", lambda: None)
         dialog.grab_set()
 
         status = tk.StringVar(value="Preparando cierre ordenado…")
-        ttk.Label(dialog, text="Cerrando Cliente Maximo", font=("Segoe UI", 11, "bold")).pack(
+        ttk.Label(dialog, text="Cerrando Maximo Desktop", font=("Segoe UI", 11, "bold")).pack(
             anchor="w", padx=22, pady=(18, 6)
         )
         ttk.Label(

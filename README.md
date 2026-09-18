@@ -1,4 +1,4 @@
-# Maximo Client v2
+# Maximo Desktop
 
 Cliente de escritorio para **IBM Maximo** orientado a la **consulta, actualización y seguimiento de órdenes de trabajo (OT)** en reparación, con base de datos local y actualización automática.
 
