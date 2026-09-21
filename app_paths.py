@@ -15,11 +15,18 @@ def _program_dir() -> Path:
 PROGRAM_DIR = _program_dir()
 BASE_DIR = PROGRAM_DIR
 
+# La rama de interfaz puede ejecutarse con datos aislados sin afectar a la
+# instalación distribuida. No se activa en compilaciones ni ejecuciones normales.
+DEVELOPMENT_MODE = os.environ.get("MAXIMO_DESKTOP_DEV", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+APP_FOLDER_NAME = "MaximoDesktop-dev" if DEVELOPMENT_MODE else "MaximoDesktop"
+
 if os.name == "nt":
     _local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    APP_ROOT = _local_app_data / "MaximoDesktop"
+    APP_ROOT = _local_app_data / APP_FOLDER_NAME
 else:
-    APP_ROOT = Path.home() / ".local" / "share" / "MaximoDesktop"
+    APP_ROOT = Path.home() / ".local" / "share" / APP_FOLDER_NAME
 
 CONFIG_DIR = APP_ROOT / "config"
 DATA_DIR = APP_ROOT / "data"
