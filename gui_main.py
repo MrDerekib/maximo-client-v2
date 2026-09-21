@@ -29,7 +29,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from maintenance import run_maintenance
 import version
-from update_checker import (LatestRelease, download_release_asset, fetch_latest_release,
+from update_checker import (LatestRelease, UpdateDownloadCancelled, download_release_asset, fetch_latest_release,
                             format_version_tag, is_newer)
 from update_installer import start_update
 from managed_install import distributed_executable, start_managed_install_if_needed
@@ -70,18 +70,10 @@ class MaximoApp(tk.Tk):
             # barra de estado quede fuera de una resolución más baja.
             self.after_idle(lambda: self.state("zoomed"))
         icon_path = Path(BASE_DIR) / "icon.ico"
-        icon_png_path = Path(BASE_DIR) / "icon.png"
-        if icon_png_path.exists():
-            try:
-                # Tk aplica PNG de forma más fiable que ICO al icono de ventana.
-                self._window_icon_image = tk.PhotoImage(file=str(icon_png_path))
-                self.iconphoto(True, self._window_icon_image)
-                self.after_idle(self._apply_window_icon)
-            except Exception:
-                logging.warning("No se pudo aplicar icon.png a la ventana.", exc_info=True)
-        elif icon_path.exists():
+        if icon_path.exists():
             try:
                 self.iconbitmap(default=str(icon_path))
+                self.after_idle(lambda: self._apply_window_icon(icon_path))
             except Exception:
                 logging.warning("No se pudo aplicar icon.ico a la ventana.", exc_info=True)
         else:
@@ -99,6 +91,9 @@ class MaximoApp(tk.Tk):
         self._update_progress_window = None
         self._update_progress = None
         self._update_progress_status = None
+        self._update_cancel_event = None
+        self._update_cancel_button = None
+        self._app_update_locks_held = False
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(500, lambda: self.check_updates(notify_popup=True))
         init_db()
@@ -116,9 +111,9 @@ class MaximoApp(tk.Tk):
         if self.cfg.auto_update_enabled:
             self.schedule_auto_update()
 
-    def _apply_window_icon(self) -> None:
+    def _apply_window_icon(self, icon_path: Path) -> None:
         try:
-            self.iconphoto(True, self._window_icon_image)
+            self.iconbitmap(default=str(icon_path))
         except Exception:
             logging.warning("No se pudo reafirmar el icono de la ventana.", exc_info=True)
 
@@ -1066,29 +1061,89 @@ class MaximoApp(tk.Tk):
             "La configuración, credenciales y base de datos no se modificarán.", parent=self):
             return
         self._update_installing = True
+        self._update_cancel_event = threading.Event()
         self._show_update_progress(f"Descargando {format_version_tag(release.tag)}…")
         self.btn_install.config(state="disabled")
         threading.Thread(target=self._download_and_install, args=(release,), daemon=True).start()
 
     def _download_and_install(self, release: LatestRelease):
         try:
-            package_dir = download_release_asset(
-                release, UPDATE_CACHE_DIR / release.tag,
-                progress=lambda done, total: self.after(0, self._update_download_progress, done, total),
-                status=lambda message: self.after(0, self._update_progress_message, message),
-            )
+            if not self._reserve_maximo_tasks_for_app_update():
+                self.after(0, self._update_install_cancelled)
+                return
+            package_dir = None
+            last_error = None
+            for attempt in range(1, 4):
+                if self._update_cancel_event.is_set():
+                    raise UpdateDownloadCancelled("Descarga cancelada.")
+                self.after(0, self._update_progress_message,
+                           f"Descargando {format_version_tag(release.tag)} (intento {attempt} de 3)…")
+                try:
+                    package_dir = download_release_asset(
+                        release, UPDATE_CACHE_DIR / release.tag, timeout_sec=20,
+                        progress=lambda done, total: self.after(0, self._update_download_progress, done, total),
+                        status=lambda message: self.after(0, self._update_progress_message, message),
+                        cancel_event=self._update_cancel_event,
+                    )
+                    break
+                except UpdateDownloadCancelled:
+                    raise
+                except Exception as exc:
+                    last_error = exc
+                    logging.warning("Descarga de actualización, intento %s/3 falló: %s", attempt, exc)
+                    if attempt < 3:
+                        self.after(0, self._update_progress_message,
+                                   f"No hubo respuesta válida. Reintentando en {attempt * 2} segundos…")
+                        if self._update_cancel_event.wait(attempt * 2):
+                            raise UpdateDownloadCancelled("Descarga cancelada.")
+            if package_dir is None:
+                raise RuntimeError(f"La descarga falló tras 3 intentos: {last_error}")
             self.after(0, lambda: self._update_progress_message("Descarga completada. Paquete verificado."))
             self.after(500, lambda: self._apply_downloaded_update(package_dir, release.tag))
+        except UpdateDownloadCancelled:
+            self.after(0, self._update_install_cancelled)
         except Exception as exc:
             logging.exception("No se pudo descargar la actualización")
             self.after(0, lambda: self._update_install_failed(str(exc)))
 
+    def _reserve_maximo_tasks_for_app_update(self) -> bool:
+        """Reserva los dos trabajos Maximo mientras se descarga la aplicación."""
+        while not self._update_cancel_event.is_set():
+            if not self.update_lock.acquire(timeout=0.25):
+                self.after(0, self._update_progress_message,
+                           "Esperando a que termine la actualización de datos de Maximo…")
+                continue
+            if self.reconcile_lock.acquire(timeout=0.25):
+                self._app_update_locks_held = True
+                return True
+            self.update_lock.release()
+            self.after(0, self._update_progress_message,
+                       "Esperando a que termine la conciliación de OT…")
+        return False
+
+    def _release_app_update_locks(self):
+        if not self._app_update_locks_held:
+            return
+        self._app_update_locks_held = False
+        self.reconcile_lock.release()
+        self.update_lock.release()
+
     def _update_install_failed(self, error: str):
         self._close_update_progress()
         self._update_installing = False
+        self._release_app_update_locks()
         self._refresh_update_block()
         self.status_var.set("No se pudo descargar la actualización.")
         messagebox.showerror("Actualización", f"No se pudo preparar la actualización:\n{error}", parent=self)
+
+    def _update_install_cancelled(self):
+        if not self._update_installing:
+            return
+        self._close_update_progress()
+        self._update_installing = False
+        self._release_app_update_locks()
+        self._refresh_update_block()
+        messagebox.showinfo("Actualización", "La descarga de la actualización se ha cancelado.", parent=self)
 
     def _apply_downloaded_update(self, package_dir: Path, tag: str):
         self._close_update_progress()
@@ -1096,6 +1151,7 @@ class MaximoApp(tk.Tk):
             "Actualizar ahora",
             f"{format_version_tag(tag)} está lista. La aplicación se cerrará y se reiniciará actualizada.", parent=self):
             self._update_installing = False
+            self._release_app_update_locks()
             self._refresh_update_block()
             return
         executable = distributed_executable()
@@ -1104,6 +1160,7 @@ class MaximoApp(tk.Tk):
             return
         try:
             start_update(executable, package_dir)
+            self._release_app_update_locks()
             self.on_close()
         except Exception as exc:
             self._update_install_failed(str(exc))
@@ -1142,7 +1199,7 @@ class MaximoApp(tk.Tk):
         dialog.title("Actualizando Maximo Desktop")
         dialog.transient(self)
         dialog.resizable(False, False)
-        dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+        dialog.protocol("WM_DELETE_WINDOW", self._cancel_update_download)
         dialog.grab_set()
         ttk.Label(dialog, text="Actualizando Maximo Desktop", font=("Segoe UI", 11, "bold")).pack(
             anchor="w", padx=22, pady=(18, 6)
@@ -1158,6 +1215,10 @@ class MaximoApp(tk.Tk):
         )
         self._update_progress = ttk.Progressbar(dialog, length=330, mode="determinate")
         self._update_progress.pack(anchor="w", padx=22, pady=(0, 18))
+        self._update_cancel_button = ttk.Button(
+            dialog, text="Cancelar descarga", command=self._cancel_update_download
+        )
+        self._update_cancel_button.pack(anchor="e", padx=22, pady=(0, 18))
         self._update_progress_window = dialog
         dialog.update_idletasks()
         x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_width()) // 2
@@ -1191,6 +1252,13 @@ class MaximoApp(tk.Tk):
         self._update_progress_window = None
         self._update_progress = None
         self._update_progress_status = None
+        self._update_cancel_button = None
+
+    def _cancel_update_download(self):
+        if self._update_cancel_event is None or not self._update_installing:
+            return
+        self._update_cancel_event.set()
+        self._update_install_cancelled()
 
 
 

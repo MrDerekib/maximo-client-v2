@@ -13,6 +13,10 @@ from pathlib import Path
 
 LATEST_URL = "https://api.github.com/repos/MrDerekib/maximo-client-v2/releases/latest"
 
+
+class UpdateDownloadCancelled(RuntimeError):
+    """La descarga fue cancelada por el usuario."""
+
 @dataclass
 class LatestRelease:
     tag: str
@@ -65,7 +69,7 @@ def fetch_latest_release(timeout_sec: int = 5) -> LatestRelease:
 
 
 def download_release_asset(release: LatestRelease, destination: Path, timeout_sec: int = 30,
-                           progress=None, status=None) -> Path:
+                           progress=None, status=None, cancel_event=None) -> Path:
     """Descarga y extrae el ZIP de una release dentro de la caché local."""
     if not release.asset_url:
         raise RuntimeError("La release no incluye un paquete ZIP para Windows.")
@@ -74,12 +78,16 @@ def download_release_asset(release: LatestRelease, destination: Path, timeout_se
         shutil.rmtree(destination)
     destination.mkdir(parents=True)
     archive = destination / "update.zip"
+    if cancel_event and cancel_event.is_set():
+        raise UpdateDownloadCancelled("Descarga cancelada.")
     request = urllib.request.Request(release.asset_url, headers={"User-Agent": "MaximoDesktop"}, method="GET")
     digest = hashlib.sha256()
     with urllib.request.urlopen(request, timeout=timeout_sec) as response, archive.open("wb") as output:
         total = int(response.headers.get("Content-Length") or 0)
         downloaded = 0
         while True:
+            if cancel_event and cancel_event.is_set():
+                raise UpdateDownloadCancelled("Descarga cancelada.")
             chunk = response.read(1024 * 256)
             if not chunk:
                 break
@@ -90,6 +98,8 @@ def download_release_asset(release: LatestRelease, destination: Path, timeout_se
                 progress(downloaded, total)
     if status:
         status("Verificando la integridad SHA-256…")
+    if cancel_event and cancel_event.is_set():
+        raise UpdateDownloadCancelled("Descarga cancelada.")
     expected = (release.asset_digest or "").strip().lower()
     if not expected:
         raise RuntimeError("GitHub no ha publicado un SHA-256 para el paquete.")
@@ -100,6 +110,8 @@ def download_release_asset(release: LatestRelease, destination: Path, timeout_se
         raise RuntimeError("El SHA-256 del paquete no coincide con el publicado por GitHub.")
     if status:
         status("Validando el contenido del paquete…")
+    if cancel_event and cancel_event.is_set():
+        raise UpdateDownloadCancelled("Descarga cancelada.")
     extracted = destination / "files"
     extracted.mkdir()
     with zipfile.ZipFile(archive) as package:

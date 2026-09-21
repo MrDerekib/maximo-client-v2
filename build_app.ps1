@@ -56,7 +56,6 @@ $nuitkaArguments = @(
     "--enable-plugin=tk-inter",
     "--include-package=lxml",
     "--include-data-file=$projectRoot\icon.ico=icon.ico",
-    "--include-data-file=$projectRoot\icon.png=icon.png",
     "--include-data-file=$projectRoot\seguimiento_options.txt=seguimiento_options.txt",
     "--windows-icon-from-ico=$projectRoot\icon.ico",
     "--windows-console-mode=disable",
