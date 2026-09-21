@@ -70,16 +70,22 @@ class MaximoApp(tk.Tk):
             # barra de estado quede fuera de una resolución más baja.
             self.after_idle(lambda: self.state("zoomed"))
         icon_path = Path(BASE_DIR) / "icon.ico"
-        if icon_path.exists():
+        icon_png_path = Path(BASE_DIR) / "icon.png"
+        if icon_png_path.exists():
             try:
-                # ``default`` fija el icono de las ventanas Tk; repetirlo tras
-                # el primer repintado evita que Windows conserve el icono Tcl.
-                self.iconbitmap(default=str(icon_path))
-                self.after_idle(lambda: self._apply_window_icon(icon_path))
+                # Tk aplica PNG de forma más fiable que ICO al icono de ventana.
+                self._window_icon_image = tk.PhotoImage(file=str(icon_png_path))
+                self.iconphoto(True, self._window_icon_image)
+                self.after_idle(self._apply_window_icon)
             except Exception:
-                logging.warning("No se pudo aplicar icon.ico a la ventana (no crítico).", exc_info=True)
+                logging.warning("No se pudo aplicar icon.png a la ventana.", exc_info=True)
+        elif icon_path.exists():
+            try:
+                self.iconbitmap(default=str(icon_path))
+            except Exception:
+                logging.warning("No se pudo aplicar icon.ico a la ventana.", exc_info=True)
         else:
-            logging.debug("icon.ico no encontrado; se omite iconbitmap.")
+            logging.debug("No se encontró icono para la ventana.")
 
         self.cfg: AppConfig = load_config()
         self.auto_update_job = None  # ID del after() del auto-update
@@ -110,9 +116,9 @@ class MaximoApp(tk.Tk):
         if self.cfg.auto_update_enabled:
             self.schedule_auto_update()
 
-    def _apply_window_icon(self, icon_path: Path) -> None:
+    def _apply_window_icon(self) -> None:
         try:
-            self.iconbitmap(default=str(icon_path))
+            self.iconphoto(True, self._window_icon_image)
         except Exception:
             logging.warning("No se pudo reafirmar el icono de la ventana.", exc_info=True)
 
