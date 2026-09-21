@@ -40,10 +40,14 @@ QMainWindow { background: #f5f7fb; color: #172033; }
 QFrame#sidebar { background: #102a43; }
 QLabel#brand { color: white; font-size: 20px; font-weight: 700; }
 QLabel#subtitle { color: #9fb3c8; font-size: 11px; }
-QPushButton#nav { border: 0; border-radius: 8px; color: #d9e2ec; padding: 11px 14px; text-align: left; font-size: 13px; }
-QPushButton#nav:hover { background: #243b53; }
-QPushButton#nav:checked { background: #2f80ed; color: white; font-weight: 600; }
+QPushButton#nav { border: 1px solid transparent; border-radius: 8px; background: transparent; color: #e6f0ff; padding: 11px 14px; text-align: left; font-size: 13px; }
+QPushButton#nav:hover:!checked { background: #1e446b; border-color: #315a82; color: white; }
+QPushButton#nav:checked { background: #2f80ed; border-color: #4d9cff; color: white; font-weight: 700; }
 QFrame#card, QGroupBox { background: white; border: 1px solid #d9e2ec; border-radius: 10px; }
+QFrame#filtersCard { background: white; border: 1px solid #d9e2ec; border-radius: 10px; }
+QFrame#advancedFilters { background: #f8fafc; border-top: 1px solid #d9e2ec; }
+QLabel#filterHint { color: #627d98; font-size: 12px; }
+QLabel#filterChips { color: #1976d2; font-size: 12px; font-weight: 600; }
 QGroupBox { margin-top: 12px; padding: 12px; font-weight: 600; color: #334e68; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; }
 QLineEdit, QComboBox, QListWidget, QSpinBox { border: 1px solid #bcccdc; border-radius: 6px; padding: 7px; background: white; min-height: 18px; }
@@ -174,7 +178,7 @@ class MaximoDesktopWindow(QMainWindow):
     def _page_header(self, title, description, action=None):
         header = QWidget()
         row = QHBoxLayout(header)
-        row.setContentsMargins(30, 24, 30, 12)
+        row.setContentsMargins(0, 24, 0, 12)
         texts = QVBoxLayout()
         heading = QLabel(title)
         heading.setStyleSheet("font-size: 26px; font-weight: 700; color: #102a43;")
@@ -191,23 +195,26 @@ class MaximoDesktopWindow(QMainWindow):
     def _build_list_page(self):
         page = QWidget()
         outer = QVBoxLayout(page)
-        outer.setContentsMargins(0, 0, 0, 18)
+        outer.setContentsMargins(30, 0, 30, 18)
         update = QPushButton("↻  Actualizar Maximo", objectName="primary")
         update.clicked.connect(self.update_now)
         outer.addWidget(self._page_header("Órdenes de trabajo", "Consulta, filtra y gestiona el seguimiento local.", update))
 
-        search_card = QFrame(objectName="card")
-        search_layout = QGridLayout(search_card)
-        search_layout.setContentsMargins(18, 16, 18, 16)
-        search_layout.addWidget(QLabel("Cliente"), 0, 0)
+        search_card = QFrame(objectName="filtersCard")
+        search_layout = QVBoxLayout(search_card)
+        search_layout.setContentsMargins(18, 14, 18, 0)
+        search_layout.setSpacing(10)
+        toolbar = QGridLayout()
+        toolbar.setHorizontalSpacing(12)
+        toolbar.addWidget(QLabel("Cliente"), 0, 0)
         self.client_combo = QComboBox()
         self.client_combo.currentIndexChanged.connect(self.refresh_table)
-        search_layout.addWidget(self.client_combo, 1, 0)
-        search_layout.addWidget(QLabel("Buscar"), 0, 1)
+        toolbar.addWidget(self.client_combo, 1, 0)
+        toolbar.addWidget(QLabel("Buscar"), 0, 1)
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Número de serie, OT o descripción…")
         self.search_edit.returnPressed.connect(self.refresh_table)
-        search_layout.addWidget(self.search_edit, 1, 1)
+        toolbar.addWidget(self.search_edit, 1, 1)
         self.search_group = QButtonGroup(self)
         search_types = QWidget()
         types_layout = QHBoxLayout(search_types)
@@ -219,20 +226,26 @@ class MaximoDesktopWindow(QMainWindow):
             button.clicked.connect(self.refresh_table)
             self.search_group.addButton(button)
             types_layout.addWidget(button)
-        search_layout.addWidget(search_types, 1, 2)
+        toolbar.addWidget(search_types, 1, 2)
         search_button = QPushButton("Buscar")
         search_button.clicked.connect(self.refresh_table)
-        search_layout.addWidget(search_button, 1, 3)
-        outer.addWidget(search_card, 0, Qt.AlignHCenter)
-        search_card.setMaximumWidth(1500)
+        toolbar.addWidget(search_button, 1, 3)
+        self.more_filters_button = QPushButton("☷  Más filtros", checkable=True)
+        self.more_filters_button.toggled.connect(self.toggle_advanced_filters)
+        toolbar.addWidget(self.more_filters_button, 1, 4)
+        clear_button = QPushButton("Limpiar")
+        clear_button.clicked.connect(self.clear_filters)
+        toolbar.addWidget(clear_button, 1, 5)
+        toolbar.setColumnStretch(1, 1)
+        search_layout.addLayout(toolbar)
+        self.filter_chips = QLabel("Sin filtros", objectName="filterChips")
+        self.filter_chips.setVisible(False)
+        search_layout.addWidget(self.filter_chips)
 
-        self.advanced = QGroupBox("Filtros avanzados")
-        self.advanced.setCheckable(True)
-        self.advanced.setChecked(False)
-        self.advanced.toggled.connect(lambda visible: self.advanced_content.setVisible(visible))
-        advanced_layout = QVBoxLayout(self.advanced)
-        self.advanced_content = QWidget()
+        self.advanced_content = QFrame(objectName="advancedFilters")
         form = QGridLayout(self.advanced_content)
+        form.setContentsMargins(18, 14, 18, 14)
+        form.setHorizontalSpacing(14)
         self.equipment_edit = QLineEdit()
         self.equipment_edit.setPlaceholderText("Contiene texto…")
         self.equipment_edit.returnPressed.connect(self.refresh_table)
@@ -255,13 +268,11 @@ class MaximoDesktopWindow(QMainWindow):
         actions = QHBoxLayout()
         apply = QPushButton("Aplicar filtros", objectName="primary")
         apply.clicked.connect(self.refresh_table)
-        clear = QPushButton("Limpiar")
-        clear.clicked.connect(self.clear_filters)
-        actions.addStretch(); actions.addWidget(clear); actions.addWidget(apply)
+        actions.addWidget(QLabel("Combina cualquier filtro con la búsqueda principal.", objectName="filterHint")); actions.addStretch(); actions.addWidget(apply)
         form.addLayout(actions, 4, 0, 1, 3)
-        advanced_layout.addWidget(self.advanced_content)
         self.advanced_content.setVisible(False)
-        outer.addWidget(self.advanced)
+        search_layout.addWidget(self.advanced_content)
+        outer.addWidget(search_card)
 
         self.result_label = QLabel()
         self.result_label.setStyleSheet("color: #627d98; padding: 5px 2px;")
@@ -282,6 +293,10 @@ class MaximoDesktopWindow(QMainWindow):
                 header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
         outer.addWidget(self.table, 1)
         return page
+
+    def toggle_advanced_filters(self, expanded):
+        self.advanced_content.setVisible(expanded)
+        self.more_filters_button.setText("⌃  Ocultar filtros" if expanded else "☷  Más filtros")
 
     def _build_settings_page(self):
         page = QWidget()
@@ -344,6 +359,22 @@ class MaximoDesktopWindow(QMainWindow):
         values.update({"equipment": self.equipment_edit.text().strip(), "date_from": self.date_from.text().strip(), "date_to": self.date_to.text().strip()})
         return values
 
+    def active_filter_summary(self):
+        advanced = self.advanced_filters()
+        summary = []
+        if self.client_combo.currentText() != "Todos":
+            summary.append(f"Cliente: {self.client_combo.currentText()}")
+        if self.search_edit.text().strip():
+            summary.append(f"{self.search_field().replace('_', ' ')}: {self.search_edit.text().strip()}")
+        if advanced["equipment"]:
+            summary.append(f"Equipo: {advanced['equipment']}")
+        if advanced["date_from"] or advanced["date_to"]:
+            summary.append(f"Fechas: {advanced['date_from'] or '…'} — {advanced['date_to'] or '…'}")
+        for key, label in (("clients", "Clientes"), ("types", "Tipo"), ("tracking", "Seguimiento")):
+            if advanced[key]:
+                summary.append(f"{label}: {', '.join(advanced[key])}")
+        return summary
+
     def search_field(self):
         selected = self.search_group.checkedButton()
         return selected.property("field") if selected else "Nº_de_serie"
@@ -367,7 +398,10 @@ class MaximoDesktopWindow(QMainWindow):
                 if active == 0: item.setForeground(QColor("#718096"))
                 self.table.setItem(index, column, item)
         self.table.setSortingEnabled(True)
-        self.result_label.setText(f"{len(rows):,} resultados · {'Filtros aplicados' if any(self.advanced_filters().values()) or self.search_edit.text() else 'Sin filtros'}")
+        summary = self.active_filter_summary()
+        self.filter_chips.setVisible(bool(summary))
+        self.filter_chips.setText("Filtros activos · " + "   •   ".join(summary))
+        self.result_label.setText(f"{len(rows):,} resultados · {'Filtros aplicados' if summary else 'Sin filtros'}")
 
     def clear_filters(self):
         self.search_edit.clear(); self.client_combo.setCurrentText("Todos"); self.equipment_edit.clear(); self.date_from.clear(); self.date_to.clear()
