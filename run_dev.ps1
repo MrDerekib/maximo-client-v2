@@ -18,4 +18,4 @@ if ($null -eq $python) {
 }
 
 $env:MAXIMO_DESKTOP_DEV = "1"
-& $python (Join-Path $projectRoot "gui_main.py")
+& $python (Join-Path $projectRoot "ui_qt.py")
