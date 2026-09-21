@@ -73,7 +73,10 @@ class MaximoApp(tk.Tk):
         icon_path = Path(BASE_DIR) / "icon.ico"
         if icon_path.exists():
             try:
-                self.iconbitmap(str(icon_path))
+                # ``default`` fija el icono de las ventanas Tk; repetirlo tras
+                # el primer repintado evita que Windows conserve el icono Tcl.
+                self.iconbitmap(default=str(icon_path))
+                self.after_idle(lambda: self._apply_window_icon(icon_path))
             except Exception:
                 logging.warning("No se pudo aplicar icon.ico a la ventana (no crítico).", exc_info=True)
         else:
@@ -88,6 +91,8 @@ class MaximoApp(tk.Tk):
         self._closing = False
         self._latest_release: LatestRelease | None = None
         self._update_installing = False
+        self._update_progress_window = None
+        self._update_progress = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(500, lambda: self.check_updates(notify_popup=True))
         init_db()
@@ -104,6 +109,12 @@ class MaximoApp(tk.Tk):
         # Si auto-update está activado, programamos el timer
         if self.cfg.auto_update_enabled:
             self.schedule_auto_update()
+
+    def _apply_window_icon(self, icon_path: Path) -> None:
+        try:
+            self.iconbitmap(default=str(icon_path))
+        except Exception:
+            logging.warning("No se pudo reafirmar el icono de la ventana.", exc_info=True)
 
     def _ensure_credentials(self) -> bool:
         """
@@ -1044,25 +1055,31 @@ class MaximoApp(tk.Tk):
             "La configuración, credenciales y base de datos no se modificarán.", parent=self):
             return
         self._update_installing = True
-        self.status_var.set(f"Descargando {format_version_tag(release.tag)}…")
+        self._show_update_progress(f"Descargando {format_version_tag(release.tag)}…")
         self.btn_install.config(state="disabled")
         threading.Thread(target=self._download_and_install, args=(release,), daemon=True).start()
 
     def _download_and_install(self, release: LatestRelease):
         try:
-            package_dir = download_release_asset(release, UPDATE_CACHE_DIR / release.tag)
-            self.after(0, lambda: self._apply_downloaded_update(package_dir, release.tag))
+            package_dir = download_release_asset(
+                release, UPDATE_CACHE_DIR / release.tag,
+                progress=lambda done, total: self.after(0, self._update_download_progress, done, total),
+            )
+            self.after(0, lambda: self._update_progress_message("Descarga completada. Paquete verificado."))
+            self.after(500, lambda: self._apply_downloaded_update(package_dir, release.tag))
         except Exception as exc:
             logging.exception("No se pudo descargar la actualización")
             self.after(0, lambda: self._update_install_failed(str(exc)))
 
     def _update_install_failed(self, error: str):
+        self._close_update_progress()
         self._update_installing = False
         self._refresh_update_block()
         self.status_var.set("No se pudo descargar la actualización.")
         messagebox.showerror("Actualización", f"No se pudo preparar la actualización:\n{error}", parent=self)
 
     def _apply_downloaded_update(self, package_dir: Path, tag: str):
+        self._close_update_progress()
         if not messagebox.askyesno(
             "Actualizar ahora",
             f"{format_version_tag(tag)} está lista. La aplicación se cerrará y se reiniciará actualizada.", parent=self):
@@ -1075,7 +1092,7 @@ class MaximoApp(tk.Tk):
             return
         try:
             start_update(executable, package_dir)
-            self.destroy()
+            self.on_close()
         except Exception as exc:
             self._update_install_failed(str(exc))
 
@@ -1107,6 +1124,41 @@ class MaximoApp(tk.Tk):
             can_install = bool(self._latest_release and self._latest_release.asset_url and
                                is_newer(raw_tag, version.APP_VERSION) and not self._update_installing)
             self.btn_install.config(state=("normal" if can_install else "disabled"))
+
+    def _show_update_progress(self, message: str):
+        dialog = tk.Toplevel(self)
+        dialog.title("Actualizando Maximo Desktop")
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+        ttk.Label(dialog, text=message, padding=(24, 18)).pack()
+        self._update_progress = ttk.Progressbar(dialog, length=330, mode="determinate")
+        self._update_progress.pack(padx=24, pady=(0, 18))
+        self._update_progress_window = dialog
+        dialog.update_idletasks()
+        dialog.grab_set()
+
+    def _update_download_progress(self, downloaded: int, total: int):
+        if self._update_progress is None:
+            return
+        if total > 0:
+            self._update_progress.config(maximum=total, value=downloaded)
+
+    def _update_progress_message(self, message: str):
+        if self._update_progress_window is not None:
+            labels = self._update_progress_window.winfo_children()
+            if labels:
+                labels[0].config(text=message)
+
+    def _close_update_progress(self):
+        if self._update_progress_window is not None:
+            try:
+                self._update_progress_window.grab_release()
+                self._update_progress_window.destroy()
+            except tk.TclError:
+                pass
+        self._update_progress_window = None
+        self._update_progress = None
 
 
 

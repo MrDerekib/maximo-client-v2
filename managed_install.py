@@ -42,13 +42,13 @@ class _InstallProgress:
 
 def _distributed_executable() -> Path | None:
     """Obtiene el exe distribuido sin confundirlo con Python de desarrollo."""
-    for raw_path in (sys.argv[0], sys.executable):
-        try:
-            candidate = Path(raw_path).resolve()
-        except OSError:
-            continue
-        if candidate.suffix.lower() == ".exe" and candidate.exists():
-            return candidate
+    try:
+        # En Nuitka argv[0] es MaximoDesktop.exe; en desarrollo es el .py.
+        candidate = Path(sys.argv[0]).resolve()
+    except OSError:
+        return None
+    if candidate.name.lower() == "maximodesktop.exe" and candidate.exists():
+        return candidate
     return None
 
 

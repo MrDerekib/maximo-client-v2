@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import shutil
 import urllib.request
@@ -18,6 +19,7 @@ class LatestRelease:
     html_url: str
     checked_at: str  # ISO string
     asset_url: str = ""
+    asset_digest: str = ""
 
 
 
@@ -58,10 +60,12 @@ def fetch_latest_release(timeout_sec: int = 5) -> LatestRelease:
     zip_asset = next((asset for asset in assets if str(asset.get("name", "")).lower().endswith(".zip")), {})
     checked_at = datetime.now().isoformat(timespec="minutes")
     return LatestRelease(tag=tag, html_url=html_url, checked_at=checked_at,
-                         asset_url=str(zip_asset.get("browser_download_url") or ""))
+                         asset_url=str(zip_asset.get("browser_download_url") or ""),
+                         asset_digest=str(zip_asset.get("digest") or ""))
 
 
-def download_release_asset(release: LatestRelease, destination: Path, timeout_sec: int = 30) -> Path:
+def download_release_asset(release: LatestRelease, destination: Path, timeout_sec: int = 30,
+                           progress=None) -> Path:
     """Descarga y extrae el ZIP de una release dentro de la caché local."""
     if not release.asset_url:
         raise RuntimeError("La release no incluye un paquete ZIP para Windows.")
@@ -71,8 +75,27 @@ def download_release_asset(release: LatestRelease, destination: Path, timeout_se
     destination.mkdir(parents=True)
     archive = destination / "update.zip"
     request = urllib.request.Request(release.asset_url, headers={"User-Agent": "MaximoDesktop"}, method="GET")
+    digest = hashlib.sha256()
     with urllib.request.urlopen(request, timeout=timeout_sec) as response, archive.open("wb") as output:
-        shutil.copyfileobj(response, output)
+        total = int(response.headers.get("Content-Length") or 0)
+        downloaded = 0
+        while True:
+            chunk = response.read(1024 * 256)
+            if not chunk:
+                break
+            output.write(chunk)
+            digest.update(chunk)
+            downloaded += len(chunk)
+            if progress:
+                progress(downloaded, total)
+    expected = (release.asset_digest or "").strip().lower()
+    if not expected:
+        raise RuntimeError("GitHub no ha publicado un SHA-256 para el paquete.")
+    if expected.startswith("sha256:"):
+        expected = expected[7:]
+    actual = digest.hexdigest().lower()
+    if actual != expected:
+        raise RuntimeError("El SHA-256 del paquete no coincide con el publicado por GitHub.")
     extracted = destination / "files"
     extracted.mkdir()
     with zipfile.ZipFile(archive) as package:
