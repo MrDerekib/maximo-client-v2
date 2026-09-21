@@ -182,6 +182,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.update_lock = threading.Lock()
         self.reconcile_lock = threading.Lock()
         self.pool = QThreadPool.globalInstance()
+        self._running_tasks = set()
         self.ot_sessions = []
         self.advanced_state = {"equipment": "", "date_from": "", "date_to": "", "clients": [], "types": [], "tracking": []}
         self.filter_choices_cache = {"equipment": [], "clients": [], "types": [], "tracking": []}
@@ -469,8 +470,29 @@ class MaximoDesktopWindow(QMainWindow):
             deleted = delete_all_inactive_records(); self.refresh_table(); self.status.showMessage(f"{deleted} registros no activos eliminados.", 5000)
 
     def _start_task(self, function, completed, failed=None):
-        task = BackgroundTask(function); task.signals.completed.connect(completed)
-        task.signals.failed.connect(failed or (lambda error: QMessageBox.critical(self, "Error", error)))
+        """Mantiene viva la señal de Qt hasta que la tarea responde.
+
+        QThreadPool conserva el QRunnable nativo, pero no necesariamente el
+        QObject de señales de Python. Retenerlo aquí evita perder la llamada de
+        fin y dejar bloqueados los candados de Maximo.
+        """
+        task = BackgroundTask(function)
+        self._running_tasks.add(task)
+
+        def on_completed(result):
+            try:
+                completed(result)
+            finally:
+                self._running_tasks.discard(task)
+
+        def on_failed(error):
+            try:
+                (failed or (lambda message: QMessageBox.critical(self, "Error", message)))(error)
+            finally:
+                self._running_tasks.discard(task)
+
+        task.signals.completed.connect(on_completed)
+        task.signals.failed.connect(on_failed)
         self.pool.start(task)
 
     def _credentials_ready(self):
