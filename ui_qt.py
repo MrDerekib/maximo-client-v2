@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 import threading
+import time
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -17,10 +18,10 @@ from PySide6.QtCore import QDate, QObject, QRunnable, Qt, QThreadPool, QTimer, S
 from PySide6.QtGui import QAction, QColor, QIcon
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
-    QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QGridLayout,
+    QDialog, QDialogButtonBox, QCompleter, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
-    QSpinBox, QStackedWidget, QStatusBar, QTableWidget, QTableWidgetItem,
+    QProgressDialog, QSpinBox, QStackedWidget, QStatusBar, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -112,8 +113,68 @@ class CalendarLineEdit(QLineEdit):
             self.setText(calendar.selectedDate().toString("yyyy-MM-dd"))
 
 
+class AdvancedFiltersDialog(QDialog):
+    """Filtros secundarios en un diálogo, sin fragmentar la barra de búsqueda."""
+    def __init__(self, choices, state, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Filtros")
+        self.setMinimumWidth(820)
+        layout = QVBoxLayout(self)
+        intro = QLabel("Refina el listado. Estos filtros se combinan con la búsqueda y el cliente.")
+        intro.setObjectName("filterHint")
+        layout.addWidget(intro)
+        form = QGridLayout()
+        self.equipment = QLineEdit(state.get("equipment", ""))
+        self.equipment.setPlaceholderText("Descripción que contenga…")
+        self.equipment.setCompleter(QCompleter(choices["equipment"], self))
+        self.equipment.completer().setFilterMode(Qt.MatchContains)
+        self.date_from, self.date_to = CalendarLineEdit(), CalendarLineEdit()
+        self.date_from.setText(state.get("date_from", ""))
+        self.date_to.setText(state.get("date_to", ""))
+        for column, (label, widget) in enumerate((("Equipo / descripción", self.equipment), ("Desde", self.date_from), ("Hasta", self.date_to))):
+            form.addWidget(QLabel(label), 0, column)
+            form.addWidget(widget, 1, column)
+        self.lists = {}
+        for column, (key, label) in enumerate((("clients", "Clientes"), ("types", "Tipo de trabajo"), ("tracking", "Seguimiento"))):
+            box = QListWidget()
+            box.setSelectionMode(QListWidget.MultiSelection)
+            box.setMinimumHeight(180)
+            self.lists[key] = box
+            for value in choices[key]:
+                item = QListWidgetItem(value or "(Sin valor)")
+                item.setData(Qt.UserRole, value)
+                item.setSelected(value in state.get(key, []))
+                box.addItem(item)
+            form.addWidget(QLabel(label), 2, column)
+            form.addWidget(box, 3, column)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Apply)
+        reset = buttons.addButton("Restablecer", QDialogButtonBox.ResetRole)
+        reset.clicked.connect(self.reset)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def reset(self):
+        self.equipment.clear()
+        self.date_from.clear()
+        self.date_to.clear()
+        for box in self.lists.values():
+            box.clearSelection()
+
+    def filters(self):
+        return {
+            "equipment": self.equipment.text().strip(),
+            "date_from": self.date_from.text().strip(),
+            "date_to": self.date_to.text().strip(),
+            **{key: [item.data(Qt.UserRole) for item in box.selectedItems()] for key, box in self.lists.items()},
+        }
+
+
 class MaximoDesktopWindow(QMainWindow):
     columns = ("Sincronización", "OT", "Descripción", "Nº de serie", "Fecha", "Cliente", "Tipo de trabajo", "Seguimiento", "Planta", "Última vez visto")
+    close_progress = Signal(str)
+    close_finished = Signal()
 
     def __init__(self):
         super().__init__()
@@ -122,8 +183,14 @@ class MaximoDesktopWindow(QMainWindow):
         self.reconcile_lock = threading.Lock()
         self.pool = QThreadPool.globalInstance()
         self.ot_sessions = []
+        self.advanced_state = {"equipment": "", "date_from": "", "date_to": "", "clients": [], "types": [], "tracking": []}
+        self.filter_choices_cache = {"equipment": [], "clients": [], "types": [], "tracking": []}
+        self._closing = False
+        self._close_finalized = False
         self.auto_timer = QTimer(self)
         self.auto_timer.timeout.connect(lambda: self.update_now(automatic=True))
+        self.close_progress.connect(self._set_close_progress)
+        self.close_finished.connect(self._finish_close)
         self.setWindowTitle(f"Maximo Desktop · UI Preview · v{version.APP_VERSION}")
         self.setMinimumSize(1150, 700)
         self.resize(1500, 900)
@@ -215,63 +282,26 @@ class MaximoDesktopWindow(QMainWindow):
         self.search_edit.setPlaceholderText("Número de serie, OT o descripción…")
         self.search_edit.returnPressed.connect(self.refresh_table)
         toolbar.addWidget(self.search_edit, 1, 1)
-        self.search_group = QButtonGroup(self)
-        search_types = QWidget()
-        types_layout = QHBoxLayout(search_types)
-        types_layout.setContentsMargins(0, 0, 0, 0)
-        for index, label in enumerate(("Nº de serie", "OT", "Descripción")):
-            button = QPushButton(label, checkable=True)
-            button.setProperty("field", ("Nº_de_serie", "OT", "Descripción")[index])
-            button.setChecked(index == 0)
-            button.clicked.connect(self.refresh_table)
-            self.search_group.addButton(button)
-            types_layout.addWidget(button)
-        toolbar.addWidget(search_types, 1, 2)
-        search_button = QPushButton("Buscar")
-        search_button.clicked.connect(self.refresh_table)
-        toolbar.addWidget(search_button, 1, 3)
-        self.more_filters_button = QPushButton("☷  Más filtros", checkable=True)
-        self.more_filters_button.toggled.connect(self.toggle_advanced_filters)
-        toolbar.addWidget(self.more_filters_button, 1, 4)
-        clear_button = QPushButton("Limpiar")
-        clear_button.clicked.connect(self.clear_filters)
-        toolbar.addWidget(clear_button, 1, 5)
+        toolbar.addWidget(QLabel("Buscar por"), 0, 2)
+        self.search_by_combo = QComboBox()
+        self.search_by_combo.addItem("Nº de serie", "Nº_de_serie")
+        self.search_by_combo.addItem("OT", "OT")
+        self.search_by_combo.addItem("Descripción", "Descripción")
+        self.search_by_combo.currentIndexChanged.connect(self.refresh_table)
+        toolbar.addWidget(self.search_by_combo, 1, 2)
+        self.filter_button = QPushButton("☷  Filtros")
+        self.filter_button.clicked.connect(self.open_advanced_filters)
+        toolbar.addWidget(self.filter_button, 1, 3)
+        self.clear_button = QPushButton("Limpiar")
+        self.clear_button.clicked.connect(self.clear_filters)
+        self.clear_button.setVisible(False)
+        toolbar.addWidget(self.clear_button, 1, 4)
         toolbar.setColumnStretch(1, 1)
         search_layout.addLayout(toolbar)
         self.filter_chips = QLabel("Sin filtros", objectName="filterChips")
         self.filter_chips.setVisible(False)
         search_layout.addWidget(self.filter_chips)
 
-        self.advanced_content = QFrame(objectName="advancedFilters")
-        form = QGridLayout(self.advanced_content)
-        form.setContentsMargins(18, 14, 18, 14)
-        form.setHorizontalSpacing(14)
-        self.equipment_edit = QLineEdit()
-        self.equipment_edit.setPlaceholderText("Contiene texto…")
-        self.equipment_edit.returnPressed.connect(self.refresh_table)
-        self.date_from = CalendarLineEdit()
-        self.date_to = CalendarLineEdit()
-        form.addWidget(QLabel("Equipo / descripción"), 0, 0)
-        form.addWidget(QLabel("Desde"), 0, 1)
-        form.addWidget(QLabel("Hasta"), 0, 2)
-        form.addWidget(self.equipment_edit, 1, 0)
-        form.addWidget(self.date_from, 1, 1)
-        form.addWidget(self.date_to, 1, 2)
-        self.filter_lists = {}
-        for column, (key, label) in enumerate((("clients", "Clientes"), ("types", "Tipo de trabajo"), ("tracking", "Seguimiento"))):
-            widget = QListWidget()
-            widget.setSelectionMode(QListWidget.MultiSelection)
-            widget.setMaximumHeight(116)
-            self.filter_lists[key] = widget
-            form.addWidget(QLabel(label), 2, column)
-            form.addWidget(widget, 3, column)
-        actions = QHBoxLayout()
-        apply = QPushButton("Aplicar filtros", objectName="primary")
-        apply.clicked.connect(self.refresh_table)
-        actions.addWidget(QLabel("Combina cualquier filtro con la búsqueda principal.", objectName="filterHint")); actions.addStretch(); actions.addWidget(apply)
-        form.addLayout(actions, 4, 0, 1, 3)
-        self.advanced_content.setVisible(False)
-        search_layout.addWidget(self.advanced_content)
         outer.addWidget(search_card)
 
         self.result_label = QLabel()
@@ -293,10 +323,6 @@ class MaximoDesktopWindow(QMainWindow):
                 header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
         outer.addWidget(self.table, 1)
         return page
-
-    def toggle_advanced_filters(self, expanded):
-        self.advanced_content.setVisible(expanded)
-        self.more_filters_button.setText("⌃  Ocultar filtros" if expanded else "☷  Más filtros")
 
     def _build_settings_page(self):
         page = QWidget()
@@ -343,21 +369,18 @@ class MaximoDesktopWindow(QMainWindow):
 
     def refresh_choices(self):
         choices = filter_choices()
+        self.filter_choices_cache = choices
         current_client = self.client_combo.currentText() or "Todos"
         self.client_combo.blockSignals(True); self.client_combo.clear(); self.client_combo.addItems(["Todos", *choices["clients"]]); self.client_combo.setCurrentText(current_client); self.client_combo.blockSignals(False)
-        self.equipment_edit.setCompleter(__import__("PySide6.QtWidgets", fromlist=["QCompleter"]).QCompleter(choices["equipment"], self))
-        self.equipment_edit.completer().setFilterMode(Qt.MatchContains)
-        for key, box in self.filter_lists.items():
-            selected = {item.text() for item in box.selectedItems()}
-            box.clear()
-            for value in choices[key]:
-                item = QListWidgetItem(value or "(Sin valor)"); item.setData(Qt.UserRole, value); box.addItem(item)
-                item.setSelected(value in selected)
 
     def advanced_filters(self):
-        values = {key: [item.data(Qt.UserRole) for item in box.selectedItems()] for key, box in self.filter_lists.items()}
-        values.update({"equipment": self.equipment_edit.text().strip(), "date_from": self.date_from.text().strip(), "date_to": self.date_to.text().strip()})
-        return values
+        return self.advanced_state
+
+    def open_advanced_filters(self):
+        dialog = AdvancedFiltersDialog(self.filter_choices_cache, self.advanced_state, self)
+        if dialog.exec() == QDialog.Accepted:
+            self.advanced_state = dialog.filters()
+            self.refresh_table()
 
     def active_filter_summary(self):
         advanced = self.advanced_filters()
@@ -376,8 +399,7 @@ class MaximoDesktopWindow(QMainWindow):
         return summary
 
     def search_field(self):
-        selected = self.search_group.checkedButton()
-        return selected.property("field") if selected else "Nº_de_serie"
+        return self.search_by_combo.currentData() or "Nº_de_serie"
 
     def refresh_table(self):
         try:
@@ -401,11 +423,15 @@ class MaximoDesktopWindow(QMainWindow):
         summary = self.active_filter_summary()
         self.filter_chips.setVisible(bool(summary))
         self.filter_chips.setText("Filtros activos · " + "   •   ".join(summary))
+        advanced_count = sum(bool(value) for value in self.advanced_state.values())
+        self.filter_button.setText(f"☷  Filtros ({advanced_count})" if advanced_count else "☷  Filtros")
+        self.clear_button.setVisible(bool(summary))
         self.result_label.setText(f"{len(rows):,} resultados · {'Filtros aplicados' if summary else 'Sin filtros'}")
 
     def clear_filters(self):
-        self.search_edit.clear(); self.client_combo.setCurrentText("Todos"); self.equipment_edit.clear(); self.date_from.clear(); self.date_to.clear()
-        for box in self.filter_lists.values(): box.clearSelection()
+        self.search_edit.clear()
+        self.client_combo.setCurrentText("Todos")
+        self.advanced_state = {"equipment": "", "date_from": "", "date_to": "", "clients": [], "types": [], "tracking": []}
         self.refresh_table()
 
     def selected_ot(self, row=None):
@@ -518,11 +544,59 @@ class MaximoDesktopWindow(QMainWindow):
         except AttributeError: webbrowser.open(APP_ROOT.as_uri())
 
     def closeEvent(self, event):
-        for session in self.ot_sessions:
+        if self._close_finalized:
+            event.accept()
+            return
+        event.ignore()
+        if self._closing:
+            return
+        self._closing = True
+        self.auto_timer.stop()
+        self.close_dialog = QProgressDialog("Preparando cierre ordenado…", None, 0, 0, self)
+        self.close_dialog.setWindowTitle("Cerrando Maximo Desktop")
+        self.close_dialog.setWindowModality(Qt.ApplicationModal)
+        self.close_dialog.setCancelButton(None)
+        self.close_dialog.setMinimumDuration(0)
+        self.close_dialog.setAutoClose(False)
+        self.close_dialog.show()
+        threading.Thread(target=self._close_worker, daemon=True).start()
+
+    def _set_close_progress(self, message):
+        if hasattr(self, "close_dialog"):
+            self.close_dialog.setLabelText(message)
+
+    def _close_worker(self):
+        started = time.monotonic()
+        labels = (
+            (self.update_lock, "Esperando a que termine la actualización de Maximo…"),
+            (self.reconcile_lock, "Esperando a que termine la conciliación de OT…"),
+        )
+        while pending := [label for lock, label in labels if lock.locked()]:
+            self.close_progress.emit(pending[0])
+            time.sleep(0.25)
+        sessions = list(self.ot_sessions)
+        for index, (driver, profile) in enumerate(sessions, start=1):
+            self.close_progress.emit(f"Cerrando sesión de Edge {index} de {len(sessions)}…")
             try:
-                driver, profile = session; driver.quit(); cleanup_edge_profile(profile)
-            except Exception: logging.warning("No se pudo cerrar una sesión Edge", exc_info=True)
-        event.accept()
+                driver.quit()
+            except Exception:
+                logging.warning("No se pudo cerrar una sesión Edge", exc_info=True)
+            self.close_progress.emit(f"Eliminando perfil temporal de Edge {index} de {len(sessions)}…")
+            try:
+                cleanup_edge_profile(profile)
+            except Exception:
+                logging.warning("No se pudo eliminar un perfil Edge", exc_info=True)
+        remaining = 0.8 - (time.monotonic() - started)
+        if remaining > 0:
+            time.sleep(remaining)
+        self.close_finished.emit()
+
+    def _finish_close(self):
+        self.close_progress.emit("Cierre completado.")
+        if hasattr(self, "close_dialog"):
+            self.close_dialog.close()
+        self._close_finalized = True
+        self.close()
 
 
 def main():
