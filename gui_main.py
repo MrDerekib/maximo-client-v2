@@ -2,7 +2,6 @@
 import threading
 import tkinter as tk
 import os
-import sys
 import webbrowser
 from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
@@ -33,7 +32,7 @@ import version
 from update_checker import (LatestRelease, download_release_asset, fetch_latest_release,
                             format_version_tag, is_newer)
 from update_installer import start_update
-from managed_install import start_managed_install_if_needed
+from managed_install import distributed_executable, start_managed_install_if_needed
 from pathlib import Path
 import time
 
@@ -93,6 +92,7 @@ class MaximoApp(tk.Tk):
         self._update_installing = False
         self._update_progress_window = None
         self._update_progress = None
+        self._update_progress_status = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(500, lambda: self.check_updates(notify_popup=True))
         init_db()
@@ -1020,14 +1020,19 @@ class MaximoApp(tk.Tk):
                 )
 
                 if should_popup:
-                    # Normalizamos el tag SOLO para mostrarlo al usuario
-                    raw_tag = latest.tag or ""
                     pretty_tag = format_version_tag(latest.tag)
-
-                    if messagebox.askyesno(
+                    if latest.asset_url:
+                        if messagebox.askyesno(
+                                "Actualización disponible",
+                                f"Hay una nueva versión disponible: {pretty_tag}\n\n"
+                                "¿Quieres descargarla e instalarla ahora?",
+                                parent=self
+                        ):
+                            self._install_latest_release(confirmed=True)
+                    elif messagebox.askyesno(
                             "Actualización disponible",
                             f"Hay una nueva versión disponible: {pretty_tag}\n\n"
-                            f"¿Quieres abrir la página de la release?",
+                            "La release no incluye un paquete instalable. ¿Quieres abrirla?",
                             parent=self
                     ):
                         webbrowser.open(latest.html_url)
@@ -1041,7 +1046,7 @@ class MaximoApp(tk.Tk):
         if url:
             webbrowser.open(url)
 
-    def _install_latest_release(self):
+    def _install_latest_release(self, confirmed: bool = False):
         release = self._latest_release
         if not release or not is_newer(release.tag, version.APP_VERSION):
             messagebox.showinfo("Actualización", "No hay una actualización disponible para instalar.", parent=self)
@@ -1049,7 +1054,7 @@ class MaximoApp(tk.Tk):
         if not release.asset_url:
             messagebox.showwarning("Actualización", "La release no incluye el ZIP de Windows.", parent=self)
             return
-        if not messagebox.askyesno(
+        if not confirmed and not messagebox.askyesno(
             "Instalar actualización",
             f"Se descargará {format_version_tag(release.tag)} y Maximo Desktop se reiniciará.\n\n"
             "La configuración, credenciales y base de datos no se modificarán.", parent=self):
@@ -1064,6 +1069,7 @@ class MaximoApp(tk.Tk):
             package_dir = download_release_asset(
                 release, UPDATE_CACHE_DIR / release.tag,
                 progress=lambda done, total: self.after(0, self._update_download_progress, done, total),
+                status=lambda message: self.after(0, self._update_progress_message, message),
             )
             self.after(0, lambda: self._update_progress_message("Descarga completada. Paquete verificado."))
             self.after(500, lambda: self._apply_downloaded_update(package_dir, release.tag))
@@ -1086,8 +1092,8 @@ class MaximoApp(tk.Tk):
             self._update_installing = False
             self._refresh_update_block()
             return
-        executable = Path(sys.executable)
-        if executable.suffix.lower() != ".exe":
+        executable = distributed_executable()
+        if executable is None:
             self._update_install_failed("La instalación automática solo está disponible en la versión distribuida para Windows.")
             return
         try:
@@ -1131,24 +1137,43 @@ class MaximoApp(tk.Tk):
         dialog.transient(self)
         dialog.resizable(False, False)
         dialog.protocol("WM_DELETE_WINDOW", lambda: None)
-        ttk.Label(dialog, text=message, padding=(24, 18)).pack()
+        dialog.grab_set()
+        ttk.Label(dialog, text="Actualizando Maximo Desktop", font=("Segoe UI", 11, "bold")).pack(
+            anchor="w", padx=22, pady=(18, 6)
+        )
+        ttk.Label(
+            dialog,
+            text="La descarga se verificará antes de instalarla. Puedes seguir el progreso aquí.",
+            wraplength=420,
+        ).pack(anchor="w", padx=22, pady=(0, 10))
+        self._update_progress_status = tk.StringVar(value=message)
+        ttk.Label(dialog, textvariable=self._update_progress_status, wraplength=420).pack(
+            anchor="w", padx=22, pady=(0, 12)
+        )
         self._update_progress = ttk.Progressbar(dialog, length=330, mode="determinate")
-        self._update_progress.pack(padx=24, pady=(0, 18))
+        self._update_progress.pack(anchor="w", padx=22, pady=(0, 18))
         self._update_progress_window = dialog
         dialog.update_idletasks()
-        dialog.grab_set()
+        x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
 
     def _update_download_progress(self, downloaded: int, total: int):
         if self._update_progress is None:
             return
         if total > 0:
             self._update_progress.config(maximum=total, value=downloaded)
+            self._update_progress_message(
+                f"Descargando actualización: {downloaded / 1024 / 1024:.1f} de {total / 1024 / 1024:.1f} MiB…"
+            )
+        else:
+            self._update_progress_message(
+                f"Descargando actualización: {downloaded / 1024 / 1024:.1f} MiB…"
+            )
 
     def _update_progress_message(self, message: str):
-        if self._update_progress_window is not None:
-            labels = self._update_progress_window.winfo_children()
-            if labels:
-                labels[0].config(text=message)
+        if self._update_progress_status is not None:
+            self._update_progress_status.set(message)
 
     def _close_update_progress(self):
         if self._update_progress_window is not None:
@@ -1159,6 +1184,7 @@ class MaximoApp(tk.Tk):
                 pass
         self._update_progress_window = None
         self._update_progress = None
+        self._update_progress_status = None
 
 
 
@@ -1182,20 +1208,26 @@ class MaximoApp(tk.Tk):
                 pass
             self.auto_update_job = None
 
+        applying_update = self._update_installing
         dialog = tk.Toplevel(self)
-        dialog.title("Cerrando Maximo Desktop")
+        dialog.title("Aplicando actualización" if applying_update else "Cerrando Maximo Desktop")
         dialog.transient(self)
         dialog.resizable(False, False)
         dialog.protocol("WM_DELETE_WINDOW", lambda: None)
         dialog.grab_set()
 
-        status = tk.StringVar(value="Preparando cierre ordenado…")
-        ttk.Label(dialog, text="Cerrando Maximo Desktop", font=("Segoe UI", 11, "bold")).pack(
+        status = tk.StringVar(value="Preparando la actualización…" if applying_update else "Preparando cierre ordenado…")
+        heading = "Actualizando Maximo Desktop" if applying_update else "Cerrando Maximo Desktop"
+        detail = (
+            "La aplicación se cerrará, instalará los archivos nuevos y se reiniciará automáticamente."
+            if applying_update else "La aplicación terminará cuando finalicen las tareas indicadas."
+        )
+        ttk.Label(dialog, text=heading, font=("Segoe UI", 11, "bold")).pack(
             anchor="w", padx=22, pady=(18, 6)
         )
         ttk.Label(
             dialog,
-            text="La aplicación terminará cuando finalicen las tareas indicadas.",
+            text=detail,
             wraplength=400,
         ).pack(anchor="w", padx=22, pady=(0, 10))
         ttk.Label(dialog, textvariable=status, wraplength=400).pack(

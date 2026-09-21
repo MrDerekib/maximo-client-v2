@@ -40,7 +40,7 @@ class _InstallProgress:
             pass
 
 
-def _distributed_executable() -> Path | None:
+def distributed_executable() -> Path | None:
     """Obtiene el exe distribuido sin confundirlo con Python de desarrollo."""
     try:
         # En Nuitka argv[0] es MaximoDesktop.exe; en desarrollo es el .py.
@@ -88,7 +88,7 @@ def start_managed_install_if_needed() -> bool:
     Devuelve ``True`` cuando ya se lanzó la copia gestionada, para que el
     proceso actual termine antes de construir la interfaz.
     """
-    current = _distributed_executable()
+    current = distributed_executable()
     if current is None:
         logging.info("Instalación gestionada omitida: ejecución desde Python de desarrollo.")
         return False

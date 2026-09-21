@@ -65,7 +65,7 @@ def fetch_latest_release(timeout_sec: int = 5) -> LatestRelease:
 
 
 def download_release_asset(release: LatestRelease, destination: Path, timeout_sec: int = 30,
-                           progress=None) -> Path:
+                           progress=None, status=None) -> Path:
     """Descarga y extrae el ZIP de una release dentro de la caché local."""
     if not release.asset_url:
         raise RuntimeError("La release no incluye un paquete ZIP para Windows.")
@@ -88,6 +88,8 @@ def download_release_asset(release: LatestRelease, destination: Path, timeout_se
             downloaded += len(chunk)
             if progress:
                 progress(downloaded, total)
+    if status:
+        status("Verificando la integridad SHA-256…")
     expected = (release.asset_digest or "").strip().lower()
     if not expected:
         raise RuntimeError("GitHub no ha publicado un SHA-256 para el paquete.")
@@ -96,6 +98,8 @@ def download_release_asset(release: LatestRelease, destination: Path, timeout_se
     actual = digest.hexdigest().lower()
     if actual != expected:
         raise RuntimeError("El SHA-256 del paquete no coincide con el publicado por GitHub.")
+    if status:
+        status("Validando el contenido del paquete…")
     extracted = destination / "files"
     extracted.mkdir()
     with zipfile.ZipFile(archive) as package:
