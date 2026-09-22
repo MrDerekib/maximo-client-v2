@@ -20,13 +20,13 @@ from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
     QDialog, QDialogButtonBox, QCompleter, QFormLayout, QFrame, QGridLayout,
-    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
+    QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
     QProgressDialog, QSpinBox, QStackedWidget, QStatusBar, QStyle, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QWidgetAction,
 )
 
-from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR
+from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR, PROFILES_PATH
 from config import AppConfig, credentials_configured, load_config, save_config
 from db import (
     delete_all_inactive_records, delete_inactive_record, fetch_data, filter_choices,
@@ -34,6 +34,7 @@ from db import (
 )
 from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
 from updater import reconcile_inactive_tracking, run_update
+from search_filters import load_profiles, save_profiles
 import version
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -260,7 +261,7 @@ class AdvancedFiltersDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Apply)
         reset = buttons.addButton("Restablecer", QDialogButtonBox.ResetRole)
         reset.clicked.connect(self.reset)
-        buttons.accepted.connect(self.accept)
+        buttons.button(QDialogButtonBox.Apply).clicked.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
@@ -294,6 +295,8 @@ class MaximoDesktopWindow(QMainWindow):
         self.pool = QThreadPool.globalInstance()
         self._running_tasks = set()
         self.ot_sessions = []
+        self.profiles = {}
+        self.profiles_error = None
         self.advanced_state = {"equipment": "", "date_from": "", "date_to": "", "clients": [], "types": [], "tracking": []}
         self.filter_choices_cache = {"equipment": [], "clients": [], "types": [], "tracking": []}
         self._closing = False
@@ -317,6 +320,7 @@ class MaximoDesktopWindow(QMainWindow):
         self._build_ui()
         init_db()
         self.refresh_choices()
+        self.refresh_profiles()
         self.refresh_table()
         self._load_config()
         self._restore_window_state()
@@ -446,6 +450,21 @@ class MaximoDesktopWindow(QMainWindow):
         toolbar.addWidget(self.clear_button, 1, 4)
         toolbar.setColumnStretch(1, 1)
         search_layout.addLayout(toolbar)
+        profile_row = QHBoxLayout()
+        profile_row.setSpacing(8)
+        profile_row.addWidget(QLabel("Búsqueda guardada"))
+        self.profile_combo = DecoratedComboBox()
+        self.profile_combo.setMinimumWidth(230)
+        self.profile_combo.currentIndexChanged.connect(self.load_selected_profile)
+        profile_row.addWidget(self.profile_combo)
+        save_profile = QPushButton("Guardar búsqueda…")
+        save_profile.clicked.connect(self.save_current_profile)
+        profile_row.addWidget(save_profile)
+        self.delete_profile_button = QPushButton("Eliminar")
+        self.delete_profile_button.clicked.connect(self.delete_selected_profile)
+        profile_row.addWidget(self.delete_profile_button)
+        profile_row.addStretch()
+        search_layout.addLayout(profile_row)
         self.filter_chips = QLabel("Sin filtros", objectName="filterChips")
         self.filter_chips.setVisible(False)
         search_layout.addWidget(self.filter_chips)
@@ -630,6 +649,85 @@ class MaximoDesktopWindow(QMainWindow):
         choices = filter_choices()
         self.filter_choices_cache = choices
         self.client_combo.set_options(choices["clients"], self.client_combo.selected_values())
+
+    def refresh_profiles(self, selected_name=""):
+        try:
+            self.profiles = load_profiles(PROFILES_PATH)
+            self.profiles_error = None
+        except (OSError, ValueError) as exc:
+            self.profiles = {}
+            self.profiles_error = str(exc)
+            logging.warning("No se pudieron cargar los perfiles de búsqueda: %s", exc)
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        self.profile_combo.addItem("Selecciona una búsqueda guardada…", "")
+        for name in sorted(self.profiles, key=str.casefold):
+            self.profile_combo.addItem(name, name)
+        self.profile_combo.setCurrentIndex(max(0, self.profile_combo.findData(selected_name)))
+        self.profile_combo.blockSignals(False)
+        self.delete_profile_button.setEnabled(bool(selected_name and selected_name in self.profiles))
+
+    def current_profile_state(self):
+        simple_clients = self.client_combo.selected_values()
+        advanced = self.effective_advanced_filters()
+        # El formato existente admite un cliente simple; una selección múltiple
+        # queda almacenada como filtro avanzado para no perder información.
+        client = simple_clients[0] if len(simple_clients) == 1 and not self.advanced_state["clients"] else "Todos"
+        return {
+            "search": self.search_edit.text().strip(),
+            "search_by": self.search_field(),
+            "client": client,
+            "advanced": advanced,
+        }
+
+    def load_selected_profile(self):
+        name = self.profile_combo.currentData()
+        profile = self.profiles.get(name)
+        self.delete_profile_button.setEnabled(bool(profile))
+        if not profile:
+            return
+        self.search_edit.setText(profile["search"])
+        self.search_by_combo.setCurrentIndex(max(0, self.search_by_combo.findData(profile["search_by"])))
+        self.advanced_state = profile["advanced"]
+        selected_clients = [] if profile["advanced"]["clients"] else ([profile["client"]] if profile["client"] != "Todos" else [])
+        self.client_combo.set_options(self.filter_choices_cache["clients"], selected_clients)
+        self.refresh_table()
+
+    def save_current_profile(self):
+        if self.profiles_error:
+            QMessageBox.critical(self, "Perfiles", "No se puede guardar hasta revisar el archivo de perfiles.\n\n" + self.profiles_error)
+            return
+        current_name = self.profile_combo.currentData() or ""
+        name, accepted = QInputDialog.getText(self, "Guardar búsqueda", "Nombre de la búsqueda:", text=current_name)
+        name = name.strip()
+        if not accepted or not name:
+            return
+        if name in self.profiles and QMessageBox.question(
+            self, "Guardar búsqueda", f"La búsqueda «{name}» ya existe. ¿Quieres sustituirla?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        try:
+            save_profiles(PROFILES_PATH, {**self.profiles, name: self.current_profile_state()})
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Perfiles", str(exc))
+            return
+        self.refresh_profiles(name)
+        self.status.showMessage(f"Búsqueda guardada: {name}.", 4000)
+
+    def delete_selected_profile(self):
+        name = self.profile_combo.currentData()
+        if not name or name not in self.profiles:
+            return
+        if QMessageBox.question(self, "Eliminar búsqueda", f"¿Eliminar la búsqueda «{name}»?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            save_profiles(PROFILES_PATH, {key: value for key, value in self.profiles.items() if key != name})
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Perfiles", str(exc))
+            return
+        self.refresh_profiles()
+        self.status.showMessage(f"Búsqueda eliminada: {name}.", 4000)
 
     def advanced_filters(self):
         return self.advanced_state
