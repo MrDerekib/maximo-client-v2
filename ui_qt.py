@@ -15,15 +15,15 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QEvent, QObject, QPointF, QRunnable, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QStandardItem, QStandardItemModel
+from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
     QDialog, QDialogButtonBox, QCompleter, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
     QProgressDialog, QSpinBox, QStackedWidget, QStatusBar, QStyle, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR
@@ -88,6 +88,8 @@ QPushButton:hover { background: #d9e2ec; }
 QPushButton#primary { background: #1976d2; color: white; }
 QPushButton#primary:hover { background: #125ea7; }
 QPushButton#danger { background: #fff1f0; color: #c53030; }
+QPushButton#multiSelect { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: white; min-height: 18px; text-align: left; font-weight: 400; }
+QPushButton#multiSelect:hover { border-color: #829ab1; background: #f8fafc; }
 QTableWidget { background: white; border: 1px solid #d9e2ec; border-radius: 8px; gridline-color: #edf2f7; selection-background-color: #dbeafe; selection-color: #172033; }
 QHeaderView::section { background: #f0f4f8; color: #486581; border: 0; border-right: 1px solid #cbd5e1; border-bottom: 1px solid #d9e2ec; padding: 9px; font-weight: 700; }
 QHeaderView::section:hover { background: #e2e8f0; }
@@ -143,55 +145,51 @@ class DecoratedSpinBox(QSpinBox):
         _draw_chevron(painter, x, self.height() * 0.70, up=False)
 
 
-class MultiSelectComboBox(DecoratedComboBox):
-    """Selector compacto que permite combinar varios clientes."""
+class MultiSelectButton(QPushButton):
+    """Selector compacto con checkboxes persistentes para varios clientes."""
     selection_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setEditable(True)
-        self.setInsertPolicy(QComboBox.NoInsert)
-        self.lineEdit().setReadOnly(True)
-        self.lineEdit().setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.setModel(QStandardItemModel(self))
-        self.view().viewport().installEventFilter(self)
+        self.setObjectName("multiSelect")
+        self._options = []
+        self._selected = set()
+        self._menu = QMenu(self)
+        self._menu.setStyleSheet("QMenu { background: white; border: 1px solid #bcccdc; padding: 5px; } QCheckBox { padding: 5px 10px; }")
+        self.setMenu(self._menu)
         self._refresh_text()
 
     def set_options(self, options, selected=()):
-        selected = set(selected)
-        self.blockSignals(True)
-        self.model().clear()
-        for option in options:
-            item = QStandardItem(option)
-            item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
-            item.setData(Qt.Checked if option in selected else Qt.Unchecked, Qt.CheckStateRole)
-            self.model().appendRow(item)
-        self.setCurrentIndex(-1)
-        self.blockSignals(False)
+        self._options = list(options)
+        self._selected = set(selected).intersection(self._options)
+        self._menu.clear()
+        for option in self._options:
+            checkbox = QCheckBox(option, self._menu)
+            checkbox.setChecked(option in self._selected)
+            checkbox.toggled.connect(lambda checked, value=option: self._set_checked(value, checked))
+            action = QWidgetAction(self._menu)
+            action.setDefaultWidget(checkbox)
+            self._menu.addAction(action)
         self._refresh_text()
 
     def selected_values(self):
-        return [self.model().item(index).text() for index in range(self.model().rowCount())
-                if self.model().item(index).checkState() == Qt.Checked]
+        return [option for option in self._options if option in self._selected]
 
     def clear_selection(self):
-        self.set_options([self.model().item(index).text() for index in range(self.model().rowCount())])
+        self.set_options(self._options)
 
-    def eventFilter(self, watched, event):
-        if watched is self.view().viewport() and event.type() == QEvent.MouseButtonRelease:
-            index = self.view().indexAt(event.pos())
-            if index.isValid():
-                item = self.model().item(index.row())
-                item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
-                self._refresh_text()
-                self.selection_changed.emit()
-                return True
-        return super().eventFilter(watched, event)
+    def _set_checked(self, value, checked):
+        if checked:
+            self._selected.add(value)
+        else:
+            self._selected.discard(value)
+        self._refresh_text()
+        self.selection_changed.emit()
 
     def _refresh_text(self):
         selected = self.selected_values()
         text = "Todos" if not selected else selected[0] if len(selected) == 1 else f"{len(selected)} clientes"
-        self.lineEdit().setText(text)
+        self.setText(text)
 
 
 class CalendarLineEdit(QLineEdit):
@@ -424,7 +422,7 @@ class MaximoDesktopWindow(QMainWindow):
         toolbar = QGridLayout()
         toolbar.setHorizontalSpacing(12)
         toolbar.addWidget(QLabel("Cliente"), 0, 0)
-        self.client_combo = MultiSelectComboBox()
+        self.client_combo = MultiSelectButton()
         self.client_combo.selection_changed.connect(self.refresh_table)
         toolbar.addWidget(self.client_combo, 1, 0)
         toolbar.addWidget(QLabel("Buscar"), 0, 1)
