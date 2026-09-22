@@ -15,14 +15,14 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen
+from PySide6.QtCore import QDate, QEvent, QObject, QPointF, QRunnable, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
     QDialog, QDialogButtonBox, QCompleter, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
-    QProgressDialog, QSpinBox, QStackedWidget, QStatusBar, QTableWidget, QTableWidgetItem,
+    QProgressDialog, QSpinBox, QStackedWidget, QStatusBar, QStyle, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -141,6 +141,55 @@ class DecoratedSpinBox(QSpinBox):
         x = self.width() - 14
         _draw_chevron(painter, x, self.height() * 0.30, up=True)
         _draw_chevron(painter, x, self.height() * 0.70, up=False)
+
+
+class MultiSelectComboBox(DecoratedComboBox):
+    """Selector compacto que permite combinar varios clientes."""
+    selection_changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.lineEdit().setReadOnly(True)
+        self.lineEdit().setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.setModel(QStandardItemModel(self))
+        self.view().viewport().installEventFilter(self)
+        self._refresh_text()
+
+    def set_options(self, options, selected=()):
+        selected = set(selected)
+        self.blockSignals(True)
+        self.model().clear()
+        for option in options:
+            item = QStandardItem(option)
+            item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+            item.setData(Qt.Checked if option in selected else Qt.Unchecked, Qt.CheckStateRole)
+            self.model().appendRow(item)
+        self.blockSignals(False)
+        self._refresh_text()
+
+    def selected_values(self):
+        return [self.model().item(index).text() for index in range(self.model().rowCount())
+                if self.model().item(index).checkState() == Qt.Checked]
+
+    def clear_selection(self):
+        self.set_options([self.model().item(index).text() for index in range(self.model().rowCount())])
+
+    def eventFilter(self, watched, event):
+        if watched is self.view().viewport() and event.type() == QEvent.MouseButtonRelease:
+            index = self.view().indexAt(event.pos())
+            if index.isValid():
+                item = self.model().item(index.row())
+                item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+                self._refresh_text()
+                self.selection_changed.emit()
+                return True
+        return super().eventFilter(watched, event)
+
+    def _refresh_text(self):
+        selected = self.selected_values()
+        text = "Todos" if not selected else selected[0] if len(selected) == 1 else f"{len(selected)} clientes"
+        self.lineEdit().setText(text)
 
 
 class CalendarLineEdit(QLineEdit):
@@ -361,7 +410,8 @@ class MaximoDesktopWindow(QMainWindow):
         page = QWidget()
         outer = QVBoxLayout(page)
         outer.setContentsMargins(30, 0, 30, 18)
-        update = QPushButton("↻  Actualizar Maximo", objectName="primary")
+        update = QPushButton("Actualizar Maximo", objectName="primary")
+        update.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         update.clicked.connect(self.update_now)
         outer.addWidget(self._page_header("Órdenes de trabajo", "Consulta, filtra y gestiona el seguimiento local.", update))
 
@@ -372,8 +422,8 @@ class MaximoDesktopWindow(QMainWindow):
         toolbar = QGridLayout()
         toolbar.setHorizontalSpacing(12)
         toolbar.addWidget(QLabel("Cliente"), 0, 0)
-        self.client_combo = DecoratedComboBox()
-        self.client_combo.currentIndexChanged.connect(self.refresh_table)
+        self.client_combo = MultiSelectComboBox()
+        self.client_combo.selection_changed.connect(self.refresh_table)
         toolbar.addWidget(self.client_combo, 1, 0)
         toolbar.addWidget(QLabel("Buscar"), 0, 1)
         self.search_edit = QLineEdit()
@@ -579,8 +629,7 @@ class MaximoDesktopWindow(QMainWindow):
     def refresh_choices(self):
         choices = filter_choices()
         self.filter_choices_cache = choices
-        current_client = self.client_combo.currentText() or "Todos"
-        self.client_combo.blockSignals(True); self.client_combo.clear(); self.client_combo.addItems(["Todos", *choices["clients"]]); self.client_combo.setCurrentText(current_client); self.client_combo.blockSignals(False)
+        self.client_combo.set_options(choices["clients"], self.client_combo.selected_values())
 
     def advanced_filters(self):
         return self.advanced_state
@@ -594,25 +643,34 @@ class MaximoDesktopWindow(QMainWindow):
     def active_filter_summary(self):
         advanced = self.advanced_filters()
         summary = []
-        if self.client_combo.currentText() != "Todos":
-            summary.append(f"Cliente: {self.client_combo.currentText()}")
+        simple_clients = self.client_combo.selected_values()
+        selected_clients = list(dict.fromkeys([*simple_clients, *advanced["clients"]]))
+        if selected_clients:
+            summary.append(f"Clientes: {', '.join(selected_clients)}")
         if self.search_edit.text().strip():
             summary.append(f"{self.search_field().replace('_', ' ')}: {self.search_edit.text().strip()}")
         if advanced["equipment"]:
             summary.append(f"Equipo: {advanced['equipment']}")
         if advanced["date_from"] or advanced["date_to"]:
             summary.append(f"Fechas: {advanced['date_from'] or '…'} — {advanced['date_to'] or '…'}")
-        for key, label in (("clients", "Clientes"), ("types", "Tipo"), ("tracking", "Seguimiento")):
+        for key, label in (("types", "Tipo"), ("tracking", "Seguimiento")):
             if advanced[key]:
                 summary.append(f"{label}: {', '.join(advanced[key])}")
         return summary
+
+    def effective_advanced_filters(self):
+        filters = {key: list(value) if isinstance(value, list) else value for key, value in self.advanced_filters().items()}
+        simple_clients = self.client_combo.selected_values()
+        if simple_clients:
+            filters["clients"] = list(dict.fromkeys([*filters["clients"], *simple_clients]))
+        return filters
 
     def search_field(self):
         return self.search_by_combo.currentData() or "Nº_de_serie"
 
     def refresh_table(self):
         try:
-            rows = fetch_data(self.search_edit.text(), self.search_field(), self.client_combo.currentText(), self.advanced_filters(), include_sync=True)
+            rows = fetch_data(self.search_edit.text(), self.search_field(), "Todos", self.effective_advanced_filters(), include_sync=True)
         except ValueError as exc:
             QMessageBox.warning(self, "Filtros", str(exc)); return
         def ot_sort_key(row):
@@ -647,7 +705,7 @@ class MaximoDesktopWindow(QMainWindow):
 
     def clear_filters(self):
         self.search_edit.clear()
-        self.client_combo.setCurrentText("Todos")
+        self.client_combo.clear_selection()
         self.advanced_state = {"equipment": "", "date_from": "", "date_to": "", "clients": [], "types": [], "tracking": []}
         self.refresh_table()
 
