@@ -414,7 +414,6 @@ class MaximoDesktopWindow(QMainWindow):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setMinimumSectionSize(60)
-        header.setStretchLastSection(True)
         header.setCursor(Qt.SplitHCursor)
         header.sectionResized.connect(self._column_resized)
         for column, width in enumerate((145, 85, 270, 135, 105, 125, 130, 145, 100, 150)):
@@ -426,7 +425,13 @@ class MaximoDesktopWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "table"):
-            self._fit_columns_to_viewport()
+            QTimer.singleShot(0, self._fit_columns_to_viewport)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # La tabla conoce aquí su ancho final; restaurar antes hace que Qt
+        # recalcule las secciones al mostrar la ventana.
+        QTimer.singleShot(0, self._fit_columns_to_viewport)
 
     def _current_column_ratios(self):
         header = self.table.horizontalHeader()
