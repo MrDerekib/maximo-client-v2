@@ -12,6 +12,7 @@ import threading
 import time
 import webbrowser
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
@@ -34,6 +35,24 @@ from db import (
 from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
 from updater import reconcile_inactive_tracking, run_update
 import version
+
+
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=(
+        RotatingFileHandler(
+            LOG_DIR / "maximo_client.log", maxBytes=5 * 1024 * 1024,
+            backupCount=3, encoding="utf-8", delay=True,
+        ),
+        logging.StreamHandler(),
+    ),
+    force=True,
+)
+logging.getLogger("selenium").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.info("UI Preview v%s iniciada. Datos: %s", version.APP_VERSION, APP_ROOT)
 
 
 STYLESHEET = """

@@ -17,5 +17,13 @@ if ($null -eq $python) {
     throw "No se encontró un entorno virtual en la rama UI ni en $stableProject"
 }
 
+$stableInstance = Get-Process -Name "MaximoDesktop" -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+if ($null -ne $stableInstance) {
+    Write-Host "Cierra Maximo Desktop estable antes de abrir la UI de desarrollo." -ForegroundColor Yellow
+    Write-Host "Proceso detectado: PID $($stableInstance.Id)" -ForegroundColor Yellow
+    exit 1
+}
+
 $env:MAXIMO_DESKTOP_DEV = "1"
 & $python (Join-Path $projectRoot "ui_qt.py")
