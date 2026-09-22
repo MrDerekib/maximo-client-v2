@@ -268,6 +268,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.refresh_choices()
         self.refresh_table()
         self._load_config()
+        self._restore_window_state()
         self._restore_column_widths()
         QTimer.singleShot(0, self._fit_columns_to_viewport)
         self.schedule_auto_update()
@@ -735,6 +736,27 @@ class MaximoDesktopWindow(QMainWindow):
         self.reconcile_check.setChecked(self.cfg.reconciliation_enabled); self.batch_spin.setValue(self.cfg.reconciliation_batch_size)
         self._refresh_auto_update_summary()
 
+    def _restore_window_state(self):
+        if self.cfg.window_size:
+            try:
+                width, height = (int(value) for value in self.cfg.window_size)
+                self.resize(max(self.minimumWidth(), width), max(self.minimumHeight(), height))
+            except (TypeError, ValueError):
+                pass
+        if self.cfg.window_maximized:
+            self.showMaximized()
+
+    def _save_window_state(self):
+        self._column_width_save_timer.stop()
+        self.cfg.table_column_widths = {
+            str(index): ratio for index, ratio in enumerate(self._current_column_ratios())
+        }
+        geometry = self.normalGeometry() if self.isMaximized() else self.geometry()
+        self.cfg.window_size = [geometry.width(), geometry.height()]
+        self.cfg.window_maximized = self.isMaximized()
+        save_config(self.cfg)
+        logging.info("Estado de ventana y anchos de columnas guardados.")
+
     def settings_dirty(self):
         return (
             self.user_edit.text().strip() != self.cfg.username
@@ -806,6 +828,7 @@ class MaximoDesktopWindow(QMainWindow):
         if self._closing:
             return
         self._closing = True
+        self._save_window_state()
         self.auto_timer.stop()
         self.close_dialog = QProgressDialog("Preparando cierre ordenado…", None, 0, 0, self)
         self.close_dialog.setWindowTitle("Cerrando Maximo Desktop")
