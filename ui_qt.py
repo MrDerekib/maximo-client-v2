@@ -68,7 +68,7 @@ QFrame#advancedFilters { background: #f8fafc; border-top: 1px solid #d9e2ec; }
 QLabel#filterHint { color: #627d98; font-size: 12px; }
 QLabel#filterChips { color: #1976d2; font-size: 12px; font-weight: 600; }
 QGroupBox { margin-top: 12px; padding: 12px; font-weight: 600; color: #334e68; }
-QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; }
+QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; font-size: 14px; font-weight: 700; }
 QLineEdit, QComboBox, QListWidget, QSpinBox { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: white; min-height: 18px; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border: 2px solid #2f80ed; }
 QComboBox { padding-right: 36px; }
@@ -522,10 +522,10 @@ class MaximoDesktopWindow(QMainWindow):
     def _build_settings_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 18)
+        layout.setContentsMargins(30, 0, 30, 18)
         layout.addWidget(self._page_header("Configuración", "Acceso, actualización y mantenimiento de Maximo Desktop."))
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
-        content = QWidget(); body = QVBoxLayout(content); body.setContentsMargins(30, 0, 30, 20)
+        content = QWidget(); body = QVBoxLayout(content); body.setContentsMargins(0, 0, 0, 20)
 
         access = QGroupBox("Acceso a Maximo")
         form = QFormLayout(access)
