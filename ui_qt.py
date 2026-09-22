@@ -67,8 +67,10 @@ QFrame#filtersCard { background: white; border: 1px solid #d9e2ec; border-radius
 QFrame#advancedFilters { background: #f8fafc; border-top: 1px solid #d9e2ec; }
 QLabel#filterHint { color: #627d98; font-size: 12px; }
 QLabel#filterChips { color: #1976d2; font-size: 12px; font-weight: 600; }
-QGroupBox { margin-top: 12px; padding: 12px; font-weight: 600; color: #334e68; }
-QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; font-size: 14px; font-weight: 700; }
+QGroupBox { margin-top: 12px; padding: 12px; font-size: 16px; font-weight: 700; color: #334e68; }
+QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; color: #102a43; }
+QGroupBox QLabel, QGroupBox QCheckBox, QGroupBox QLineEdit, QGroupBox QSpinBox { font-size: 12px; font-weight: 400; }
+QGroupBox QPushButton { font-size: 12px; font-weight: 600; }
 QLineEdit, QComboBox, QListWidget, QSpinBox { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: white; min-height: 18px; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border: 2px solid #2f80ed; }
 QComboBox { padding-right: 36px; }
