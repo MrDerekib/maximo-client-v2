@@ -63,6 +63,13 @@ QLabel#subtitle { color: #9fb3c8; font-size: 11px; }
 QPushButton#nav { border: 1px solid transparent; border-radius: 8px; background: transparent; color: #e6f0ff; padding: 11px 14px; text-align: left; font-size: 13px; }
 QPushButton#nav:hover:!checked { background: #1e446b; border-color: #315a82; color: white; }
 QPushButton#nav:checked { background: #2f80ed; border-color: #4d9cff; color: white; font-weight: 700; }
+QLabel#sidebarSection { color: #9fb3c8; font-size: 10px; font-weight: 700; padding: 0 4px; }
+QListWidget#profileList { background: #163854; border: 1px solid #315a82; border-radius: 7px; color: #e6f0ff; padding: 4px; outline: 0; }
+QListWidget#profileList::item { padding: 7px 8px; border-radius: 5px; }
+QListWidget#profileList::item:hover { background: #1e446b; }
+QListWidget#profileList::item:selected { background: #2f80ed; color: white; }
+QPushButton#sidebarAction { background: #1e446b; border: 1px solid #315a82; color: #e6f0ff; text-align: left; padding: 7px 10px; }
+QPushButton#sidebarAction:hover { background: #315a82; color: white; }
 QFrame#card, QGroupBox { background: white; border: 1px solid #d9e2ec; border-radius: 10px; }
 QFrame#filtersCard { background: white; border: 1px solid #d9e2ec; border-radius: 10px; }
 QFrame#advancedFilters { background: #f8fafc; border-top: 1px solid #d9e2ec; }
@@ -362,6 +369,19 @@ class MaximoDesktopWindow(QMainWindow):
             self.nav_group.addButton(button)
             self.nav_buttons[index] = button
             box.addWidget(button)
+        box.addSpacing(26)
+        box.addWidget(QLabel("BÚSQUEDAS GUARDADAS", objectName="sidebarSection"))
+        self.profile_list = QListWidget(objectName="profileList")
+        self.profile_list.setMaximumHeight(220)
+        self.profile_list.currentItemChanged.connect(self.load_selected_profile)
+        box.addWidget(self.profile_list)
+        save_profile = QPushButton("＋  Guardar búsqueda", objectName="sidebarAction")
+        save_profile.clicked.connect(self.save_current_profile)
+        box.addWidget(save_profile)
+        self.delete_profile_button = QPushButton("Eliminar búsqueda", objectName="sidebarAction")
+        self.delete_profile_button.clicked.connect(self.delete_selected_profile)
+        self.delete_profile_button.setEnabled(False)
+        box.addWidget(self.delete_profile_button)
         box.addStretch(1)
         mode = QLabel("MODO DESARROLLO\nDatos aislados", objectName="subtitle")
         mode.setStyleSheet("padding: 10px; border: 1px solid #486581; border-radius: 8px;")
@@ -450,21 +470,6 @@ class MaximoDesktopWindow(QMainWindow):
         toolbar.addWidget(self.clear_button, 1, 4)
         toolbar.setColumnStretch(1, 1)
         search_layout.addLayout(toolbar)
-        profile_row = QHBoxLayout()
-        profile_row.setSpacing(8)
-        profile_row.addWidget(QLabel("Búsqueda guardada"))
-        self.profile_combo = DecoratedComboBox()
-        self.profile_combo.setMinimumWidth(230)
-        self.profile_combo.currentIndexChanged.connect(self.load_selected_profile)
-        profile_row.addWidget(self.profile_combo)
-        save_profile = QPushButton("Guardar búsqueda…")
-        save_profile.clicked.connect(self.save_current_profile)
-        profile_row.addWidget(save_profile)
-        self.delete_profile_button = QPushButton("Eliminar")
-        self.delete_profile_button.clicked.connect(self.delete_selected_profile)
-        profile_row.addWidget(self.delete_profile_button)
-        profile_row.addStretch()
-        search_layout.addLayout(profile_row)
         self.filter_chips = QLabel("Sin filtros", objectName="filterChips")
         self.filter_chips.setVisible(False)
         search_layout.addWidget(self.filter_chips)
@@ -658,13 +663,15 @@ class MaximoDesktopWindow(QMainWindow):
             self.profiles = {}
             self.profiles_error = str(exc)
             logging.warning("No se pudieron cargar los perfiles de búsqueda: %s", exc)
-        self.profile_combo.blockSignals(True)
-        self.profile_combo.clear()
-        self.profile_combo.addItem("Selecciona una búsqueda guardada…", "")
+        self.profile_list.blockSignals(True)
+        self.profile_list.clear()
         for name in sorted(self.profiles, key=str.casefold):
-            self.profile_combo.addItem(name, name)
-        self.profile_combo.setCurrentIndex(max(0, self.profile_combo.findData(selected_name)))
-        self.profile_combo.blockSignals(False)
+            item = QListWidgetItem(name)
+            item.setData(Qt.UserRole, name)
+            self.profile_list.addItem(item)
+            if name == selected_name:
+                self.profile_list.setCurrentItem(item)
+        self.profile_list.blockSignals(False)
         self.delete_profile_button.setEnabled(bool(selected_name and selected_name in self.profiles))
 
     def current_profile_state(self):
@@ -680,8 +687,8 @@ class MaximoDesktopWindow(QMainWindow):
             "advanced": advanced,
         }
 
-    def load_selected_profile(self):
-        name = self.profile_combo.currentData()
+    def load_selected_profile(self, current, _previous=None):
+        name = current.data(Qt.UserRole) if current else ""
         profile = self.profiles.get(name)
         self.delete_profile_button.setEnabled(bool(profile))
         if not profile:
@@ -697,7 +704,8 @@ class MaximoDesktopWindow(QMainWindow):
         if self.profiles_error:
             QMessageBox.critical(self, "Perfiles", "No se puede guardar hasta revisar el archivo de perfiles.\n\n" + self.profiles_error)
             return
-        current_name = self.profile_combo.currentData() or ""
+        current_item = self.profile_list.currentItem()
+        current_name = current_item.data(Qt.UserRole) if current_item else ""
         name, accepted = QInputDialog.getText(self, "Guardar búsqueda", "Nombre de la búsqueda:", text=current_name)
         name = name.strip()
         if not accepted or not name:
@@ -716,7 +724,8 @@ class MaximoDesktopWindow(QMainWindow):
         self.status.showMessage(f"Búsqueda guardada: {name}.", 4000)
 
     def delete_selected_profile(self):
-        name = self.profile_combo.currentData()
+        current_item = self.profile_list.currentItem()
+        name = current_item.data(Qt.UserRole) if current_item else ""
         if not name or name not in self.profiles:
             return
         if QMessageBox.question(self, "Eliminar búsqueda", f"¿Eliminar la búsqueda «{name}»?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
