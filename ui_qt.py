@@ -411,6 +411,7 @@ class MaximoDesktopWindow(QMainWindow):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setMinimumSectionSize(60)
+        header.setStretchLastSection(True)
         header.sectionResized.connect(self._column_resized)
         for column, width in enumerate((115, 85, 270, 135, 105, 125, 130, 145, 100, 150)):
             header.resizeSection(column, width)
@@ -432,7 +433,7 @@ class MaximoDesktopWindow(QMainWindow):
     def _fit_columns_to_viewport(self):
         if not self._column_ratios or not self.table.viewport().width():
             return
-        available = max(600, self.table.viewport().width() - 2)
+        available = max(600, self.table.viewport().width())
         widths = [max(60, int(round(available * ratio))) for ratio in self._column_ratios]
         difference = available - sum(widths)
         widths[-1] = max(60, widths[-1] + difference)
