@@ -250,11 +250,13 @@ class MaximoDesktopWindow(QMainWindow):
         box.addWidget(subtitle)
         box.addSpacing(30)
         self.nav_group = QButtonGroup(self)
+        self.nav_buttons = {}
         for index, (text, icon) in enumerate((("▦  Listado", ""), ("⚙  Configuración", ""))):
             button = QPushButton(text, objectName="nav", checkable=True)
             button.setChecked(index == 0)
-            button.clicked.connect(lambda _checked, page=index: self.pages.setCurrentIndex(page))
+            button.clicked.connect(lambda _checked, page=index: self.navigate_to(page))
             self.nav_group.addButton(button)
+            self.nav_buttons[index] = button
             box.addWidget(button)
         box.addStretch(1)
         mode = QLabel("MODO DESARROLLO\nDatos aislados", objectName="subtitle")
@@ -278,6 +280,31 @@ class MaximoDesktopWindow(QMainWindow):
         if action:
             row.addWidget(action)
         return header
+
+    def navigate_to(self, page: int) -> bool:
+        """Cambia de sección sin perder ajustes aún no aplicados."""
+        current = self.pages.currentIndex()
+        if current == page:
+            return True
+        if current == 1 and page != 1 and self.settings_dirty():
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Cambios sin guardar")
+            dialog.setText("Hay cambios de configuración que todavía no se han aplicado.")
+            dialog.setInformativeText("¿Qué quieres hacer antes de volver al listado?")
+            save = dialog.addButton("Guardar cambios", QMessageBox.AcceptRole)
+            discard = dialog.addButton("Descartar", QMessageBox.DestructiveRole)
+            cancel = dialog.addButton("Cancelar", QMessageBox.RejectRole)
+            dialog.exec()
+            if dialog.clickedButton() is save:
+                self.save_settings(show_feedback=False)
+            elif dialog.clickedButton() is discard:
+                self._load_config()
+            else:
+                self.nav_buttons[current].setChecked(True)
+                return False
+        self.pages.setCurrentIndex(page)
+        self.nav_buttons[page].setChecked(True)
+        return True
 
     def _build_list_page(self):
         page = QWidget()
@@ -362,9 +389,10 @@ class MaximoDesktopWindow(QMainWindow):
         self.auto_update_summary = QLabel()
         self.auto_update_summary.setObjectName("filterHint")
         form.addRow("Estado", self.auto_update_summary)
-        access_actions = QHBoxLayout(); save = QPushButton("Guardar configuración", objectName="primary"); save.clicked.connect(self.save_settings)
-        self.test_button = QPushButton("Probar credenciales"); self.test_button.clicked.connect(self.test_credentials)
-        access_actions.addWidget(save); access_actions.addWidget(self.test_button); access_actions.addStretch(); form.addRow(access_actions)
+        access_actions = QHBoxLayout()
+        self.test_button = QPushButton("Probar y guardar credenciales")
+        self.test_button.clicked.connect(self.test_credentials)
+        access_actions.addWidget(self.test_button); access_actions.addStretch(); form.addRow(access_actions)
         body.addWidget(access)
 
         maintenance = QGroupBox("Mantenimiento")
@@ -386,7 +414,15 @@ class MaximoDesktopWindow(QMainWindow):
         open_folder = QPushButton("Abrir carpeta de datos")
         open_folder.clicked.connect(self.open_data_folder)
         paths_form.addRow(open_folder)
-        body.addWidget(paths); body.addStretch()
+        body.addWidget(paths)
+        save_row = QHBoxLayout()
+        save_hint = QLabel("Los cambios de esta página se aplican al guardar.")
+        save_hint.setObjectName("filterHint")
+        self.save_settings_button = QPushButton("Guardar cambios", objectName="primary")
+        self.save_settings_button.clicked.connect(self.save_settings)
+        save_row.addWidget(save_hint); save_row.addStretch(); save_row.addWidget(self.save_settings_button)
+        body.addLayout(save_row)
+        body.addStretch()
         scroll.setWidget(content); layout.addWidget(scroll, 1)
         return page
 
@@ -520,7 +556,8 @@ class MaximoDesktopWindow(QMainWindow):
     def _credentials_ready(self):
         if credentials_configured(): return True
         QMessageBox.information(self, "Credenciales necesarias", "Configura y guarda las credenciales de Maximo antes de continuar.")
-        self.pages.setCurrentIndex(1); return False
+        self.navigate_to(1)
+        return False
 
     def update_now(self, automatic=False):
         if not self._credentials_ready() or not self.update_lock.acquire(False): return
@@ -566,7 +603,17 @@ class MaximoDesktopWindow(QMainWindow):
         self.reconcile_check.setChecked(self.cfg.reconciliation_enabled); self.batch_spin.setValue(self.cfg.reconciliation_batch_size)
         self._refresh_auto_update_summary()
 
-    def save_settings(self):
+    def settings_dirty(self):
+        return (
+            self.user_edit.text().strip() != self.cfg.username
+            or self.password_edit.text() != self.cfg.password
+            or self.auto_check.isChecked() != self.cfg.auto_update_enabled
+            or self.interval_spin.value() != self.cfg.auto_update_interval_min
+            or self.reconcile_check.isChecked() != self.cfg.reconciliation_enabled
+            or self.batch_spin.value() != self.cfg.reconciliation_batch_size
+        )
+
+    def save_settings(self, show_feedback=True):
         self.cfg.username = self.user_edit.text().strip(); self.cfg.password = self.password_edit.text(); self.cfg.auto_update_enabled = self.auto_check.isChecked(); self.cfg.auto_update_interval_min = self.interval_spin.value(); self.cfg.reconciliation_enabled = self.reconcile_check.isChecked(); self.cfg.reconciliation_batch_size = self.batch_spin.value()
         save_config(self.cfg)
         self.schedule_auto_update()
@@ -576,7 +623,8 @@ class MaximoDesktopWindow(QMainWindow):
             self.cfg.auto_update_enabled, self.cfg.auto_update_interval_min,
             self.cfg.reconciliation_enabled, self.cfg.reconciliation_batch_size,
         )
-        QMessageBox.information(self, "Configuración", "Configuración guardada correctamente.")
+        if show_feedback:
+            QMessageBox.information(self, "Configuración", "Configuración guardada correctamente.")
         self.status.showMessage("Configuración guardada y aplicada.", 4000)
 
     def _refresh_auto_update_summary(self):
@@ -599,7 +647,17 @@ class MaximoDesktopWindow(QMainWindow):
         user, password = self.user_edit.text().strip(), self.password_edit.text()
         if not user or not password: QMessageBox.warning(self, "Credenciales", "Introduce usuario y contraseña."); return
         self.test_button.setEnabled(False); self.status.showMessage("Comprobando credenciales…")
-        def done(_): self.test_button.setEnabled(True); self.status.showMessage("Credenciales verificadas."); QMessageBox.information(self, "Credenciales válidas", "Acceso a Maximo comprobado. La prueba no guarda cambios.")
+        def done(_):
+            self.test_button.setEnabled(True)
+            self.cfg.username, self.cfg.password = user, password
+            save_config(self.cfg)
+            logging.info("Credenciales UI verificadas y guardadas.")
+            self.status.showMessage("Credenciales verificadas y guardadas.")
+            QMessageBox.information(
+                self, "Credenciales válidas",
+                "El acceso a Maximo se ha comprobado y las credenciales se han guardado.\n\n"
+                "Los demás cambios de la página siguen pendientes hasta pulsar «Guardar cambios»."
+            )
         def failed(error): self.test_button.setEnabled(True); QMessageBox.critical(self, "No se pudo comprobar el acceso", error)
         self._start_task(lambda: verify_credentials(user, password), done, failed)
 
