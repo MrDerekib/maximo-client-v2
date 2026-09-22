@@ -38,6 +38,7 @@ class AppConfig:
     latest_release_url: str = ""
     latest_release_checked_at: str = ""
     table_column_widths: dict | None = None
+    table_layout_initialized: bool = False
     window_size: list | None = None
     window_maximized: bool = False
 

@@ -417,7 +417,7 @@ class MaximoDesktopWindow(QMainWindow):
         header.setMinimumSectionSize(60)
         header.setCursor(Qt.SplitHCursor)
         header.sectionResized.connect(self._column_resized)
-        for column, width in enumerate((145, 85, 270, 135, 105, 125, 130, 145, 100, 150)):
+        for column, width in enumerate((180, 110, 340, 145, 135, 140, 180, 130, 105, 140)):
             header.resizeSection(column, width)
         self._column_widths = self._current_column_widths()
         outer.addWidget(self.table, 1)
@@ -489,7 +489,7 @@ class MaximoDesktopWindow(QMainWindow):
 
     def _restore_column_widths(self):
         widths = self.cfg.table_column_widths or {}
-        if not widths:
+        if not widths or not self.cfg.table_layout_initialized:
             return
         values = []
         for index in range(len(self.columns)):
@@ -515,6 +515,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.cfg.table_column_widths = {
             str(index): width for index, width in enumerate(self._current_column_widths())
         }
+        self.cfg.table_layout_initialized = True
         save_config(self.cfg)
         logging.info("Anchos de columnas guardados.")
 
@@ -773,6 +774,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.cfg.table_column_widths = {
             str(index): width for index, width in enumerate(self._current_column_widths())
         }
+        self.cfg.table_layout_initialized = True
         geometry = self.normalGeometry() if self.isMaximized() else self.geometry()
         self.cfg.window_size = [geometry.width(), geometry.height()]
         self.cfg.window_maximized = self.isMaximized()
