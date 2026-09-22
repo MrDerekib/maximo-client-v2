@@ -591,7 +591,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.table.setSortingEnabled(False); self.table.setRowCount(0)
         for raw in rows:
             active, last_seen, *data = raw
-            status = "✓ Activo en Maximo" if active == 1 else "— No activo en Maximo" if active == 0 else "? Estado desconocido"
+            status = "✓ Activo en Maximo" if active == 1 else "× No activo en Maximo" if active == 0 else "? Estado desconocido"
             try: last_seen = datetime.fromisoformat(last_seen).strftime("%d/%m/%Y %H:%M") if last_seen else ""
             except (TypeError, ValueError): pass
             row = [status, *data, last_seen]
