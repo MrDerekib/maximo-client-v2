@@ -113,7 +113,9 @@ class BackgroundTask(QRunnable):
 
 def _draw_chevron(painter: QPainter, center_x: float, center_y: float, up: bool) -> None:
     """Dibuja una flecha nítida sin depender de temas ni rutas de recursos."""
-    offset = -2.5 if up else 2.5
+    # En coordenadas Qt el eje Y crece hacia abajo: para la punta superior
+    # el vértice central debe tener una Y menor que los extremos.
+    offset = 2.5 if up else -2.5
     painter.drawLine(QPointF(center_x - 4, center_y + offset), QPointF(center_x, center_y - offset))
     painter.drawLine(QPointF(center_x, center_y - offset), QPointF(center_x + 4, center_y + offset))
 
