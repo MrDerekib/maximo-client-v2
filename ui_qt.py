@@ -87,7 +87,8 @@ QPushButton#primary { background: #1976d2; color: white; }
 QPushButton#primary:hover { background: #125ea7; }
 QPushButton#danger { background: #fff1f0; color: #c53030; }
 QTableWidget { background: white; border: 1px solid #d9e2ec; border-radius: 8px; gridline-color: #edf2f7; selection-background-color: #dbeafe; selection-color: #172033; }
-QHeaderView::section { background: #f0f4f8; color: #486581; border: 0; border-bottom: 1px solid #d9e2ec; padding: 9px; font-weight: 700; }
+QHeaderView::section { background: #f0f4f8; color: #486581; border: 0; border-right: 1px solid #cbd5e1; border-bottom: 1px solid #d9e2ec; padding: 9px; font-weight: 700; }
+QHeaderView::section:hover { background: #e2e8f0; }
 QStatusBar { background: white; border-top: 1px solid #d9e2ec; color: #486581; }
 """
 
@@ -229,7 +230,8 @@ class AdvancedFiltersDialog(QDialog):
 
 
 class MaximoDesktopWindow(QMainWindow):
-    columns = ("Sincronización", "OT", "Descripción", "Nº de serie", "Fecha", "Cliente", "Tipo de trabajo", "Seguimiento", "Planta", "Última vez visto")
+    columns = ("Estado en Maximo", "OT", "Descripción", "Nº de serie", "Fecha", "Cliente", "Tipo de trabajo", "Seguimiento", "Planta", "Última vez visto")
+    max_column_widths = (180, 140, 600, 240, 160, 220, 220, 240, 160, 1200)
     close_progress = Signal(str)
     close_finished = Signal()
 
@@ -247,6 +249,7 @@ class MaximoDesktopWindow(QMainWindow):
         self._close_finalized = False
         self._restoring_column_widths = False
         self._column_ratios = None
+        self._column_resize_guard = False
         self._column_width_save_timer = QTimer(self)
         self._column_width_save_timer.setSingleShot(True)
         self._column_width_save_timer.timeout.connect(self._save_column_widths)
@@ -412,8 +415,9 @@ class MaximoDesktopWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setMinimumSectionSize(60)
         header.setStretchLastSection(True)
+        header.setCursor(Qt.SplitHCursor)
         header.sectionResized.connect(self._column_resized)
-        for column, width in enumerate((115, 85, 270, 135, 105, 125, 130, 145, 100, 150)):
+        for column, width in enumerate((145, 85, 270, 135, 105, 125, 130, 145, 100, 150)):
             header.resizeSection(column, width)
         self._column_ratios = self._current_column_ratios()
         outer.addWidget(self.table, 1)
@@ -434,9 +438,10 @@ class MaximoDesktopWindow(QMainWindow):
         if not self._column_ratios or not self.table.viewport().width():
             return
         available = max(600, self.table.viewport().width())
-        widths = [max(60, int(round(available * ratio))) for ratio in self._column_ratios]
-        difference = available - sum(widths)
-        widths[-1] = max(60, widths[-1] + difference)
+        widths = [min(limit, max(60, int(round(available * ratio)))) for ratio, limit in zip(self._column_ratios, self.max_column_widths)]
+        # La última columna absorbe siempre el espacio restante para que no
+        # quede una franja vacía al final de la tabla.
+        widths[-1] = max(60, available - sum(widths[:-1]))
         self._restoring_column_widths = True
         try:
             header = self.table.horizontalHeader()
@@ -446,6 +451,14 @@ class MaximoDesktopWindow(QMainWindow):
             self._restoring_column_widths = False
 
     def _column_resized(self, _logical_index, _old_size, _new_size):
+        if self._column_resize_guard:
+            return
+        if _new_size > self.max_column_widths[_logical_index]:
+            self._column_resize_guard = True
+            try:
+                self.table.horizontalHeader().resizeSection(_logical_index, self.max_column_widths[_logical_index])
+            finally:
+                self._column_resize_guard = False
         if not self._restoring_column_widths:
             self._column_ratios = self._current_column_ratios()
             self._column_width_save_timer.start(400)
@@ -578,14 +591,18 @@ class MaximoDesktopWindow(QMainWindow):
         self.table.setSortingEnabled(False); self.table.setRowCount(0)
         for raw in rows:
             active, last_seen, *data = raw
-            status = "● Activo" if active == 1 else "○ No activo" if active == 0 else "—"
+            status = "✓ Activo en Maximo" if active == 1 else "— No activo en Maximo" if active == 0 else "? Estado desconocido"
             try: last_seen = datetime.fromisoformat(last_seen).strftime("%d/%m/%Y %H:%M") if last_seen else ""
             except (TypeError, ValueError): pass
             row = [status, *data, last_seen]
             index = self.table.rowCount(); self.table.insertRow(index)
             for column, value in enumerate(row):
                 item = QTableWidgetItem(str(value or "")); item.setData(Qt.UserRole, raw[2])
-                if active == 0: item.setForeground(QColor("#718096"))
+                if column == 0:
+                    item.setToolTip("Activo en Maximo: aparece en el listado de reparaciones y recibe actualizaciones.\nNo activo en Maximo: ya no aparece en ese listado y no recibe nuevas actualizaciones.")
+                    item.setForeground(QColor("#2f855a" if active == 1 else "#718096"))
+                elif active == 0:
+                    item.setForeground(QColor("#718096"))
                 self.table.setItem(index, column, item)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
