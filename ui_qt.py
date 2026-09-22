@@ -374,6 +374,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.profile_list = QListWidget(objectName="profileList")
         self.profile_list.setMaximumHeight(220)
         self.profile_list.currentItemChanged.connect(self.load_selected_profile)
+        self.profile_list.itemClicked.connect(self.load_selected_profile)
         box.addWidget(self.profile_list)
         save_profile = QPushButton("＋  Guardar búsqueda", objectName="sidebarAction")
         save_profile.clicked.connect(self.save_current_profile)
