@@ -15,8 +15,8 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon
+from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
     QDialog, QDialogButtonBox, QCompleter, QFormLayout, QFrame, QGridLayout,
@@ -35,10 +35,6 @@ from db import (
 from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
 from updater import reconcile_inactive_tracking, run_update
 import version
-
-ASSET_DIR = Path(__file__).resolve().parent / "ui_assets"
-CHEVRON_DOWN = (ASSET_DIR / "chevron-down.svg").as_uri()
-CHEVRON_UP = (ASSET_DIR / "chevron-up.svg").as_uri()
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
@@ -79,15 +75,12 @@ QComboBox { padding-right: 36px; }
 QComboBox:hover, QSpinBox:hover { border-color: #829ab1; }
 QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 30px; border-left: 1px solid #d9e2ec; background: #f8fafc; border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
 QComboBox::drop-down:hover { background: #e8eef5; }
-QComboBox::down-arrow { image: url(__CHEVRON_DOWN__); width: 14px; height: 14px; }
 QComboBox QAbstractItemView { border: 1px solid #bcccdc; border-radius: 7px; padding: 4px; background: white; selection-background-color: #dbeafe; selection-color: #102a43; outline: 0; }
 QSpinBox { padding-right: 34px; }
 QSpinBox::up-button, QSpinBox::down-button { subcontrol-origin: border; width: 28px; background: #f8fafc; border-left: 1px solid #d9e2ec; }
 QSpinBox::up-button { subcontrol-position: top right; border-top-right-radius: 6px; border-bottom: 1px solid #d9e2ec; }
 QSpinBox::down-button { subcontrol-position: bottom right; border-bottom-right-radius: 6px; }
 QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #e8eef5; }
-QSpinBox::up-arrow { image: url(__CHEVRON_UP__); width: 14px; height: 14px; }
-QSpinBox::down-arrow { image: url(__CHEVRON_DOWN__); width: 14px; height: 14px; }
 QPushButton { border: 0; border-radius: 6px; padding: 8px 13px; background: #e8eef5; color: #243b53; font-weight: 600; }
 QPushButton:hover { background: #d9e2ec; }
 QPushButton#primary { background: #1976d2; color: white; }
@@ -96,7 +89,7 @@ QPushButton#danger { background: #fff1f0; color: #c53030; }
 QTableWidget { background: white; border: 1px solid #d9e2ec; border-radius: 8px; gridline-color: #edf2f7; selection-background-color: #dbeafe; selection-color: #172033; }
 QHeaderView::section { background: #f0f4f8; color: #486581; border: 0; border-bottom: 1px solid #d9e2ec; padding: 9px; font-weight: 700; }
 QStatusBar { background: white; border-top: 1px solid #d9e2ec; color: #486581; }
-""".replace("__CHEVRON_DOWN__", CHEVRON_DOWN).replace("__CHEVRON_UP__", CHEVRON_UP)
+"""
 
 
 class TaskSignals(QObject):
@@ -116,6 +109,33 @@ class BackgroundTask(QRunnable):
         except Exception as exc:  # El detalle completo queda en el log.
             logging.exception("Tarea de interfaz fallida")
             self.signals.failed.emit(str(exc))
+
+
+def _draw_chevron(painter: QPainter, center_x: float, center_y: float, up: bool) -> None:
+    """Dibuja una flecha nítida sin depender de temas ni rutas de recursos."""
+    offset = -2.5 if up else 2.5
+    painter.drawLine(QPointF(center_x - 4, center_y + offset), QPointF(center_x, center_y - offset))
+    painter.drawLine(QPointF(center_x, center_y - offset), QPointF(center_x + 4, center_y + offset))
+
+
+class DecoratedComboBox(QComboBox):
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor("#486581"), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        _draw_chevron(painter, self.width() - 15, self.height() / 2, up=False)
+
+
+class DecoratedSpinBox(QSpinBox):
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor("#486581"), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        x = self.width() - 14
+        _draw_chevron(painter, x, self.height() * 0.30, up=True)
+        _draw_chevron(painter, x, self.height() * 0.70, up=False)
 
 
 class CalendarLineEdit(QLineEdit):
@@ -337,7 +357,7 @@ class MaximoDesktopWindow(QMainWindow):
         toolbar = QGridLayout()
         toolbar.setHorizontalSpacing(12)
         toolbar.addWidget(QLabel("Cliente"), 0, 0)
-        self.client_combo = QComboBox()
+        self.client_combo = DecoratedComboBox()
         self.client_combo.currentIndexChanged.connect(self.refresh_table)
         toolbar.addWidget(self.client_combo, 1, 0)
         toolbar.addWidget(QLabel("Buscar"), 0, 1)
@@ -346,7 +366,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.search_edit.returnPressed.connect(self.refresh_table)
         toolbar.addWidget(self.search_edit, 1, 1)
         toolbar.addWidget(QLabel("Buscar por"), 0, 2)
-        self.search_by_combo = QComboBox()
+        self.search_by_combo = DecoratedComboBox()
         self.search_by_combo.addItem("Nº de serie", "Nº_de_serie")
         self.search_by_combo.addItem("OT", "OT")
         self.search_by_combo.addItem("Descripción", "Descripción")
@@ -399,7 +419,7 @@ class MaximoDesktopWindow(QMainWindow):
         form = QFormLayout(access)
         self.user_edit = QLineEdit(); self.password_edit = QLineEdit(); self.password_edit.setEchoMode(QLineEdit.Password)
         self.auto_check = QCheckBox("Actualizar el listado automáticamente")
-        self.interval_spin = QSpinBox(); self.interval_spin.setRange(1, 1440); self.interval_spin.setSuffix(" min")
+        self.interval_spin = DecoratedSpinBox(); self.interval_spin.setRange(1, 1440); self.interval_spin.setSuffix(" min")
         form.addRow("Usuario", self.user_edit); form.addRow("Contraseña", self.password_edit)
         form.addRow("", self.auto_check); form.addRow("Intervalo", self.interval_spin)
         self.auto_update_summary = QLabel()
@@ -414,7 +434,7 @@ class MaximoDesktopWindow(QMainWindow):
         maintenance = QGroupBox("Mantenimiento")
         mform = QFormLayout(maintenance)
         self.reconcile_check = QCheckBox("Actualizar estados de OT no activas en segundo plano")
-        self.batch_spin = QSpinBox(); self.batch_spin.setRange(1, 100); self.batch_spin.setSuffix(" OT")
+        self.batch_spin = DecoratedSpinBox(); self.batch_spin.setRange(1, 100); self.batch_spin.setSuffix(" OT")
         priority = QPushButton("Revisar todas las OT pendientes ahora")
         priority.clicked.connect(self.start_priority_reconcile)
         clean = QPushButton("Eliminar registros no activos…", objectName="danger")
