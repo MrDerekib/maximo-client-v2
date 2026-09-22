@@ -150,6 +150,7 @@ class MultiSelectComboBox(DecoratedComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setEditable(True)
+        self.setInsertPolicy(QComboBox.NoInsert)
         self.lineEdit().setReadOnly(True)
         self.lineEdit().setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.setModel(QStandardItemModel(self))
@@ -165,6 +166,7 @@ class MultiSelectComboBox(DecoratedComboBox):
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
             item.setData(Qt.Checked if option in selected else Qt.Unchecked, Qt.CheckStateRole)
             self.model().appendRow(item)
+        self.setCurrentIndex(-1)
         self.blockSignals(False)
         self._refresh_text()
 
