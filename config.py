@@ -37,6 +37,7 @@ class AppConfig:
     latest_release_tag: str = ""
     latest_release_url: str = ""
     latest_release_checked_at: str = ""
+    table_column_widths: dict | None = None
 
     def __post_init__(self):
         self.download_dir = str(DOWNLOAD_DIR)
@@ -48,6 +49,8 @@ class AppConfig:
             self.reconciliation_batch_size = 5
         if self.filters is None:
             self.filters = {"mx38_tfrow_[C:26]_txt-tb": "=LAB-BAD"}
+        if not isinstance(self.table_column_widths, dict):
+            self.table_column_widths = {}
 
 
 def _atomic_json(path: Path, data: dict) -> None:

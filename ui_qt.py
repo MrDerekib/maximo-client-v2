@@ -245,6 +245,10 @@ class MaximoDesktopWindow(QMainWindow):
         self.filter_choices_cache = {"equipment": [], "clients": [], "types": [], "tracking": []}
         self._closing = False
         self._close_finalized = False
+        self._restoring_column_widths = False
+        self._column_width_save_timer = QTimer(self)
+        self._column_width_save_timer.setSingleShot(True)
+        self._column_width_save_timer.timeout.connect(self._save_column_widths)
         self.auto_timer = QTimer(self)
         self.auto_timer.timeout.connect(lambda: self.update_now(automatic=True))
         self.close_progress.connect(self._set_close_progress)
@@ -260,6 +264,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.refresh_choices()
         self.refresh_table()
         self._load_config()
+        self._restore_column_widths()
         self.schedule_auto_update()
 
     def _build_ui(self):
@@ -402,12 +407,42 @@ class MaximoDesktopWindow(QMainWindow):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(2, QHeaderView.Stretch)
-        for column in range(len(self.columns)):
-            if column != 2:
-                header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setMinimumSectionSize(60)
+        header.sectionResized.connect(self._column_resized)
+        for column, width in enumerate((115, 85, 270, 135, 105, 125, 130, 145, 100, 150)):
+            header.resizeSection(column, width)
         outer.addWidget(self.table, 1)
         return page
+
+    def _column_resized(self, _logical_index, _old_size, _new_size):
+        if not self._restoring_column_widths:
+            self._column_width_save_timer.start(400)
+
+    def _restore_column_widths(self):
+        widths = self.cfg.table_column_widths or {}
+        if not widths:
+            return
+        self._restoring_column_widths = True
+        try:
+            header = self.table.horizontalHeader()
+            for index in range(len(self.columns)):
+                value = widths.get(str(index), widths.get(index))
+                if value is not None:
+                    try:
+                        header.resizeSection(index, max(60, int(value)))
+                    except (TypeError, ValueError):
+                        continue
+        finally:
+            self._restoring_column_widths = False
+
+    def _save_column_widths(self):
+        header = self.table.horizontalHeader()
+        self.cfg.table_column_widths = {
+            str(index): header.sectionSize(index) for index in range(len(self.columns))
+        }
+        save_config(self.cfg)
+        logging.info("Anchos de columnas guardados.")
 
     def _build_settings_page(self):
         page = QWidget()
@@ -503,7 +538,10 @@ class MaximoDesktopWindow(QMainWindow):
             rows = fetch_data(self.search_edit.text(), self.search_field(), self.client_combo.currentText(), self.advanced_filters(), include_sync=True)
         except ValueError as exc:
             QMessageBox.warning(self, "Filtros", str(exc)); return
-        rows.sort(key=lambda row: row[2], reverse=True)
+        def ot_sort_key(row):
+            value = str(row[2] or "").strip()
+            return (0, int(value)) if value.isdigit() else (1, value)
+        rows.sort(key=ot_sort_key, reverse=True)
         self.table.setSortingEnabled(False); self.table.setRowCount(0)
         for raw in rows:
             active, last_seen, *data = raw
@@ -517,6 +555,7 @@ class MaximoDesktopWindow(QMainWindow):
                 if active == 0: item.setForeground(QColor("#718096"))
                 self.table.setItem(index, column, item)
         self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
         summary = self.active_filter_summary()
         self.filter_chips.setVisible(bool(summary))
         self.filter_chips.setText("Filtros activos · " + "   •   ".join(summary))
