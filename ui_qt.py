@@ -246,6 +246,7 @@ class MaximoDesktopWindow(QMainWindow):
         self._closing = False
         self._close_finalized = False
         self._restoring_column_widths = False
+        self._column_ratios = None
         self._column_width_save_timer = QTimer(self)
         self._column_width_save_timer.setSingleShot(True)
         self._column_width_save_timer.timeout.connect(self._save_column_widths)
@@ -265,6 +266,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.refresh_table()
         self._load_config()
         self._restore_column_widths()
+        QTimer.singleShot(0, self._fit_columns_to_viewport)
         self.schedule_auto_update()
 
     def _build_ui(self):
@@ -412,34 +414,64 @@ class MaximoDesktopWindow(QMainWindow):
         header.sectionResized.connect(self._column_resized)
         for column, width in enumerate((115, 85, 270, 135, 105, 125, 130, 145, 100, 150)):
             header.resizeSection(column, width)
+        self._column_ratios = self._current_column_ratios()
         outer.addWidget(self.table, 1)
         return page
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "table"):
+            self._fit_columns_to_viewport()
+
+    def _current_column_ratios(self):
+        header = self.table.horizontalHeader()
+        sizes = [max(1, header.sectionSize(index)) for index in range(len(self.columns))]
+        total = sum(sizes)
+        return [size / total for size in sizes]
+
+    def _fit_columns_to_viewport(self):
+        if not self._column_ratios or not self.table.viewport().width():
+            return
+        available = max(600, self.table.viewport().width() - 2)
+        widths = [max(60, int(round(available * ratio))) for ratio in self._column_ratios]
+        difference = available - sum(widths)
+        widths[-1] = max(60, widths[-1] + difference)
+        self._restoring_column_widths = True
+        try:
+            header = self.table.horizontalHeader()
+            for index, width in enumerate(widths):
+                header.resizeSection(index, width)
+        finally:
+            self._restoring_column_widths = False
+
     def _column_resized(self, _logical_index, _old_size, _new_size):
         if not self._restoring_column_widths:
+            self._column_ratios = self._current_column_ratios()
             self._column_width_save_timer.start(400)
 
     def _restore_column_widths(self):
         widths = self.cfg.table_column_widths or {}
         if not widths:
             return
+        values = []
+        for index in range(len(self.columns)):
+            value = widths.get(str(index), widths.get(index))
+            try:
+                values.append(max(1, float(value)))
+            except (TypeError, ValueError):
+                values.append(1.0)
+        total = sum(values)
+        self._column_ratios = [value / total for value in values]
         self._restoring_column_widths = True
         try:
-            header = self.table.horizontalHeader()
-            for index in range(len(self.columns)):
-                value = widths.get(str(index), widths.get(index))
-                if value is not None:
-                    try:
-                        header.resizeSection(index, max(60, int(value)))
-                    except (TypeError, ValueError):
-                        continue
+            self._fit_columns_to_viewport()
         finally:
             self._restoring_column_widths = False
 
     def _save_column_widths(self):
         header = self.table.horizontalHeader()
         self.cfg.table_column_widths = {
-            str(index): header.sectionSize(index) for index in range(len(self.columns))
+            str(index): ratio for index, ratio in enumerate(self._current_column_ratios())
         }
         save_config(self.cfg)
         logging.info("Anchos de columnas guardados.")
