@@ -248,7 +248,7 @@ class MaximoDesktopWindow(QMainWindow):
         self._closing = False
         self._close_finalized = False
         self._restoring_column_widths = False
-        self._column_ratios = None
+        self._column_widths = None
         self._column_resize_guard = False
         self._column_width_save_timer = QTimer(self)
         self._column_width_save_timer.setSingleShot(True)
@@ -419,7 +419,7 @@ class MaximoDesktopWindow(QMainWindow):
         header.sectionResized.connect(self._column_resized)
         for column, width in enumerate((145, 85, 270, 135, 105, 125, 130, 145, 100, 150)):
             header.resizeSection(column, width)
-        self._column_ratios = self._current_column_ratios()
+        self._column_widths = self._current_column_widths()
         outer.addWidget(self.table, 1)
         return page
 
@@ -434,17 +434,19 @@ class MaximoDesktopWindow(QMainWindow):
         # recalcule las secciones al mostrar la ventana.
         QTimer.singleShot(0, self._fit_columns_to_viewport)
 
-    def _current_column_ratios(self):
+    def _current_column_widths(self):
         header = self.table.horizontalHeader()
-        sizes = [max(1, header.sectionSize(index)) for index in range(len(self.columns))]
-        total = sum(sizes)
-        return [size / total for size in sizes]
+        return [max(60, header.sectionSize(index)) for index in range(len(self.columns))]
 
     def _fit_columns_to_viewport(self):
-        if not self._column_ratios or not self.table.viewport().width():
+        if not self._column_widths or not self.table.viewport().width():
             return
         available = max(600, self.table.viewport().width())
-        widths = [min(limit, max(60, int(round(available * ratio)))) for ratio, limit in zip(self._column_ratios, self.max_column_widths)]
+        widths = [min(limit, max(60, int(width))) for width, limit in zip(self._column_widths, self.max_column_widths)]
+        total = sum(widths)
+        if total > available:
+            scale = available / total
+            widths = [max(60, int(round(width * scale))) for width in widths]
         # La última columna absorbe siempre el espacio restante para que no
         # quede una franja vacía al final de la tabla.
         widths[-1] = max(60, available - sum(widths[:-1]))
@@ -457,17 +459,33 @@ class MaximoDesktopWindow(QMainWindow):
             self._restoring_column_widths = False
 
     def _column_resized(self, _logical_index, _old_size, _new_size):
-        if self._column_resize_guard:
+        if self._column_resize_guard or self._restoring_column_widths:
             return
+        header = self.table.horizontalHeader()
         if _new_size > self.max_column_widths[_logical_index]:
             self._column_resize_guard = True
             try:
-                self.table.horizontalHeader().resizeSection(_logical_index, self.max_column_widths[_logical_index])
+                header.resizeSection(_logical_index, self.max_column_widths[_logical_index])
             finally:
                 self._column_resize_guard = False
-        if not self._restoring_column_widths:
-            self._column_ratios = self._current_column_ratios()
-            self._column_width_save_timer.start(400)
+        last_column = len(self.columns) - 1
+        if _logical_index != last_column:
+            delta = header.sectionSize(_logical_index) - _old_size
+            target = max(60, header.sectionSize(last_column) - delta)
+            self._column_resize_guard = True
+            try:
+                header.resizeSection(last_column, target)
+            finally:
+                self._column_resize_guard = False
+        else:
+            target = max(60, self.table.viewport().width() - sum(header.sectionSize(index) for index in range(last_column)))
+            self._column_resize_guard = True
+            try:
+                header.resizeSection(last_column, target)
+            finally:
+                self._column_resize_guard = False
+        self._column_widths = self._current_column_widths()
+        self._column_width_save_timer.start(400)
 
     def _restore_column_widths(self):
         widths = self.cfg.table_column_widths or {}
@@ -477,11 +495,15 @@ class MaximoDesktopWindow(QMainWindow):
         for index in range(len(self.columns)):
             value = widths.get(str(index), widths.get(index))
             try:
-                values.append(max(1, float(value)))
+                values.append(max(0.01, float(value)))
             except (TypeError, ValueError):
                 values.append(1.0)
-        total = sum(values)
-        self._column_ratios = [value / total for value in values]
+        # Las primeras versiones de la preview guardaban proporciones. Se
+        # convierten una vez a píxeles para conservar compatibilidad.
+        if max(values) <= 1:
+            reference_width = max(1150, self.table.viewport().width() or 1500)
+            values = [max(60, int(round(value * reference_width))) for value in values]
+        self._column_widths = values
         self._restoring_column_widths = True
         try:
             self._fit_columns_to_viewport()
@@ -491,7 +513,7 @@ class MaximoDesktopWindow(QMainWindow):
     def _save_column_widths(self):
         header = self.table.horizontalHeader()
         self.cfg.table_column_widths = {
-            str(index): ratio for index, ratio in enumerate(self._current_column_ratios())
+            str(index): width for index, width in enumerate(self._current_column_widths())
         }
         save_config(self.cfg)
         logging.info("Anchos de columnas guardados.")
@@ -749,7 +771,7 @@ class MaximoDesktopWindow(QMainWindow):
     def _save_window_state(self):
         self._column_width_save_timer.stop()
         self.cfg.table_column_widths = {
-            str(index): ratio for index, ratio in enumerate(self._current_column_ratios())
+            str(index): width for index, width in enumerate(self._current_column_widths())
         }
         geometry = self.normalGeometry() if self.isMaximized() else self.geometry()
         self.cfg.window_size = [geometry.width(), geometry.height()]
