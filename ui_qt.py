@@ -364,7 +364,7 @@ class MaximoDesktopWindow(QMainWindow):
 
         search_card = QFrame(objectName="filtersCard")
         search_layout = QVBoxLayout(search_card)
-        search_layout.setContentsMargins(18, 14, 18, 0)
+        search_layout.setContentsMargins(18, 14, 18, 14)
         search_layout.setSpacing(10)
         toolbar = QGridLayout()
         toolbar.setHorizontalSpacing(12)
