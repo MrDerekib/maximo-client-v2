@@ -359,6 +359,9 @@ class MaximoDesktopWindow(QMainWindow):
         self.interval_spin = QSpinBox(); self.interval_spin.setRange(1, 1440); self.interval_spin.setSuffix(" min")
         form.addRow("Usuario", self.user_edit); form.addRow("Contraseña", self.password_edit)
         form.addRow("", self.auto_check); form.addRow("Intervalo", self.interval_spin)
+        self.auto_update_summary = QLabel()
+        self.auto_update_summary.setObjectName("filterHint")
+        form.addRow("Estado", self.auto_update_summary)
         access_actions = QHBoxLayout(); save = QPushButton("Guardar configuración", objectName="primary"); save.clicked.connect(self.save_settings)
         self.test_button = QPushButton("Probar credenciales"); self.test_button.clicked.connect(self.test_credentials)
         access_actions.addWidget(save); access_actions.addWidget(self.test_button); access_actions.addStretch(); form.addRow(access_actions)
@@ -561,15 +564,36 @@ class MaximoDesktopWindow(QMainWindow):
         self.user_edit.setText(self.cfg.username); self.password_edit.setText(self.cfg.password)
         self.auto_check.setChecked(self.cfg.auto_update_enabled); self.interval_spin.setValue(self.cfg.auto_update_interval_min)
         self.reconcile_check.setChecked(self.cfg.reconciliation_enabled); self.batch_spin.setValue(self.cfg.reconciliation_batch_size)
+        self._refresh_auto_update_summary()
 
     def save_settings(self):
         self.cfg.username = self.user_edit.text().strip(); self.cfg.password = self.password_edit.text(); self.cfg.auto_update_enabled = self.auto_check.isChecked(); self.cfg.auto_update_interval_min = self.interval_spin.value(); self.cfg.reconciliation_enabled = self.reconcile_check.isChecked(); self.cfg.reconciliation_batch_size = self.batch_spin.value()
-        save_config(self.cfg); self.schedule_auto_update(); QMessageBox.information(self, "Configuración", "Configuración guardada correctamente."); self.status.showMessage("Configuración guardada.", 4000)
+        save_config(self.cfg)
+        self.schedule_auto_update()
+        self._refresh_auto_update_summary()
+        logging.info(
+            "Configuración UI guardada: auto_update=%s, intervalo=%d, conciliación=%s, lote=%d.",
+            self.cfg.auto_update_enabled, self.cfg.auto_update_interval_min,
+            self.cfg.reconciliation_enabled, self.cfg.reconciliation_batch_size,
+        )
+        QMessageBox.information(self, "Configuración", "Configuración guardada correctamente.")
+        self.status.showMessage("Configuración guardada y aplicada.", 4000)
+
+    def _refresh_auto_update_summary(self):
+        if self.cfg.auto_update_enabled:
+            self.auto_update_summary.setText(
+                f"Activa: próxima comprobación en {self.cfg.auto_update_interval_min} min."
+            )
+        else:
+            self.auto_update_summary.setText("Desactivada: no se programarán nuevas actualizaciones.")
 
     def schedule_auto_update(self):
         self.auto_timer.stop()
         if self.cfg.auto_update_enabled:
             self.auto_timer.start(self.cfg.auto_update_interval_min * 60 * 1000)
+            logging.info("Actualización automática UI programada cada %d min.", self.cfg.auto_update_interval_min)
+        else:
+            logging.info("Actualización automática UI desactivada.")
 
     def test_credentials(self):
         user, password = self.user_edit.text().strip(), self.password_edit.text()

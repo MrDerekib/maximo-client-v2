@@ -20,8 +20,15 @@ if ($null -eq $python) {
 $stableInstance = Get-Process -Name "MaximoDesktop" -ErrorAction SilentlyContinue |
     Select-Object -First 1
 if ($null -ne $stableInstance) {
-    Write-Host "Cierra Maximo Desktop estable antes de abrir la UI de desarrollo." -ForegroundColor Yellow
-    Write-Host "Proceso detectado: PID $($stableInstance.Id)" -ForegroundColor Yellow
+    $message = "Cierra Maximo Desktop estable antes de abrir la UI de desarrollo.`n`nProceso detectado: PID $($stableInstance.Id)"
+    Write-Host $message -ForegroundColor Yellow
+    Add-Type -AssemblyName PresentationFramework
+    [System.Windows.MessageBox]::Show(
+        $message,
+        "Maximo Desktop - UI de desarrollo",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+    ) | Out-Null
     exit 1
 }
 
