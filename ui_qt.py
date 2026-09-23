@@ -73,11 +73,13 @@ QPushButton#sidebarAction:hover { background: #315a82; color: white; }
 QFrame#card, QGroupBox { background: white; border: 1px solid #d9e2ec; border-radius: 10px; }
 QFrame#filtersCard { background: white; border: 1px solid #d9e2ec; border-radius: 10px; }
 QFrame#advancedFilters { background: #f8fafc; border-top: 1px solid #d9e2ec; }
+QWidget#settingsContent { background: #f5f7fb; }
 QLabel#filterHint { color: #627d98; font-size: 12px; }
 QLabel#filterChips { color: #1976d2; font-size: 12px; font-weight: 600; }
 QGroupBox { margin-top: 12px; padding: 12px; font-size: 16px; font-weight: 700; color: #334e68; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; color: #102a43; }
-QGroupBox QLabel, QGroupBox QCheckBox, QGroupBox QLineEdit, QGroupBox QSpinBox { font-size: 12px; font-weight: 400; }
+QGroupBox QLabel, QGroupBox QCheckBox { font-size: 12px; font-weight: 400; color: #172033; }
+QGroupBox QLineEdit, QGroupBox QSpinBox { font-size: 12px; font-weight: 400; color: #172033; }
 QGroupBox QPushButton { font-size: 12px; font-weight: 600; }
 QLineEdit, QComboBox, QListWidget, QSpinBox { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: white; min-height: 18px; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border: 2px solid #2f80ed; }
@@ -602,7 +604,8 @@ class MaximoDesktopWindow(QMainWindow):
         layout.setContentsMargins(30, 0, 30, 18)
         layout.addWidget(self._page_header("Configuración", "Acceso, actualización y mantenimiento de Maximo Desktop."))
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
-        content = QWidget(); body = QVBoxLayout(content); body.setContentsMargins(0, 0, 0, 20)
+        content = QWidget(objectName="settingsContent")
+        body = QVBoxLayout(content); body.setContentsMargins(0, 0, 0, 20)
 
         access = QGroupBox("Acceso a Maximo")
         form = QFormLayout(access)
