@@ -642,7 +642,15 @@ class MaximoDesktopWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(30, 0, 30, 18)
-        layout.addWidget(self._page_header("Configuración", "Acceso, actualización y mantenimiento de Maximo Desktop."))
+        settings_header_host = QWidget()
+        settings_header_layout = QHBoxLayout(settings_header_host)
+        settings_header_layout.setContentsMargins(0, 0, 0, 0)
+        self.settings_header = self._page_header("Configuración", "Acceso, actualización y mantenimiento de Maximo Desktop.")
+        self.settings_header.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        settings_header_layout.addStretch(1)
+        settings_header_layout.addWidget(self.settings_header)
+        settings_header_layout.addStretch(1)
+        layout.addWidget(settings_header_host)
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
         self.settings_scroll = scroll
         content = QWidget(objectName="settingsContent")
@@ -749,7 +757,10 @@ class MaximoDesktopWindow(QMainWindow):
         available = self.pages.width() - 60 if hasattr(self, "pages") else self.settings_scroll.viewport().width()
         if available <= 0:
             return
-        self.settings_center.setFixedWidth(min(1280, available))
+        content_width = min(1280, available)
+        self.settings_center.setFixedWidth(content_width)
+        if hasattr(self, "settings_header"):
+            self.settings_header.setFixedWidth(content_width)
         self._arrange_settings_cards()
 
     def _arrange_settings_cards(self, force=False):
