@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 import webbrowser
-from datetime import datetime
+from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -304,10 +304,14 @@ class AdvancedFiltersDialog(QDialog):
             box.clearSelection()
 
     def filters(self):
+        date_from = self.date_from.text().strip()
+        date_to = self.date_to.text().strip()
+        if date_from and not date_to:
+            date_to = date.today().isoformat()
         return {
             "equipment": self.equipment.text().strip(),
-            "date_from": self.date_from.text().strip(),
-            "date_to": self.date_to.text().strip(),
+            "date_from": date_from,
+            "date_to": date_to,
             **{key: [item.data(Qt.UserRole) for item in box.selectedItems()] for key, box in self.lists.items()},
         }
 
