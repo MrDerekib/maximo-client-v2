@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QCompleter, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
-    QProgressDialog, QSpinBox, QStackedWidget, QStatusBar, QStyle, QTableWidget, QTableWidgetItem,
+    QProgressDialog, QSizePolicy, QSpinBox, QStackedWidget, QStatusBar, QStyle, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QWidgetAction,
 )
 
@@ -538,6 +538,8 @@ class MaximoDesktopWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, "table"):
             QTimer.singleShot(0, self._fit_columns_to_viewport)
+        if hasattr(self, "settings_center"):
+            QTimer.singleShot(0, self._arrange_settings_cards)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -637,10 +639,20 @@ class MaximoDesktopWindow(QMainWindow):
         layout.addWidget(self._page_header("Configuración", "Acceso, actualización y mantenimiento de Maximo Desktop."))
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
         content = QWidget(objectName="settingsContent")
-        body = QVBoxLayout(content); body.setContentsMargins(0, 0, 0, 20)
+        content_layout = QHBoxLayout(content); content_layout.setContentsMargins(0, 0, 0, 20)
+        self.settings_center = QWidget()
+        self.settings_center.setMaximumWidth(1280)
+        self.settings_center.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        content_layout.addWidget(self.settings_center, 1, Qt.AlignTop | Qt.AlignHCenter)
+        body = QVBoxLayout(self.settings_center); body.setContentsMargins(0, 0, 0, 0); body.setSpacing(0)
+        self.settings_grid = QGridLayout()
+        self.settings_grid.setContentsMargins(0, 0, 0, 0)
+        self.settings_grid.setHorizontalSpacing(16)
+        self.settings_grid.setVerticalSpacing(16)
+        self._settings_wide = None
 
-        access = QGroupBox("Acceso a Maximo")
-        form = QFormLayout(access)
+        self.access_card = QGroupBox("Acceso a Maximo")
+        form = QFormLayout(self.access_card)
         self.user_edit = QLineEdit(); self.password_edit = QLineEdit(); self.password_edit.setEchoMode(QLineEdit.Password)
         self.auto_check = QCheckBox("Actualizar el listado automáticamente")
         self.interval_spin = DecoratedSpinBox(); self.interval_spin.setRange(1, 1440); self.interval_spin.setSuffix(" min")
@@ -653,10 +665,9 @@ class MaximoDesktopWindow(QMainWindow):
         self.test_button = QPushButton("Probar y guardar credenciales")
         self.test_button.clicked.connect(self.test_credentials)
         access_actions.addWidget(self.test_button); access_actions.addStretch(); form.addRow(access_actions)
-        body.addWidget(access)
 
-        app_updates = QGroupBox("Actualizaciones de Maximo Desktop")
-        update_form = QFormLayout(app_updates)
+        self.app_updates_card = QGroupBox("Actualizaciones de Maximo Desktop")
+        update_form = QFormLayout(self.app_updates_card)
         self.app_version_label = QLabel()
         self.app_latest_label = QLabel()
         self.app_last_check_label = QLabel()
@@ -675,38 +686,81 @@ class MaximoDesktopWindow(QMainWindow):
         update_form.addRow("Última comprobación", self.app_last_check_label)
         update_form.addRow("Estado", self.app_update_status_label)
         update_form.addRow(update_actions)
-        body.addWidget(app_updates)
 
-        maintenance = QGroupBox("Mantenimiento")
-        mform = QFormLayout(maintenance)
+        self.maintenance_card = QGroupBox("Mantenimiento")
+        mform = QFormLayout(self.maintenance_card)
         self.reconcile_check = QCheckBox("Actualizar estados de OT no activas en segundo plano")
         self.batch_spin = DecoratedSpinBox(); self.batch_spin.setRange(1, 100); self.batch_spin.setSuffix(" OT")
         priority = QPushButton("Revisar todas las OT pendientes ahora")
         priority.clicked.connect(self.start_priority_reconcile)
         clean = QPushButton("Eliminar registros no activos…", objectName="danger")
         clean.clicked.connect(self.delete_all_inactive)
-        mform.addRow("", self.reconcile_check); mform.addRow("Tamaño de lote", self.batch_spin); mform.addRow(priority); mform.addRow(clean)
-        body.addWidget(maintenance)
+        maintenance_actions = QHBoxLayout()
+        maintenance_actions.addWidget(priority, 1); maintenance_actions.addWidget(clean, 1)
+        mform.addRow("", self.reconcile_check); mform.addRow("Tamaño de lote", self.batch_spin); mform.addRow(maintenance_actions)
 
-        paths = QGroupBox("Datos de desarrollo")
-        paths_form = QFormLayout(paths)
+        self.paths_card = QGroupBox("Datos y rutas")
+        paths_layout = QVBoxLayout(self.paths_card)
+        path_actions = QHBoxLayout()
+        open_folder = QPushButton("Abrir carpeta de datos")
+        open_folder.clicked.connect(self.open_data_folder)
+        self.path_details_toggle = QPushButton("Mostrar ubicaciones técnicas")
+        self.path_details_toggle.setCheckable(True)
+        self.path_details_toggle.toggled.connect(self._toggle_path_details)
+        path_actions.addWidget(open_folder)
+        path_actions.addWidget(self.path_details_toggle)
+        path_actions.addStretch()
+        paths_layout.addLayout(path_actions)
+        self.path_details = QWidget()
+        paths_form = QFormLayout(self.path_details)
         for label, path in (("Carpeta principal", APP_ROOT), ("Base de datos", DB_PATH), ("Logs", LOG_DIR), ("Caché y perfiles Edge", EDGE_PROFILE_DIR), ("Copias de seguridad", BACKUP_DIR)):
             value = QLabel(str(path)); value.setTextInteractionFlags(Qt.TextSelectableByMouse); value.setWordWrap(True)
             paths_form.addRow(label, value)
-        open_folder = QPushButton("Abrir carpeta de datos")
-        open_folder.clicked.connect(self.open_data_folder)
-        paths_form.addRow(open_folder)
-        body.addWidget(paths)
+        self.path_details.setVisible(False)
+        paths_layout.addWidget(self.path_details)
+
+        body.addLayout(self.settings_grid)
+        body.addStretch()
         save_row = QHBoxLayout()
         save_hint = QLabel("Los cambios de esta página se aplican al guardar.")
         save_hint.setObjectName("filterHint")
         self.save_settings_button = QPushButton("Guardar cambios", objectName="primary")
         self.save_settings_button.clicked.connect(self.save_settings)
         save_row.addWidget(save_hint); save_row.addStretch(); save_row.addWidget(self.save_settings_button)
-        body.addLayout(save_row)
-        body.addStretch()
-        scroll.setWidget(content); layout.addWidget(scroll, 1)
+        scroll.setWidget(content); layout.addWidget(scroll, 1); layout.addLayout(save_row)
+        self._arrange_settings_cards(force=True)
         return page
+
+    def _arrange_settings_cards(self, force=False):
+        """Alterna entre dos columnas legibles y una columna para ventana estrecha."""
+        if not hasattr(self, "settings_grid"):
+            return
+        wide = self.settings_center.width() >= 980
+        if not force and wide == self._settings_wide:
+            return
+        self._settings_wide = wide
+        for card in (self.access_card, self.app_updates_card, self.maintenance_card, self.paths_card):
+            self.settings_grid.removeWidget(card)
+        if wide:
+            self.settings_grid.addWidget(self.access_card, 0, 0, Qt.AlignTop)
+            self.settings_grid.addWidget(self.app_updates_card, 0, 1, Qt.AlignTop)
+            self.settings_grid.addWidget(self.maintenance_card, 1, 0, 1, 2, Qt.AlignTop)
+            self.settings_grid.addWidget(self.paths_card, 2, 0, 1, 2, Qt.AlignTop)
+            self.settings_grid.setColumnStretch(0, 3)
+            self.settings_grid.setColumnStretch(1, 2)
+        else:
+            self.settings_grid.addWidget(self.access_card, 0, 0)
+            self.settings_grid.addWidget(self.app_updates_card, 1, 0)
+            self.settings_grid.addWidget(self.maintenance_card, 2, 0)
+            self.settings_grid.addWidget(self.paths_card, 3, 0)
+            self.settings_grid.setColumnStretch(0, 1)
+            self.settings_grid.setColumnStretch(1, 0)
+
+    def _toggle_path_details(self, visible):
+        self.path_details.setVisible(visible)
+        self.path_details_toggle.setText(
+            "Ocultar ubicaciones técnicas" if visible else "Mostrar ubicaciones técnicas"
+        )
 
     def refresh_choices(self):
         choices = filter_choices()
