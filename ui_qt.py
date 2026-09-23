@@ -16,7 +16,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
     QDialog, QDialogButtonBox, QCompleter, QFormLayout, QFrame, QGridLayout,
@@ -202,16 +202,30 @@ class MultiSelectButton(QPushButton):
         self.setText(text)
 
 
-class CalendarLineEdit(QLineEdit):
+class CalendarLineEdit(QWidget):
     """Fecha ISO que puede escribirse o elegirse desde un calendario."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setPlaceholderText("AAAA-MM-DD")
-        self.setMaximumWidth(150)
-        calendar_action = QAction("▾", self)
-        calendar_action.setToolTip("Elegir fecha")
-        calendar_action.triggered.connect(self._show_calendar)
-        self.addAction(calendar_action, QLineEdit.TrailingPosition)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self.edit = QLineEdit()
+        self.edit.setPlaceholderText("AAAA-MM-DD")
+        self.edit.setMaximumWidth(150)
+        layout.addWidget(self.edit)
+        calendar_button = QPushButton("Calendario")
+        calendar_button.setToolTip("Elegir fecha en un calendario")
+        calendar_button.clicked.connect(self._show_calendar)
+        layout.addWidget(calendar_button)
+
+    def text(self):
+        return self.edit.text()
+
+    def setText(self, text):
+        self.edit.setText(text)
+
+    def clear(self):
+        self.edit.clear()
 
     def _show_calendar(self):
         dialog = QDialog(self)
@@ -220,7 +234,7 @@ class CalendarLineEdit(QLineEdit):
         calendar = QCalendarWidget(dialog)
         calendar.setGridVisible(True)
         try:
-            calendar.setSelectedDate(QDate.fromString(self.text(), "yyyy-MM-dd"))
+            calendar.setSelectedDate(QDate.fromString(self.edit.text(), "yyyy-MM-dd"))
         except Exception:
             pass
         layout.addWidget(calendar)
@@ -229,7 +243,7 @@ class CalendarLineEdit(QLineEdit):
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
         if dialog.exec() == QDialog.Accepted:
-            self.setText(calendar.selectedDate().toString("yyyy-MM-dd"))
+            self.edit.setText(calendar.selectedDate().toString("yyyy-MM-dd"))
 
 
 class AdvancedFiltersDialog(QDialog):
@@ -245,8 +259,12 @@ class AdvancedFiltersDialog(QDialog):
         form = QGridLayout()
         self.equipment = QLineEdit(state.get("equipment", ""))
         self.equipment.setPlaceholderText("Descripción que contenga…")
-        self.equipment.setCompleter(QCompleter(choices["equipment"], self))
-        self.equipment.completer().setFilterMode(Qt.MatchContains)
+        self.equipment_completer = QCompleter(choices["equipment"], self)
+        self.equipment_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.equipment_completer.setFilterMode(Qt.MatchContains)
+        self.equipment_completer.setCompletionMode(QCompleter.PopupCompletion)
+        self.equipment.setCompleter(self.equipment_completer)
+        self.equipment.textEdited.connect(self._show_equipment_suggestions)
         self.date_from, self.date_to = CalendarLineEdit(), CalendarLineEdit()
         self.date_from.setText(state.get("date_from", ""))
         self.date_to.setText(state.get("date_to", ""))
@@ -273,6 +291,10 @@ class AdvancedFiltersDialog(QDialog):
         buttons.button(QDialogButtonBox.Apply).clicked.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _show_equipment_suggestions(self, text):
+        if text.strip():
+            self.equipment_completer.complete()
 
     def reset(self):
         self.equipment.clear()
