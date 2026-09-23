@@ -463,6 +463,10 @@ class MaximoDesktopWindow(QMainWindow):
                 return False
         self.pages.setCurrentIndex(page)
         self.nav_buttons[page].setChecked(True)
+        if page == 1:
+            # Esta página puede haber estado oculta al calcularse por primera
+            # vez; ahora sí conocemos el ancho final del panel principal.
+            QTimer.singleShot(0, self._update_settings_content_width)
         return True
 
     def _build_list_page(self):
@@ -538,14 +542,16 @@ class MaximoDesktopWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, "table"):
             QTimer.singleShot(0, self._fit_columns_to_viewport)
-        if hasattr(self, "settings_center"):
-            QTimer.singleShot(0, self._arrange_settings_cards)
+        if hasattr(self, "settings_scroll"):
+            QTimer.singleShot(0, self._update_settings_content_width)
 
     def showEvent(self, event):
         super().showEvent(event)
         # La tabla conoce aquí su ancho final; restaurar antes hace que Qt
         # recalcule las secciones al mostrar la ventana.
         QTimer.singleShot(0, self._fit_columns_to_viewport)
+        if hasattr(self, "settings_scroll"):
+            QTimer.singleShot(0, self._update_settings_content_width)
 
     def _current_column_widths(self):
         header = self.table.horizontalHeader()
@@ -638,12 +644,15 @@ class MaximoDesktopWindow(QMainWindow):
         layout.setContentsMargins(30, 0, 30, 18)
         layout.addWidget(self._page_header("Configuración", "Acceso, actualización y mantenimiento de Maximo Desktop."))
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        self.settings_scroll = scroll
         content = QWidget(objectName="settingsContent")
         content_layout = QHBoxLayout(content); content_layout.setContentsMargins(0, 0, 0, 20)
         self.settings_center = QWidget()
         self.settings_center.setMaximumWidth(1280)
-        self.settings_center.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        content_layout.addWidget(self.settings_center, 1, Qt.AlignTop | Qt.AlignHCenter)
+        self.settings_center.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        content_layout.addStretch(1)
+        content_layout.addWidget(self.settings_center, 0, Qt.AlignTop)
+        content_layout.addStretch(1)
         body = QVBoxLayout(self.settings_center); body.setContentsMargins(0, 0, 0, 0); body.setSpacing(0)
         self.settings_grid = QGridLayout()
         self.settings_grid.setContentsMargins(0, 0, 0, 0)
@@ -728,8 +737,20 @@ class MaximoDesktopWindow(QMainWindow):
         self.save_settings_button.clicked.connect(self.save_settings)
         save_row.addWidget(save_hint); save_row.addStretch(); save_row.addWidget(self.save_settings_button)
         scroll.setWidget(content); layout.addWidget(scroll, 1); layout.addLayout(save_row)
-        self._arrange_settings_cards(force=True)
+        QTimer.singleShot(0, self._update_settings_content_width)
         return page
+
+    def _update_settings_content_width(self):
+        """Mantiene un ancho legible en pantalla grande sin estrechar la página."""
+        if not hasattr(self, "settings_scroll"):
+            return
+        # La página apilada conserva el ancho real disponible incluso cuando
+        # el QScrollArea todavía no se ha mostrado por primera vez.
+        available = self.pages.width() - 60 if hasattr(self, "pages") else self.settings_scroll.viewport().width()
+        if available <= 0:
+            return
+        self.settings_center.setFixedWidth(min(1280, available))
+        self._arrange_settings_cards()
 
     def _arrange_settings_cards(self, force=False):
         """Alterna entre dos columnas legibles y una columna para ventana estrecha."""
