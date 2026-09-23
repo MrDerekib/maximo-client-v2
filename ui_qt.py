@@ -81,13 +81,13 @@ QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; color:
 QGroupBox QLabel, QGroupBox QCheckBox { font-size: 12px; font-weight: 400; color: #172033; }
 QGroupBox QLineEdit, QGroupBox QSpinBox { font-size: 12px; font-weight: 400; color: #172033; }
 QGroupBox QPushButton { font-size: 12px; font-weight: 600; }
-QLineEdit, QComboBox, QListWidget, QSpinBox { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: white; min-height: 18px; }
+QLineEdit, QComboBox, QListWidget, QSpinBox { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: white; color: #172033; min-height: 18px; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border: 2px solid #2f80ed; }
 QComboBox { padding-right: 36px; }
 QComboBox:hover, QSpinBox:hover { border-color: #829ab1; }
 QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 30px; border-left: 1px solid #d9e2ec; background: #f8fafc; border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
 QComboBox::drop-down:hover { background: #e8eef5; }
-QComboBox QAbstractItemView { border: 1px solid #bcccdc; border-radius: 7px; padding: 4px; background: white; selection-background-color: #dbeafe; selection-color: #102a43; outline: 0; }
+QComboBox QAbstractItemView { border: 1px solid #bcccdc; border-radius: 7px; padding: 4px; background: white; color: #172033; selection-background-color: #dbeafe; selection-color: #102a43; outline: 0; }
 QSpinBox { padding-right: 34px; }
 QSpinBox::up-button, QSpinBox::down-button { subcontrol-origin: border; width: 28px; background: #f8fafc; border-left: 1px solid #d9e2ec; }
 QSpinBox::up-button { subcontrol-position: top right; border-top-right-radius: 6px; border-bottom: 1px solid #d9e2ec; }
