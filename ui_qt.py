@@ -280,8 +280,8 @@ class AdvancedFiltersDialog(QDialog):
             for value in choices[key]:
                 item = QListWidgetItem(value or "(Sin valor)")
                 item.setData(Qt.UserRole, value)
-                item.setSelected(value in state.get(key, []))
                 box.addItem(item)
+                item.setSelected(value in state.get(key, []))
             form.addWidget(QLabel(label), 2, column)
             form.addWidget(box, 3, column)
         layout.addLayout(form)
@@ -772,7 +772,7 @@ class MaximoDesktopWindow(QMainWindow):
         return self.advanced_state
 
     def open_advanced_filters(self):
-        dialog = AdvancedFiltersDialog(self.filter_choices_cache, self.advanced_state, self)
+        dialog = AdvancedFiltersDialog(self.filter_choices_cache, self.effective_advanced_filters(), self)
         if dialog.exec() == QDialog.Accepted:
             self.advanced_state = dialog.filters()
             self.refresh_table()
