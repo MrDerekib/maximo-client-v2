@@ -35,6 +35,7 @@ from db import (
 from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
 from updater import reconcile_inactive_tracking, run_update
 from search_filters import load_profiles, save_profiles
+from update_checker import fetch_latest_release, format_version_tag, is_newer
 import version
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -329,6 +330,8 @@ class MaximoDesktopWindow(QMainWindow):
         self.reconcile_lock = threading.Lock()
         self.pool = QThreadPool.globalInstance()
         self._running_tasks = set()
+        self._latest_release = None
+        self._app_update_checking = False
         self.ot_sessions = []
         self.profiles = {}
         self.profiles_error = None
@@ -362,6 +365,9 @@ class MaximoDesktopWindow(QMainWindow):
         self._restore_column_widths()
         QTimer.singleShot(0, self._fit_columns_to_viewport)
         self.schedule_auto_update()
+        # No bloquea la apertura ni muestra avisos intrusivos: actualiza el
+        # estado persistente de Configuración cuando la red esté disponible.
+        QTimer.singleShot(1200, lambda: self.check_app_updates(automatic=True))
 
     def _build_ui(self):
         root = QWidget()
@@ -648,6 +654,28 @@ class MaximoDesktopWindow(QMainWindow):
         self.test_button.clicked.connect(self.test_credentials)
         access_actions.addWidget(self.test_button); access_actions.addStretch(); form.addRow(access_actions)
         body.addWidget(access)
+
+        app_updates = QGroupBox("Actualizaciones de Maximo Desktop")
+        update_form = QFormLayout(app_updates)
+        self.app_version_label = QLabel()
+        self.app_latest_label = QLabel()
+        self.app_last_check_label = QLabel()
+        self.app_update_status_label = QLabel()
+        self.app_update_status_label.setObjectName("filterHint")
+        self.check_app_updates_button = QPushButton("Buscar actualizaciones")
+        self.check_app_updates_button.clicked.connect(lambda: self.check_app_updates(automatic=False))
+        self.open_release_button = QPushButton("Abrir release")
+        self.open_release_button.clicked.connect(self.open_latest_release)
+        update_actions = QHBoxLayout()
+        update_actions.addWidget(self.check_app_updates_button)
+        update_actions.addWidget(self.open_release_button)
+        update_actions.addStretch()
+        update_form.addRow("Versión instalada", self.app_version_label)
+        update_form.addRow("Última versión detectada", self.app_latest_label)
+        update_form.addRow("Última comprobación", self.app_last_check_label)
+        update_form.addRow("Estado", self.app_update_status_label)
+        update_form.addRow(update_actions)
+        body.addWidget(app_updates)
 
         maintenance = QGroupBox("Mantenimiento")
         mform = QFormLayout(maintenance)
@@ -954,6 +982,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.auto_check.setChecked(self.cfg.auto_update_enabled); self.interval_spin.setValue(self.cfg.auto_update_interval_min)
         self.reconcile_check.setChecked(self.cfg.reconciliation_enabled); self.batch_spin.setValue(self.cfg.reconciliation_batch_size)
         self._refresh_auto_update_summary()
+        self._refresh_app_update_block()
 
     def _restore_window_state(self):
         if self.cfg.window_size:
@@ -1016,6 +1045,88 @@ class MaximoDesktopWindow(QMainWindow):
             logging.info("Actualización automática UI programada cada %d min.", self.cfg.auto_update_interval_min)
         else:
             logging.info("Actualización automática UI desactivada.")
+
+    def _fetch_latest_release_with_retry(self):
+        """Consulta GitHub con el mismo margen de reintento que la app estable."""
+        last_error = None
+        for attempt, delay in enumerate((0.0, 1.0, 2.0), start=1):
+            try:
+                if delay:
+                    time.sleep(delay)
+                logging.info("Comprobación de versión UI: intento %d/3.", attempt)
+                return fetch_latest_release(timeout_sec=10)
+            except Exception as exc:
+                last_error = exc
+                logging.warning("Comprobación de versión UI falló en intento %d/3: %s", attempt, exc)
+        raise RuntimeError(f"No se pudo consultar GitHub: {last_error}")
+
+    def _refresh_app_update_block(self, message=""):
+        """Refresca el estado persistido de versiones sin depender de la red."""
+        if not hasattr(self, "app_version_label"):
+            return
+        tag = self.cfg.latest_release_tag or ""
+        release_url = self.cfg.latest_release_url or ""
+        checked_at = self.cfg.latest_release_checked_at or ""
+        self.app_version_label.setText(format_version_tag(version.APP_VERSION))
+        self.app_latest_label.setText(format_version_tag(tag) if tag else "—")
+        self.app_last_check_label.setText(checked_at or "—")
+        self.open_release_button.setEnabled(bool(release_url))
+        self.check_app_updates_button.setEnabled(not self._app_update_checking)
+        if message:
+            state = message
+        elif tag and is_newer(tag, version.APP_VERSION):
+            state = f"Hay una actualización disponible: {format_version_tag(tag)}."
+        elif tag:
+            state = "La aplicación está actualizada."
+        else:
+            state = "Aún no se ha comprobado la disponibilidad de versiones."
+        self.app_update_status_label.setText(state)
+
+    def check_app_updates(self, automatic=False):
+        """Comprueba releases en segundo plano; no instala nada desde la preview."""
+        if self._app_update_checking:
+            return
+        self._app_update_checking = True
+        self._refresh_app_update_block("Comprobando versiones en GitHub…")
+        if not automatic:
+            self.status.showMessage("Comprobando actualizaciones de Maximo Desktop…")
+
+        def done(latest):
+            self._app_update_checking = False
+            self._latest_release = latest
+            self.cfg.latest_release_tag = latest.tag
+            self.cfg.latest_release_url = latest.html_url
+            self.cfg.latest_release_checked_at = latest.checked_at
+            save_config(self.cfg)
+            newer = bool(latest.tag and is_newer(latest.tag, version.APP_VERSION))
+            self._refresh_app_update_block()
+            logging.info(
+                "Comprobación de versión UI completada: local=%s, remota=%s, nueva=%s.",
+                version.APP_VERSION, latest.tag, newer,
+            )
+            if not automatic:
+                text = (
+                    f"Hay una nueva versión disponible: {format_version_tag(latest.tag)}."
+                    if newer else "Ya tienes la versión más reciente disponible."
+                )
+                QMessageBox.information(self, "Actualizaciones", text)
+                self.status.showMessage("Comprobación de actualizaciones completada.", 4000)
+
+        def failed(error):
+            self._app_update_checking = False
+            detail = "No se pudo comprobar GitHub. Reinténtalo cuando haya conexión."
+            self._refresh_app_update_block(detail)
+            logging.warning("Comprobación de versión UI no completada: %s", error)
+            if not automatic:
+                QMessageBox.warning(self, "Actualizaciones", f"{detail}\n\n{error}")
+                self.status.showMessage("No se pudo comprobar la versión.", 4000)
+
+        self._start_task(self._fetch_latest_release_with_retry, done, failed)
+
+    def open_latest_release(self):
+        url = self.cfg.latest_release_url or ""
+        if url:
+            webbrowser.open(url)
 
     def test_credentials(self):
         user, password = self.user_edit.text().strip(), self.password_edit.text()
