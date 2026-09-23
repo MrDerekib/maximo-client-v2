@@ -795,11 +795,10 @@ class MaximoDesktopWindow(QMainWindow):
             index = self.table.rowCount(); self.table.insertRow(index)
             for column, value in enumerate(row):
                 item = QTableWidgetItem(str(value or "")); item.setData(Qt.UserRole, raw[2])
+                item.setForeground(QColor("#172033" if active == 1 else "#718096"))
                 if column == 0:
                     item.setToolTip("Activo en Maximo: aparece en el listado de reparaciones y recibe actualizaciones.\nNo activo en Maximo: ya no aparece en ese listado y no recibe nuevas actualizaciones.")
                     item.setForeground(QColor("#2f855a" if active == 1 else "#718096"))
-                elif active == 0:
-                    item.setForeground(QColor("#718096"))
                 self.table.setItem(index, column, item)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
