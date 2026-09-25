@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QCompleter, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
-    QProgressDialog, QSizePolicy, QSpinBox, QStackedWidget, QStatusBar, QStyle, QTableWidget, QTableWidgetItem,
+    QProgressDialog, QSizePolicy, QSpinBox, QStackedWidget, QStatusBar, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QWidgetAction,
 )
 
@@ -104,6 +104,7 @@ QPushButton#multiSelect:hover { border-color: #829ab1; background: #f8fafc; }
 QTableWidget { background: white; border: 1px solid #d9e2ec; border-radius: 8px; gridline-color: #edf2f7; selection-background-color: #dbeafe; selection-color: #172033; }
 QHeaderView::section { background: #f0f4f8; color: #486581; border: 0; border-right: 1px solid #cbd5e1; border-bottom: 1px solid #d9e2ec; padding: 9px; font-weight: 700; }
 QHeaderView::section:hover { background: #e2e8f0; }
+QTableCornerButton::section { background: #f0f4f8; border: 0; border-right: 1px solid #cbd5e1; border-bottom: 1px solid #d9e2ec; }
 QStatusBar { background: white; border-top: 1px solid #d9e2ec; color: #486581; }
 """
 
@@ -473,8 +474,9 @@ class MaximoDesktopWindow(QMainWindow):
         page = QWidget()
         outer = QVBoxLayout(page)
         outer.setContentsMargins(30, 0, 30, 18)
-        update = QPushButton("Actualizar Maximo", objectName="primary")
-        update.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        # Los iconos estándar varían con el tema de Windows y pueden perder
+        # contraste; el glifo hereda el blanco del botón primario.
+        update = QPushButton("⟳  Actualizar Maximo", objectName="primary")
         update.clicked.connect(self.update_now)
         outer.addWidget(self._page_header("Órdenes de trabajo", "Consulta, filtra y gestiona el seguimiento local.", update))
 
@@ -1050,8 +1052,14 @@ class MaximoDesktopWindow(QMainWindow):
         if not self.reconcile_lock.acquire(False):
             self.update_lock.release(); QMessageBox.information(self, "Mantenimiento", "Ya hay una revisión en curso."); return
         self.status.showMessage(f"Revisión prioritaria en curso: {count} OT…")
-        def done(changed): self.reconcile_lock.release(); self.update_lock.release(); self.refresh_table(); QMessageBox.information(self, "Mantenimiento", f"Revisión completada. Seguimientos actualizados: {changed}.")
-        def failed(error): self.reconcile_lock.release(); self.update_lock.release(); QMessageBox.critical(self, "Mantenimiento", error)
+        def done(changed):
+            self.reconcile_lock.release(); self.update_lock.release(); self.refresh_table()
+            self.status.showMessage(f"Revisión prioritaria completada: {changed} seguimientos actualizados.", 7000)
+            QMessageBox.information(self, "Mantenimiento", f"Revisión completada. Seguimientos actualizados: {changed}.")
+        def failed(error):
+            self.reconcile_lock.release(); self.update_lock.release()
+            self.status.showMessage("La revisión prioritaria falló; consulta el detalle.", 7000)
+            QMessageBox.critical(self, "Mantenimiento", error)
         self._start_task(lambda: reconcile_inactive_tracking(limit=None, minimum_age_hours=None), done, failed)
 
     def open_ot_for_row(self, row):
