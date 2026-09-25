@@ -6,12 +6,16 @@ from maximo_client import (
     login,
     open_workorders_app,
     read_workorder_status,
+    read_workorder_fault_description,
     apply_filter,
     download_file,
     move_downloaded_file,
     process_html_table,
 )
-from db import apply_reconciled_status, inactive_tracking_candidates, update_database_from_df
+from db import (
+    apply_fault_description, apply_reconciled_status, fault_description_candidates,
+    mark_fault_description_attempt, inactive_tracking_candidates, update_database_from_df,
+)
 from config import load_config
 from maintenance import cleanup_exports
 from pathlib import Path
@@ -22,6 +26,8 @@ import time
 
 INACTIVE_RECONCILIATION_LIMIT = 5
 INACTIVE_RECONCILIATION_HOURS = 24
+FAULT_DESCRIPTION_LIMIT = 5
+FAULT_DESCRIPTION_HOURS = 24
 
 
 def _timed(label, operation, *args, **kwargs):
@@ -115,3 +121,38 @@ def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
             cleanup_edge_profile(profile_dir)
     logging.info("Conciliación de OT inactivas completada: %d seguimientos actualizados.", changed)
     return changed
+
+
+def enrich_fault_descriptions(limit=FAULT_DESCRIPTION_LIMIT,
+                              minimum_age_hours=FAULT_DESCRIPTION_HOURS):
+    """Completa localmente la avería de OT activas que aún no se han leído."""
+    candidates = fault_description_candidates(limit, minimum_age_hours)
+    if not candidates:
+        logging.info("Descripción de averías: no hay OT activas pendientes.")
+        return 0
+
+    profile_dir = create_edge_profile("maximo-fault-")
+    driver = None
+    completed = 0
+    try:
+        logging.info("Descripción de averías: revisando hasta %d OT activas.", len(candidates))
+        driver = setup_driver(headless=True, profile_dir=profile_dir)
+        login(driver, headless=True)
+        open_workorders_app(driver, headless=True)
+        for ot in candidates:
+            try:
+                description = read_workorder_fault_description(driver, ot)
+                if apply_fault_description(ot, description):
+                    completed += 1
+                    logging.info("OT %s: descripción de avería guardada.", ot)
+            except Exception as exc:
+                mark_fault_description_attempt(ot)
+                logging.warning("No se pudo leer la descripción de avería de la OT %s: %s", ot, exc)
+    finally:
+        try:
+            if driver is not None:
+                driver.quit()
+        finally:
+            cleanup_edge_profile(profile_dir)
+    logging.info("Descripción de averías completada: %d OT enriquecidas.", completed)
+    return completed

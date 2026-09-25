@@ -36,6 +36,7 @@ def init_db():
         _normalize_stored_categories(conn)
         _migrate_sync_status(conn)
         _migrate_reconciliation_status(conn)
+        _migrate_fault_descriptions(conn)
     finally:
         conn.close()
 
@@ -99,6 +100,23 @@ def _migrate_reconciliation_status(conn):
     columns = {row[1] for row in conn.execute("PRAGMA table_info(maximo)")}
     if "Ultima_comprobacion_estado" not in columns:
         conn.execute("ALTER TABLE maximo ADD COLUMN Ultima_comprobacion_estado TEXT")
+    conn.execute("INSERT INTO client_migrations (name) VALUES (?)", (migration,))
+    conn.commit()
+
+
+def _migrate_fault_descriptions(conn):
+    """Añade la información ampliada de avería sin alterar los datos base."""
+    migration = "fault_descriptions_v1"
+    conn.execute("CREATE TABLE IF NOT EXISTS client_migrations (name TEXT PRIMARY KEY)")
+    if conn.execute("SELECT 1 FROM client_migrations WHERE name = ?", (migration,)).fetchone():
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(maximo)")}
+    if "Descripcion_averia" not in columns:
+        conn.execute("ALTER TABLE maximo ADD COLUMN Descripcion_averia TEXT")
+    if "Ultima_lectura_averia" not in columns:
+        conn.execute("ALTER TABLE maximo ADD COLUMN Ultima_lectura_averia TEXT")
+    if "Ultimo_intento_averia" not in columns:
+        conn.execute("ALTER TABLE maximo ADD COLUMN Ultimo_intento_averia TEXT")
     conn.execute("INSERT INTO client_migrations (name) VALUES (?)", (migration,))
     conn.commit()
 
@@ -268,8 +286,64 @@ def apply_reconciled_status(ot: str, status: str, checked_at: str | None = None)
         conn.close()
 
 
+def fault_description_candidates(limit: int | None = 5,
+                                 minimum_age_hours: int | None = 24) -> List[str]:
+    """OT activas que aún no han recibido su descripción de avería local."""
+    conn = get_connection()
+    try:
+        query = "SELECT OT FROM maximo WHERE Activo = 1 AND Ultima_lectura_averia IS NULL"
+        params = []
+        if minimum_age_hours is not None:
+            cutoff = (datetime.now() - timedelta(hours=minimum_age_hours)).isoformat(timespec="seconds")
+            query += " AND (Ultimo_intento_averia IS NULL OR Ultimo_intento_averia < ?)"
+            params.append(cutoff)
+        query += " ORDER BY COALESCE(Ultimo_intento_averia, ''), OT"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        return [row[0] for row in conn.execute(query, params).fetchall()]
+    finally:
+        conn.close()
+
+
+def fault_description_candidate_count(minimum_age_hours: int | None = 24) -> int:
+    return len(fault_description_candidates(limit=None, minimum_age_hours=minimum_age_hours))
+
+
+def apply_fault_description(ot: str, description: str, read_at: str | None = None) -> bool:
+    """Guarda una lectura válida, incluso si Maximo informa una avería vacía."""
+    read_at = read_at or datetime.now().isoformat(timespec="seconds")
+    description = " ".join((description or "").split())
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """UPDATE maximo SET Descripcion_averia = ?, Ultima_lectura_averia = ?, Ultimo_intento_averia = ?
+               WHERE OT = ? AND Activo = 1 AND Ultima_lectura_averia IS NULL""",
+            (description, read_at, read_at, ot),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def mark_fault_description_attempt(ot: str, attempted_at: str | None = None) -> bool:
+    """Evita que una OT que falla bloquee todos los lotes posteriores."""
+    attempted_at = attempted_at or datetime.now().isoformat(timespec="seconds")
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE maximo SET Ultimo_intento_averia = ? WHERE OT = ? AND Activo = 1 AND Ultima_lectura_averia IS NULL",
+            (attempted_at, ot),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
 def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], advanced=None,
-               include_sync: bool = False) -> List[Tuple]:
+               include_sync: bool = False, include_fault: bool = False) -> List[Tuple]:
     from search_filters import validate_filters
     advanced = validate_filters(advanced or {})
     if search_by not in ("OT", "Nº_de_serie", "Descripción"):
@@ -278,6 +352,8 @@ def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], a
     filter_words = filter_text.strip().split()
     columns = "Activo, Ultima_vez_visto, OT, Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo, Seguimiento, Planta" \
         if include_sync else "OT, Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo, Seguimiento, Planta"
+    if include_fault:
+        columns += ", Descripcion_averia"
     query = "SELECT " + columns + " FROM maximo"
     params = []
 

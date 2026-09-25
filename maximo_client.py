@@ -215,6 +215,34 @@ def read_workorder_status(driver, ot: str) -> str:
     return " ".join((value or "").split())
 
 
+def read_workorder_fault_description(driver, ot: str) -> str:
+    """Busca una OT y devuelve la descripción de avería del campo mx46-tb."""
+    search_box = wait_for(
+        driver, EC.element_to_be_clickable((By.ID, "quicksearch")),
+        "búsqueda rápida de OT para descripción de avería",
+    )
+    search_box.clear()
+    search_box.send_keys(ot)
+    search_box.send_keys(Keys.RETURN)
+    target_ot = str(ot).strip()
+
+    def current_workorder_is_loaded(browser):
+        current_ot = browser.find_element(By.ID, "mx45-tb").get_attribute("value")
+        return str(current_ot or "").strip() == target_ot
+
+    wait_for(
+        driver,
+        current_workorder_is_loaded,
+        f"carga de la OT {target_ot} para descripción de avería",
+    )
+    fault_field = wait_for(
+        driver, EC.visibility_of_element_located((By.ID, "mx46-tb")),
+        f"descripción de avería de la OT {ot}",
+    )
+    value = fault_field.get_attribute("value") or fault_field.text
+    return " ".join((value or "").split())
+
+
 def apply_filter(driver):
     cfg = load_config()
     filters = cfg.filters

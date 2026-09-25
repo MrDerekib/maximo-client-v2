@@ -30,10 +30,10 @@ from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR, 
 from config import AppConfig, credentials_configured, load_config, save_config
 from db import (
     delete_all_inactive_records, delete_inactive_record, fetch_data, filter_choices,
-    inactive_tracking_candidate_count, init_db, update_seguimiento,
+    fault_description_candidate_count, inactive_tracking_candidate_count, init_db, update_seguimiento,
 )
 from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
-from updater import reconcile_inactive_tracking, run_update
+from updater import enrich_fault_descriptions, reconcile_inactive_tracking, run_update
 from search_filters import load_profiles, save_profiles
 from update_checker import fetch_latest_release, format_version_tag, is_newer
 import version
@@ -319,8 +319,9 @@ class AdvancedFiltersDialog(QDialog):
 
 
 class MaximoDesktopWindow(QMainWindow):
-    columns = ("Estado en Maximo", "OT", "Descripción", "Nº de serie", "Fecha", "Cliente", "Tipo de trabajo", "Seguimiento", "Planta", "Última vez visto")
-    max_column_widths = (180, 140, 600, 240, 160, 220, 220, 240, 160, 1200)
+    columns = ("Estado en Maximo", "OT", "Descripción", "Nº de serie", "Fecha", "Cliente", "Tipo de trabajo", "Seguimiento", "Planta", "Última vez visto", "Avería")
+    default_column_widths = (180, 110, 340, 145, 135, 140, 180, 130, 105, 140, 340)
+    max_column_widths = (180, 140, 600, 240, 160, 220, 220, 240, 160, 1200, 700)
     close_progress = Signal(str)
     close_finished = Signal()
 
@@ -329,6 +330,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.cfg: AppConfig = load_config()
         self.update_lock = threading.Lock()
         self.reconcile_lock = threading.Lock()
+        self.fault_description_lock = threading.Lock()
         self.pool = QThreadPool.globalInstance()
         self._running_tasks = set()
         self._latest_release = None
@@ -537,8 +539,9 @@ class MaximoDesktopWindow(QMainWindow):
         header.setMinimumSectionSize(60)
         header.setCursor(Qt.SplitHCursor)
         header.sectionResized.connect(self._column_resized)
-        for column, width in enumerate((180, 110, 340, 145, 135, 140, 180, 130, 105, 140)):
+        for column, width in enumerate(self.default_column_widths):
             header.resizeSection(column, width)
+        self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
         self._column_widths = self._current_column_widths()
         outer.addWidget(self.table, 1)
         return page
@@ -560,24 +563,38 @@ class MaximoDesktopWindow(QMainWindow):
 
     def _current_column_widths(self):
         header = self.table.horizontalHeader()
-        return [max(60, header.sectionSize(index)) for index in range(len(self.columns))]
+        previous = self._column_widths or self.default_column_widths
+        return [
+            max(60, header.sectionSize(index)) if not self.table.isColumnHidden(index)
+            else max(60, int(previous[index]))
+            for index in range(len(self.columns))
+        ]
+
+    def _visible_table_columns(self):
+        return [index for index in range(len(self.columns)) if not self.table.isColumnHidden(index)]
 
     def _fit_columns_to_viewport(self):
         if not self._column_widths or not self.table.viewport().width():
             return
         available = max(600, self.table.viewport().width())
         widths = [min(limit, max(60, int(width))) for width, limit in zip(self._column_widths, self.max_column_widths)]
-        total = sum(widths)
+        visible = self._visible_table_columns()
+        if not visible:
+            return
+        total = sum(widths[index] for index in visible)
         if total > available:
             scale = available / total
-            widths = [max(60, int(round(width * scale))) for width in widths]
+            for index in visible:
+                widths[index] = max(60, int(round(widths[index] * scale)))
         # La última columna absorbe siempre el espacio restante para que no
         # quede una franja vacía al final de la tabla.
-        widths[-1] = max(60, available - sum(widths[:-1]))
+        last_visible = visible[-1]
+        widths[last_visible] = max(60, available - sum(widths[index] for index in visible[:-1]))
         self._restoring_column_widths = True
         try:
             header = self.table.horizontalHeader()
-            for index, width in enumerate(widths):
+            for index in visible:
+                width = widths[index]
                 header.resizeSection(index, width)
         finally:
             self._restoring_column_widths = False
@@ -592,7 +609,7 @@ class MaximoDesktopWindow(QMainWindow):
                 header.resizeSection(_logical_index, self.max_column_widths[_logical_index])
             finally:
                 self._column_resize_guard = False
-        last_column = len(self.columns) - 1
+        last_column = self._visible_table_columns()[-1]
         if _logical_index != last_column:
             delta = header.sectionSize(_logical_index) - _old_size
             target = max(60, header.sectionSize(last_column) - delta)
@@ -602,7 +619,9 @@ class MaximoDesktopWindow(QMainWindow):
             finally:
                 self._column_resize_guard = False
         else:
-            target = max(60, self.table.viewport().width() - sum(header.sectionSize(index) for index in range(last_column)))
+            target = max(60, self.table.viewport().width() - sum(
+                header.sectionSize(index) for index in self._visible_table_columns() if index != last_column
+            ))
             self._column_resize_guard = True
             try:
                 header.resizeSection(last_column, target)
@@ -621,7 +640,7 @@ class MaximoDesktopWindow(QMainWindow):
             try:
                 values.append(max(0.01, float(value)))
             except (TypeError, ValueError):
-                values.append(1.0)
+                values.append(self.default_column_widths[index])
         # Las primeras versiones de la preview guardaban proporciones. Se
         # convierten una vez a píxeles para conservar compatibilidad.
         if max(values) <= 1:
@@ -721,6 +740,19 @@ class MaximoDesktopWindow(QMainWindow):
         maintenance_actions.addWidget(priority, 1); maintenance_actions.addWidget(clean, 1)
         mform.addRow("", self.reconcile_check); mform.addRow("Tamaño de lote", self.batch_spin); mform.addRow(maintenance_actions)
 
+        self.fault_descriptions_card = QGroupBox("Información ampliada de OT")
+        fault_form = QFormLayout(self.fault_descriptions_card)
+        self.fault_descriptions_check = QCheckBox("Obtener y mostrar descripción de avería")
+        self.fault_descriptions_check.toggled.connect(self._update_fault_description_controls)
+        self.fault_batch_spin = DecoratedSpinBox(); self.fault_batch_spin.setRange(1, 100); self.fault_batch_spin.setSuffix(" OT")
+        self.fault_pending_label = QLabel(); self.fault_pending_label.setObjectName("filterHint")
+        self.fault_run_button = QPushButton("Completar descripciones pendientes ahora")
+        self.fault_run_button.clicked.connect(self.start_priority_fault_descriptions)
+        fault_form.addRow("", self.fault_descriptions_check)
+        fault_form.addRow("Tamaño de lote", self.fault_batch_spin)
+        fault_form.addRow("Pendientes", self.fault_pending_label)
+        fault_form.addRow(self.fault_run_button)
+
         self.paths_card = QGroupBox("Datos y rutas")
         paths_layout = QVBoxLayout(self.paths_card)
         path_actions = QHBoxLayout()
@@ -776,20 +808,22 @@ class MaximoDesktopWindow(QMainWindow):
         if not force and wide == self._settings_wide:
             return
         self._settings_wide = wide
-        for card in (self.access_card, self.app_updates_card, self.maintenance_card, self.paths_card):
+        for card in (self.access_card, self.app_updates_card, self.maintenance_card, self.fault_descriptions_card, self.paths_card):
             self.settings_grid.removeWidget(card)
         if wide:
             self.settings_grid.addWidget(self.access_card, 0, 0, Qt.AlignTop)
             self.settings_grid.addWidget(self.app_updates_card, 0, 1, Qt.AlignTop)
             self.settings_grid.addWidget(self.maintenance_card, 1, 0, 1, 2, Qt.AlignTop)
-            self.settings_grid.addWidget(self.paths_card, 2, 0, 1, 2, Qt.AlignTop)
+            self.settings_grid.addWidget(self.fault_descriptions_card, 2, 0, 1, 2, Qt.AlignTop)
+            self.settings_grid.addWidget(self.paths_card, 3, 0, 1, 2, Qt.AlignTop)
             self.settings_grid.setColumnStretch(0, 3)
             self.settings_grid.setColumnStretch(1, 2)
         else:
             self.settings_grid.addWidget(self.access_card, 0, 0)
             self.settings_grid.addWidget(self.app_updates_card, 1, 0)
             self.settings_grid.addWidget(self.maintenance_card, 2, 0)
-            self.settings_grid.addWidget(self.paths_card, 3, 0)
+            self.settings_grid.addWidget(self.fault_descriptions_card, 3, 0)
+            self.settings_grid.addWidget(self.paths_card, 4, 0)
             self.settings_grid.setColumnStretch(0, 1)
             self.settings_grid.setColumnStretch(1, 0)
 
@@ -926,7 +960,7 @@ class MaximoDesktopWindow(QMainWindow):
 
     def refresh_table(self):
         try:
-            rows = fetch_data(self.search_edit.text(), self.search_field(), "Todos", self.effective_advanced_filters(), include_sync=True)
+            rows = fetch_data(self.search_edit.text(), self.search_field(), "Todos", self.effective_advanced_filters(), include_sync=True, include_fault=True)
         except ValueError as exc:
             QMessageBox.warning(self, "Filtros", str(exc)); return
         def ot_sort_key(row):
@@ -936,10 +970,11 @@ class MaximoDesktopWindow(QMainWindow):
         self.table.setSortingEnabled(False); self.table.setRowCount(0)
         for raw in rows:
             active, last_seen, *data = raw
+            fault_description = data.pop()
             status = "✓ Activo en Maximo" if active == 1 else "× No activo en Maximo" if active == 0 else "? Estado desconocido"
             try: last_seen = datetime.fromisoformat(last_seen).strftime("%d/%m/%Y %H:%M") if last_seen else ""
             except (TypeError, ValueError): pass
-            row = [status, *data, last_seen]
+            row = [status, *data, last_seen, fault_description]
             index = self.table.rowCount(); self.table.insertRow(index)
             for column, value in enumerate(row):
                 item = QTableWidgetItem(str(value or "")); item.setData(Qt.UserRole, raw[2])
@@ -950,6 +985,7 @@ class MaximoDesktopWindow(QMainWindow):
                 self.table.setItem(index, column, item)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
+        self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
         summary = self.active_filter_summary()
         self.filter_chips.setVisible(bool(summary))
         self.filter_chips.setText("Filtros activos · " + "   •   ".join(summary))
@@ -1040,16 +1076,23 @@ class MaximoDesktopWindow(QMainWindow):
                 f"completada · {new} nuevas, {changed} actualizadas"
             )
             self.status.showMessage(sync_summary + " · Conciliación en segundo plano…")
-            self.start_background_reconcile(sync_summary)
+            self.start_background_reconcile(
+                sync_summary,
+                after=lambda summary: self.start_background_fault_descriptions(summary),
+            )
         def failed(error): self.update_lock.release(); QMessageBox.critical(self, "Actualización", f"No se pudo actualizar:\n{error}"); self.status.showMessage("La actualización falló.")
         self._start_task(lambda: run_update(headless=True), done, failed)
 
-    def start_background_reconcile(self, sync_summary=None):
+    def start_background_reconcile(self, sync_summary=None, after=None):
         if not self.cfg.reconciliation_enabled:
+            if after:
+                after(sync_summary)
             return
         if not self.reconcile_lock.acquire(False):
             if sync_summary:
                 self.status.showMessage(sync_summary + " · Conciliación ya en curso.")
+            if after:
+                after(sync_summary)
             return
         batch = self.cfg.reconciliation_batch_size
         if not sync_summary:
@@ -1060,11 +1103,97 @@ class MaximoDesktopWindow(QMainWindow):
                 "Conciliación: sin cambios" if not changed
                 else f"Conciliación: {changed} seguimientos actualizados"
             )
-            self.status.showMessage(f"{sync_summary} · {reconciliation_summary}" if sync_summary else reconciliation_summary)
+            combined_summary = f"{sync_summary} · {reconciliation_summary}" if sync_summary else reconciliation_summary
+            self.status.showMessage(combined_summary)
+            if after:
+                after(combined_summary)
         def failed(error):
             self.reconcile_lock.release(); logging.warning("Conciliación fallida: %s", error)
-            self.status.showMessage(f"{sync_summary} · Conciliación fallida; consulta el log." if sync_summary else "La conciliación falló; consulta el log.")
+            combined_summary = f"{sync_summary} · Conciliación fallida; consulta el log." if sync_summary else "La conciliación falló; consulta el log."
+            self.status.showMessage(combined_summary)
+            if after:
+                after(combined_summary)
         self._start_task(lambda: reconcile_inactive_tracking(limit=batch), done, failed)
+
+    def _refresh_fault_description_summary(self):
+        if not hasattr(self, "fault_pending_label"):
+            return
+        pending = fault_description_candidate_count()
+        if self.cfg.fault_descriptions_enabled:
+            self.fault_pending_label.setText(f"{pending} OT activas pendientes de completar.")
+        else:
+            self.fault_pending_label.setText(
+                f"Desactivado. Hay {pending} OT activas pendientes de completar."
+            )
+
+    def _update_fault_description_controls(self):
+        enabled = self.fault_descriptions_check.isChecked()
+        self.fault_batch_spin.setEnabled(enabled)
+        self.fault_run_button.setEnabled(enabled)
+        if hasattr(self, "table"):
+            self.table.setColumnHidden(self.columns.index("Avería"), not enabled)
+            QTimer.singleShot(0, self._fit_columns_to_viewport)
+
+    def start_background_fault_descriptions(self, sync_summary=None):
+        """Enriquece en segundo plano solo las OT activas sin avería local."""
+        if not self.cfg.fault_descriptions_enabled or not self.update_lock.acquire(False):
+            return
+        if not self.fault_description_lock.acquire(False):
+            self.update_lock.release()
+            return
+        batch = self.cfg.fault_description_batch_size
+        if sync_summary:
+            self.status.showMessage(sync_summary + " · Completando averías en segundo plano…")
+        else:
+            self.status.showMessage(f"Completando hasta {batch} descripciones de avería…")
+
+        def done(completed):
+            self.fault_description_lock.release(); self.update_lock.release()
+            self.refresh_table(); self._refresh_fault_description_summary()
+            detail = "Averías: sin pendientes nuevas" if not completed else f"Averías: {completed} descripciones completadas"
+            self.status.showMessage(f"{sync_summary} · {detail}" if sync_summary else detail)
+
+        def failed(error):
+            self.fault_description_lock.release(); self.update_lock.release()
+            logging.warning("Enriquecimiento de averías falló: %s", error)
+            self._refresh_fault_description_summary()
+            self.status.showMessage(f"{sync_summary} · Averías: error; consulta el log." if sync_summary else "No se pudieron completar las averías; consulta el log.")
+
+        self._start_task(lambda: enrich_fault_descriptions(limit=batch), done, failed)
+
+    def start_priority_fault_descriptions(self):
+        if not self._credentials_ready():
+            return
+        count = fault_description_candidate_count(minimum_age_hours=None)
+        if not count:
+            QMessageBox.information(self, "Información ampliada", "No hay descripciones de avería pendientes.")
+            return
+        if QMessageBox.question(
+            self, "Completar averías", f"Se revisarán {count} OT activas. La operación puede tardar varios minutos.\n\n¿Continuar?",
+        ) != QMessageBox.Yes:
+            return
+        if not self.update_lock.acquire(False):
+            QMessageBox.information(self, "Información ampliada", "Hay otra tarea de Maximo en curso.")
+            return
+        if not self.fault_description_lock.acquire(False):
+            self.update_lock.release()
+            QMessageBox.information(self, "Información ampliada", "Ya hay una lectura de averías en curso.")
+            return
+        self.status.showMessage(f"Completando {count} descripciones de avería…")
+
+        def done(completed):
+            self.fault_description_lock.release(); self.update_lock.release()
+            self.refresh_table(); self._refresh_fault_description_summary()
+            self.status.showMessage(f"Averías completadas: {completed} OT.", 7000)
+            QMessageBox.information(self, "Información ampliada", f"Lectura completada. Descripciones obtenidas: {completed}.")
+
+        def failed(error):
+            self.fault_description_lock.release(); self.update_lock.release()
+            self._refresh_fault_description_summary()
+            self.status.showMessage("La lectura de averías falló; consulta el detalle.", 7000)
+            QMessageBox.critical(self, "Información ampliada", error)
+
+        self._start_task(lambda: enrich_fault_descriptions(limit=None, minimum_age_hours=None), done, failed)
 
     def start_priority_reconcile(self):
         if not self._credentials_ready(): return
@@ -1098,8 +1227,12 @@ class MaximoDesktopWindow(QMainWindow):
         self.user_edit.setText(self.cfg.username); self.password_edit.setText(self.cfg.password)
         self.auto_check.setChecked(self.cfg.auto_update_enabled); self.interval_spin.setValue(self.cfg.auto_update_interval_min)
         self.reconcile_check.setChecked(self.cfg.reconciliation_enabled); self.batch_spin.setValue(self.cfg.reconciliation_batch_size)
+        self.fault_descriptions_check.setChecked(self.cfg.fault_descriptions_enabled)
+        self.fault_batch_spin.setValue(self.cfg.fault_description_batch_size)
         self._refresh_auto_update_summary()
         self._refresh_app_update_block()
+        self._refresh_fault_description_summary()
+        self._update_fault_description_controls()
 
     def _restore_window_state(self):
         if self.cfg.window_size:
@@ -1131,17 +1264,25 @@ class MaximoDesktopWindow(QMainWindow):
             or self.interval_spin.value() != self.cfg.auto_update_interval_min
             or self.reconcile_check.isChecked() != self.cfg.reconciliation_enabled
             or self.batch_spin.value() != self.cfg.reconciliation_batch_size
+            or self.fault_descriptions_check.isChecked() != self.cfg.fault_descriptions_enabled
+            or self.fault_batch_spin.value() != self.cfg.fault_description_batch_size
         )
 
     def save_settings(self, show_feedback=True):
         self.cfg.username = self.user_edit.text().strip(); self.cfg.password = self.password_edit.text(); self.cfg.auto_update_enabled = self.auto_check.isChecked(); self.cfg.auto_update_interval_min = self.interval_spin.value(); self.cfg.reconciliation_enabled = self.reconcile_check.isChecked(); self.cfg.reconciliation_batch_size = self.batch_spin.value()
+        self.cfg.fault_descriptions_enabled = self.fault_descriptions_check.isChecked()
+        self.cfg.fault_description_batch_size = self.fault_batch_spin.value()
         save_config(self.cfg)
         self.schedule_auto_update()
         self._refresh_auto_update_summary()
+        self._refresh_fault_description_summary()
+        self._update_fault_description_controls()
+        self.refresh_table()
         logging.info(
-            "Configuración UI guardada: auto_update=%s, intervalo=%d, conciliación=%s, lote=%d.",
+            "Configuración UI guardada: auto_update=%s, intervalo=%d, conciliación=%s, lote=%d, averías=%s, lote_averías=%d.",
             self.cfg.auto_update_enabled, self.cfg.auto_update_interval_min,
             self.cfg.reconciliation_enabled, self.cfg.reconciliation_batch_size,
+            self.cfg.fault_descriptions_enabled, self.cfg.fault_description_batch_size,
         )
         if show_feedback:
             QMessageBox.information(self, "Configuración", "Configuración guardada correctamente.")
@@ -1296,6 +1437,7 @@ class MaximoDesktopWindow(QMainWindow):
         labels = (
             (self.update_lock, "Esperando a que termine la actualización de Maximo…"),
             (self.reconcile_lock, "Esperando a que termine la conciliación de OT…"),
+            (self.fault_description_lock, "Esperando a que termine la lectura de averías…"),
         )
         while pending := [label for lock, label in labels if lock.locked()]:
             self.close_progress.emit(pending[0])
