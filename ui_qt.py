@@ -479,7 +479,7 @@ class MaximoDesktopWindow(QMainWindow):
         update = QPushButton("Actualizar Maximo", objectName="primary")
         update_icon = Path(__file__).resolve().parent / "ui_assets" / "refresh-white.svg"
         update.setIcon(QIcon(str(update_icon)))
-        update.setIconSize(QSize(20, 20))
+        update.setIconSize(QSize(22, 22))
         update.clicked.connect(self.update_now)
         outer.addWidget(self._page_header("Órdenes de trabajo", "Consulta, filtra y gestiona el seguimiento local.", update))
 
@@ -1034,16 +1034,36 @@ class MaximoDesktopWindow(QMainWindow):
         if not self._credentials_ready() or not self.update_lock.acquire(False): return
         self.status.showMessage("Actualizando listado desde Maximo…" if not automatic else "Actualización automática en curso…")
         def done(result):
-            self.update_lock.release(); new, changed = result; self.refresh_choices(); self.refresh_table(); self.status.showMessage(f"Actualización completada: {new} nuevas, {changed} actualizadas.")
-            self.start_background_reconcile()
+            self.update_lock.release(); new, changed = result; self.refresh_choices(); self.refresh_table()
+            sync_summary = (
+                f"Última sincronización de Maximo ({datetime.now().strftime('%H:%M')}): "
+                f"completada · {new} nuevas, {changed} actualizadas"
+            )
+            self.status.showMessage(sync_summary + " · Conciliación en segundo plano…")
+            self.start_background_reconcile(sync_summary)
         def failed(error): self.update_lock.release(); QMessageBox.critical(self, "Actualización", f"No se pudo actualizar:\n{error}"); self.status.showMessage("La actualización falló.")
         self._start_task(lambda: run_update(headless=True), done, failed)
 
-    def start_background_reconcile(self):
-        if not self.cfg.reconciliation_enabled or not self.reconcile_lock.acquire(False): return
-        batch = self.cfg.reconciliation_batch_size; self.status.showMessage(f"Revisando hasta {batch} OT históricas en segundo plano…")
-        def done(changed): self.reconcile_lock.release(); self.refresh_table(); self.status.showMessage(f"Conciliación finalizada: {changed} seguimientos actualizados.")
-        def failed(error): self.reconcile_lock.release(); logging.warning("Conciliación fallida: %s", error); self.status.showMessage("La conciliación falló; consulta el log.")
+    def start_background_reconcile(self, sync_summary=None):
+        if not self.cfg.reconciliation_enabled:
+            return
+        if not self.reconcile_lock.acquire(False):
+            if sync_summary:
+                self.status.showMessage(sync_summary + " · Conciliación ya en curso.")
+            return
+        batch = self.cfg.reconciliation_batch_size
+        if not sync_summary:
+            self.status.showMessage(f"Revisando hasta {batch} OT históricas en segundo plano…")
+        def done(changed):
+            self.reconcile_lock.release(); self.refresh_table()
+            reconciliation_summary = (
+                "Conciliación: sin cambios" if not changed
+                else f"Conciliación: {changed} seguimientos actualizados"
+            )
+            self.status.showMessage(f"{sync_summary} · {reconciliation_summary}" if sync_summary else reconciliation_summary)
+        def failed(error):
+            self.reconcile_lock.release(); logging.warning("Conciliación fallida: %s", error)
+            self.status.showMessage(f"{sync_summary} · Conciliación fallida; consulta el log." if sync_summary else "La conciliación falló; consulta el log.")
         self._start_task(lambda: reconcile_inactive_tracking(limit=batch), done, failed)
 
     def start_priority_reconcile(self):
