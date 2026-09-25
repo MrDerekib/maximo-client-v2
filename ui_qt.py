@@ -15,7 +15,7 @@ from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
@@ -407,10 +407,13 @@ class MaximoDesktopWindow(QMainWindow):
         box.addSpacing(26)
         box.addWidget(QLabel("BÚSQUEDAS GUARDADAS", objectName="sidebarSection"))
         self.profile_list = QListWidget(objectName="profileList")
-        self.profile_list.setMaximumHeight(220)
+        self.profile_list.setMinimumHeight(140)
+        self.profile_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.profile_list.currentItemChanged.connect(self.load_selected_profile)
         self.profile_list.itemClicked.connect(self.load_selected_profile)
-        box.addWidget(self.profile_list)
+        # La lista ocupa todo el alto libre del lateral. Solo necesitará
+        # desplazamiento cuando la ventana no pueda mostrar más entradas.
+        box.addWidget(self.profile_list, 1)
         save_profile = QPushButton("＋  Guardar búsqueda", objectName="sidebarAction")
         save_profile.clicked.connect(self.save_current_profile)
         box.addWidget(save_profile)
@@ -418,7 +421,6 @@ class MaximoDesktopWindow(QMainWindow):
         self.delete_profile_button.clicked.connect(self.delete_selected_profile)
         self.delete_profile_button.setEnabled(False)
         box.addWidget(self.delete_profile_button)
-        box.addStretch(1)
         mode = QLabel("MODO DESARROLLO\nDatos aislados", objectName="subtitle")
         mode.setStyleSheet("padding: 10px; border: 1px solid #486581; border-radius: 8px;")
         box.addWidget(mode)
@@ -474,9 +476,10 @@ class MaximoDesktopWindow(QMainWindow):
         page = QWidget()
         outer = QVBoxLayout(page)
         outer.setContentsMargins(30, 0, 30, 18)
-        # Los iconos estándar varían con el tema de Windows y pueden perder
-        # contraste; el glifo hereda el blanco del botón primario.
-        update = QPushButton("⟳  Actualizar Maximo", objectName="primary")
+        update = QPushButton("Actualizar Maximo", objectName="primary")
+        update_icon = Path(__file__).resolve().parent / "ui_assets" / "refresh-white.svg"
+        update.setIcon(QIcon(str(update_icon)))
+        update.setIconSize(QSize(20, 20))
         update.clicked.connect(self.update_now)
         outer.addWidget(self._page_header("Órdenes de trabajo", "Consulta, filtra y gestiona el seguimiento local.", update))
 
