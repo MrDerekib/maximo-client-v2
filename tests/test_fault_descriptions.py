@@ -40,12 +40,17 @@ class FaultDescriptionStorageTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row, ("PROVOCA CORTOCIRCUITO", "2026-09-25T10:00:00"))
 
-    def test_failed_read_retries_later_without_blocking_priority(self):
+    def test_failed_read_waits_while_other_work_is_available(self):
         self.assertTrue(db.mark_fault_description_attempt("100", "2026-09-25T10:00:00"))
         self.assertEqual(db.fault_description_candidates(), ["200"])
         self.assertEqual(
             db.fault_description_candidates(limit=None, minimum_age_hours=None), ["200", "100"]
         )
+
+    def test_failed_read_retries_when_it_is_the_only_pending_work(self):
+        self.assertTrue(db.mark_fault_description_attempt("100", "2026-09-25T10:00:00"))
+        self.assertTrue(db.mark_fault_description_attempt("200", "2026-09-25T10:01:00"))
+        self.assertEqual(db.fault_description_candidates(), ["100", "200"])
 
 
 class FaultDescriptionUpdaterTests(unittest.TestCase):

@@ -288,7 +288,7 @@ def apply_reconciled_status(ot: str, status: str, checked_at: str | None = None)
 
 def fault_description_candidates(limit: int | None = 5,
                                  minimum_age_hours: int | None = 24) -> List[str]:
-    """OT activas que aún no han recibido su descripción de avería local."""
+    """OT activas sin avería; si no quedan nuevas, recupera el reintento más antiguo."""
     conn = get_connection()
     try:
         query = "SELECT OT FROM maximo WHERE Activo = 1 AND Ultima_lectura_averia IS NULL"
@@ -301,7 +301,18 @@ def fault_description_candidates(limit: int | None = 5,
         if limit is not None:
             query += " LIMIT ?"
             params.append(limit)
-        return [row[0] for row in conn.execute(query, params).fetchall()]
+        rows = conn.execute(query, params).fetchall()
+        if rows or minimum_age_hours is None:
+            return [row[0] for row in rows]
+
+        # Si todas las pendientes fallaron hace poco, se reintenta la más
+        # antigua. Así el aplazamiento no deja el proceso sin trabajo.
+        fallback = "SELECT OT FROM maximo WHERE Activo = 1 AND Ultima_lectura_averia IS NULL ORDER BY COALESCE(Ultimo_intento_averia, ''), OT"
+        fallback_params = []
+        if limit is not None:
+            fallback += " LIMIT ?"
+            fallback_params.append(limit)
+        return [row[0] for row in conn.execute(fallback, fallback_params).fetchall()]
     finally:
         conn.close()
 
