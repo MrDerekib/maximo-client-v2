@@ -747,13 +747,15 @@ class MaximoDesktopWindow(QMainWindow):
         mform = QFormLayout(self.maintenance_card)
         self.reconcile_check = QCheckBox("Actualizar estados de OT no activas en segundo plano")
         self.batch_spin = DecoratedSpinBox(); self.batch_spin.setRange(1, 100); self.batch_spin.setSuffix(" OT")
+        self.reconcile_pending_label = QLabel(); self.reconcile_pending_label.setObjectName("filterHint")
         priority = QPushButton("Revisar todas las OT pendientes ahora")
         priority.clicked.connect(self.start_priority_reconcile)
         clean = QPushButton("Eliminar registros no activos…", objectName="danger")
         clean.clicked.connect(self.delete_all_inactive)
         maintenance_actions = QHBoxLayout()
         maintenance_actions.addWidget(priority, 1); maintenance_actions.addWidget(clean, 1)
-        mform.addRow("", self.reconcile_check); mform.addRow("Tamaño de lote", self.batch_spin); mform.addRow(maintenance_actions)
+        mform.addRow("", self.reconcile_check); mform.addRow("Tamaño de lote", self.batch_spin)
+        mform.addRow("Pendientes", self.reconcile_pending_label); mform.addRow(maintenance_actions)
 
         self.fault_descriptions_card = QGroupBox("Información ampliada de OT")
         fault_form = QFormLayout(self.fault_descriptions_card)
@@ -1038,16 +1040,16 @@ class MaximoDesktopWindow(QMainWindow):
         menu.exec(self.table.viewport().mapToGlobal(position))
 
     def change_tracking(self, ot, value):
-        update_seguimiento(ot, value); self.refresh_table(); self.status.showMessage(f"OT {ot}: seguimiento actualizado a {value}.", 5000)
+        update_seguimiento(ot, value); self.refresh_table(); self._refresh_reconciliation_summary(); self.status.showMessage(f"OT {ot}: seguimiento actualizado a {value}.", 5000)
 
     def delete_inactive(self, ot):
         if QMessageBox.question(self, "Eliminar registro", f"¿Eliminar la OT no activa {ot} de la base local?") == QMessageBox.Yes:
-            delete_inactive_record(ot); self.refresh_table()
+            delete_inactive_record(ot); self.refresh_table(); self._refresh_reconciliation_summary()
 
     def delete_all_inactive(self):
         count = sum(1 for row in range(self.table.rowCount()) if self.table.item(row, 0).text() == "○ No activo")
         if QMessageBox.question(self, "Eliminar registros", f"¿Eliminar todos los registros no activos?\n\nSe eliminarán de la base local.") == QMessageBox.Yes:
-            deleted = delete_all_inactive_records(); self.refresh_table(); self.status.showMessage(f"{deleted} registros no activos eliminados.", 5000)
+            deleted = delete_all_inactive_records(); self.refresh_table(); self._refresh_reconciliation_summary(); self.status.showMessage(f"{deleted} registros no activos eliminados.", 5000)
 
     def _start_task(self, function, completed, failed=None):
         """Mantiene viva la señal de Qt hasta que la tarea responde.
@@ -1085,7 +1087,7 @@ class MaximoDesktopWindow(QMainWindow):
         if not self._credentials_ready() or not self.update_lock.acquire(False): return
         self.status.showMessage("Actualizando listado desde Maximo…" if not automatic else "Actualización automática en curso…")
         def done(result):
-            self.update_lock.release(); new, changed = result; self.refresh_choices(); self.refresh_table()
+            self.update_lock.release(); new, changed = result; self.refresh_choices(); self.refresh_table(); self._refresh_reconciliation_summary()
             sync_summary = (
                 f"Última sincronización de Maximo ({datetime.now().strftime('%H:%M')}): "
                 f"completada · {new} nuevas, {changed} actualizadas"
@@ -1113,7 +1115,7 @@ class MaximoDesktopWindow(QMainWindow):
         if not sync_summary:
             self.status.showMessage(f"Revisando hasta {batch} OT históricas en segundo plano…")
         def done(changed):
-            self.reconcile_lock.release(); self.refresh_table()
+            self.reconcile_lock.release(); self.refresh_table(); self._refresh_reconciliation_summary()
             reconciliation_summary = (
                 "Conciliación: sin cambios" if not changed
                 else f"Conciliación: {changed} seguimientos actualizados"
@@ -1139,6 +1141,17 @@ class MaximoDesktopWindow(QMainWindow):
         else:
             self.fault_pending_label.setText(
                 f"Desactivado. Hay {pending} OT activas pendientes de completar."
+            )
+
+    def _refresh_reconciliation_summary(self):
+        if not hasattr(self, "reconcile_pending_label"):
+            return
+        pending = inactive_tracking_candidate_count()
+        if self.cfg.reconciliation_enabled:
+            self.reconcile_pending_label.setText(f"{pending} OT no activas pendientes de revisar.")
+        else:
+            self.reconcile_pending_label.setText(
+                f"Desactivado. Hay {pending} OT no activas pendientes de revisar."
             )
 
     def _update_fault_description_controls(self):
@@ -1220,7 +1233,7 @@ class MaximoDesktopWindow(QMainWindow):
             self.update_lock.release(); QMessageBox.information(self, "Mantenimiento", "Ya hay una revisión en curso."); return
         self.status.showMessage(f"Revisión prioritaria en curso: {count} OT…")
         def done(changed):
-            self.reconcile_lock.release(); self.update_lock.release(); self.refresh_table()
+            self.reconcile_lock.release(); self.update_lock.release(); self.refresh_table(); self._refresh_reconciliation_summary()
             self.status.showMessage(f"Revisión prioritaria completada: {changed} seguimientos actualizados.", 7000)
             QMessageBox.information(self, "Mantenimiento", f"Revisión completada. Seguimientos actualizados: {changed}.")
         def failed(error):
@@ -1246,6 +1259,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.fault_batch_spin.setValue(self.cfg.fault_description_batch_size)
         self._refresh_auto_update_summary()
         self._refresh_app_update_block()
+        self._refresh_reconciliation_summary()
         self._refresh_fault_description_summary()
         self._update_fault_description_controls()
 
@@ -1290,6 +1304,7 @@ class MaximoDesktopWindow(QMainWindow):
         save_config(self.cfg)
         self.schedule_auto_update()
         self._refresh_auto_update_summary()
+        self._refresh_reconciliation_summary()
         self._refresh_fault_description_summary()
         self._update_fault_description_controls()
         self.refresh_table()
