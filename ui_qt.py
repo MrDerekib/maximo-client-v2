@@ -167,9 +167,24 @@ class MultiSelectButton(QPushButton):
         self._options = []
         self._selected = set()
         self._menu = QMenu(self)
-        self._menu.setStyleSheet("QMenu { background: white; border: 1px solid #bcccdc; padding: 5px; } QCheckBox { padding: 5px 10px; }")
+        self._menu.setStyleSheet("""
+            QMenu { background: #ffffff; color: #172033; border: 1px solid #bcccdc;
+                    border-radius: 8px; padding: 5px; }
+            QCheckBox { color: #172033; background: transparent; border: 0; border-radius: 6px;
+                        padding: 7px 10px; spacing: 9px; min-width: 190px; font-size: 12px; }
+            QCheckBox:hover { color: #102a43; background: #f0f4f8; }
+            QCheckBox::indicator { width: 15px; height: 15px; border: 1px solid #829ab1;
+                                   border-radius: 4px; background: #ffffff; }
+            QCheckBox::indicator:hover { border-color: #2f80ed; background: #eef5ff; }
+            QCheckBox::indicator:checked { border-color: #1976d2; background: #2f80ed; }
+        """)
+        self._menu.aboutToShow.connect(self._prepare_menu)
         self.setMenu(self._menu)
         self._refresh_text()
+
+    def _prepare_menu(self):
+        """Mantiene el desplegable legible y alineado con el control."""
+        self._menu.setMinimumWidth(max(self.width(), 230))
 
     def set_options(self, options, selected=()):
         self._options = list(options)

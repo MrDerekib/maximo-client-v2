@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import unittest
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -41,15 +42,16 @@ class FaultDescriptionStorageTests(unittest.TestCase):
         self.assertEqual(row, ("PROVOCA CORTOCIRCUITO", "2026-09-25T10:00:00"))
 
     def test_failed_read_waits_while_other_work_is_available(self):
-        self.assertTrue(db.mark_fault_description_attempt("100", "2026-09-25T10:00:00"))
+        self.assertTrue(db.mark_fault_description_attempt("100", datetime.now().isoformat(timespec="seconds")))
         self.assertEqual(db.fault_description_candidates(), ["200"])
         self.assertEqual(
             db.fault_description_candidates(limit=None, minimum_age_hours=None), ["200", "100"]
         )
 
     def test_failed_read_retries_when_it_is_the_only_pending_work(self):
-        self.assertTrue(db.mark_fault_description_attempt("100", "2026-09-25T10:00:00"))
-        self.assertTrue(db.mark_fault_description_attempt("200", "2026-09-25T10:01:00"))
+        now = datetime.now().isoformat(timespec="seconds")
+        self.assertTrue(db.mark_fault_description_attempt("100", now))
+        self.assertTrue(db.mark_fault_description_attempt("200", now))
         self.assertEqual(db.fault_description_candidates(), ["100", "200"])
 
 
