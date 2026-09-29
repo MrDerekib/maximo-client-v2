@@ -34,6 +34,9 @@ class AppConfig:
     reconciliation_batch_size: int = 5
     fault_descriptions_enabled: bool = False
     fault_description_batch_size: int = 5
+    priority_tmb_validity: str = "daily"
+    priority_l9_validity: str = "daily"
+    priority_renfe_validity: str = "weekly"
     filters: dict | None = None
     last_status: dict | None = None
     latest_release_tag: str = ""
@@ -56,6 +59,13 @@ class AppConfig:
             self.fault_description_batch_size = min(100, max(1, int(self.fault_description_batch_size)))
         except (TypeError, ValueError):
             self.fault_description_batch_size = 5
+        for attribute, default in (
+            ("priority_tmb_validity", "daily"),
+            ("priority_l9_validity", "daily"),
+            ("priority_renfe_validity", "weekly"),
+        ):
+            if getattr(self, attribute) not in {"daily", "weekly"}:
+                setattr(self, attribute, default)
         if self.filters is None:
             self.filters = {"mx38_tfrow_[C:26]_txt-tb": "=LAB-BAD"}
         if not isinstance(self.table_column_widths, dict):

@@ -1,6 +1,7 @@
 # db.py
 import sqlite3
 import logging
+import json
 from datetime import datetime, timedelta
 from contextlib import closing
 from pathlib import Path
@@ -37,6 +38,7 @@ def init_db():
         _migrate_sync_status(conn)
         _migrate_reconciliation_status(conn)
         _migrate_fault_descriptions(conn)
+        _migrate_priorities(conn)
     finally:
         conn.close()
 
@@ -119,6 +121,128 @@ def _migrate_fault_descriptions(conn):
         conn.execute("ALTER TABLE maximo ADD COLUMN Ultimo_intento_averia TEXT")
     conn.execute("INSERT INTO client_migrations (name) VALUES (?)", (migration,))
     conn.commit()
+
+
+def _migrate_priorities(conn):
+    """Guarda las fotos locales de prioridades sin alterar las OT de Maximo."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS priority_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project TEXT NOT NULL,
+            effective_date TEXT NOT NULL,
+            expires_on TEXT NOT NULL,
+            source_report_date TEXT,
+            source_files TEXT NOT NULL,
+            imported_at TEXT NOT NULL,
+            is_current INTEGER NOT NULL DEFAULT 1
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS priority_items (
+            snapshot_id INTEGER NOT NULL,
+            OT TEXT NOT NULL,
+            section TEXT,
+            PRIMARY KEY (snapshot_id, OT),
+            FOREIGN KEY (snapshot_id) REFERENCES priority_snapshots(id) ON DELETE CASCADE
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_priority_current ON priority_snapshots(project, is_current, expires_on)")
+    conn.commit()
+
+
+def replace_priority_snapshot(project: str, effective_date: str, expires_on: str,
+                              source_report_date: str | None, source_files: list[str],
+                              items: list[tuple[str, str | None]]) -> int:
+    """Sustituye la foto vigente de un proyecto y conserva las anteriores."""
+    imported_at = datetime.now().isoformat(timespec="seconds")
+    # La clave de la tabla es OT: una misma OT no debe duplicarse aunque un
+    # informe accidentalmente la incluya en dos líneas.
+    normalized = {}
+    for ot, section in items:
+        ot = str(ot).strip()
+        if ot:
+            normalized.setdefault(ot, section)
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("UPDATE priority_snapshots SET is_current = 0 WHERE project = ? AND is_current = 1", (project,))
+        cur = conn.execute(
+            """INSERT INTO priority_snapshots
+               (project, effective_date, expires_on, source_report_date, source_files, imported_at, is_current)
+               VALUES (?, ?, ?, ?, ?, ?, 1)""",
+            (project, effective_date, expires_on, source_report_date, json.dumps(source_files, ensure_ascii=False), imported_at),
+        )
+        snapshot_id = cur.lastrowid
+        conn.executemany(
+            "INSERT INTO priority_items (snapshot_id, OT, section) VALUES (?, ?, ?)",
+            [(snapshot_id, ot, section) for ot, section in normalized.items()],
+        )
+        conn.commit()
+        return snapshot_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def current_priority_snapshots(today: str | None = None) -> list[dict]:
+    today = today or datetime.now().date().isoformat()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT id, project, effective_date, expires_on, source_report_date, source_files, imported_at
+               FROM priority_snapshots WHERE is_current = 1 ORDER BY project"""
+        ).fetchall()
+        result = []
+        for row in rows:
+            files = json.loads(row[5])
+            result.append({
+                "id": row[0], "project": row[1], "effective_date": row[2], "expires_on": row[3],
+                "source_report_date": row[4], "source_files": files, "imported_at": row[6],
+                "is_current": row[2] <= today <= row[3],
+                "item_count": conn.execute("SELECT COUNT(*) FROM priority_items WHERE snapshot_id = ?", (row[0],)).fetchone()[0],
+            })
+        return result
+    finally:
+        conn.close()
+
+
+def current_priority_ots(today: str | None = None) -> set[str]:
+    today = today or datetime.now().date().isoformat()
+    conn = get_connection()
+    try:
+        return {row[0] for row in conn.execute(
+            """SELECT DISTINCT i.OT FROM priority_items i
+               JOIN priority_snapshots s ON s.id = i.snapshot_id
+               WHERE s.is_current = 1 AND s.effective_date <= ? AND s.expires_on >= ?""",
+            (today, today),
+        )}
+    finally:
+        conn.close()
+
+
+def update_priority_expiration(project: str, expires_on: str) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE priority_snapshots SET expires_on = ? WHERE project = ? AND is_current = 1",
+            (expires_on, project),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def clear_current_priority_snapshot(project: str) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute("UPDATE priority_snapshots SET is_current = 0 WHERE project = ? AND is_current = 1", (project,))
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
 
 
 def update_database_from_df(df):

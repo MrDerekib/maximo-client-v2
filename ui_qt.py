@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 import webbrowser
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -19,7 +19,7 @@ from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, QSize, Qt, QThrea
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
-    QDialog, QDialogButtonBox, QCompleter, QFormLayout, QFrame, QGridLayout,
+    QDialog, QDialogButtonBox, QCompleter, QDateEdit, QFileDialog, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
     QProgressDialog, QSizePolicy, QSpinBox, QStackedWidget, QStatusBar, QTableWidget, QTableWidgetItem,
@@ -29,13 +29,16 @@ from PySide6.QtWidgets import (
 from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR, PROFILES_PATH
 from config import AppConfig, credentials_configured, load_config, save_config
 from db import (
+    clear_current_priority_snapshot, current_priority_ots, current_priority_snapshots,
     delete_all_inactive_records, delete_inactive_record, fetch_data, filter_choices,
     fault_description_candidate_count, inactive_tracking_candidate_count, init_db, update_seguimiento,
+    replace_priority_snapshot, update_priority_expiration,
 )
 from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
 from updater import enrich_fault_descriptions, reconcile_inactive_tracking, run_update
 from search_filters import load_profiles, save_profiles
 from update_checker import fetch_latest_release, format_version_tag, is_newer
+from priority_importer import read_priority_files
 import version
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -82,10 +85,10 @@ QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; color:
 QGroupBox QLabel, QGroupBox QCheckBox { font-size: 12px; font-weight: 400; color: #172033; }
 QGroupBox QLineEdit, QGroupBox QSpinBox { font-size: 12px; font-weight: 400; color: #172033; }
 QGroupBox QPushButton { font-size: 12px; font-weight: 600; }
-QLineEdit, QComboBox, QListWidget, QSpinBox { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: white; color: #172033; min-height: 18px; }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border: 2px solid #2f80ed; }
+QLineEdit, QComboBox, QListWidget, QSpinBox, QDateEdit { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: white; color: #172033; min-height: 18px; }
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDateEdit:focus { border: 2px solid #2f80ed; }
 QComboBox { padding-right: 36px; }
-QComboBox:hover, QSpinBox:hover { border-color: #829ab1; }
+QComboBox:hover, QSpinBox:hover, QDateEdit:hover { border-color: #829ab1; }
 QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 30px; border-left: 1px solid #d9e2ec; background: #f8fafc; border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
 QComboBox::drop-down:hover { background: #e8eef5; }
 QComboBox QAbstractItemView { border: 1px solid #bcccdc; border-radius: 7px; padding: 4px; background: white; color: #172033; selection-background-color: #dbeafe; selection-color: #102a43; outline: 0; }
@@ -217,6 +220,79 @@ class MultiSelectButton(QPushButton):
         selected = self.selected_values()
         text = "Todos" if not selected else selected[0] if len(selected) == 1 else f"{len(selected)} clientes"
         self.setText(text)
+
+
+def _priority_expiration(effective: date, validity: str) -> date:
+    if validity == "weekly":
+        days_until_friday = (4 - effective.weekday()) % 7 or 7
+        return effective + timedelta(days=days_until_friday)
+    return effective
+
+
+class PriorityImportDialog(QDialog):
+    """Confirma la foto local antes de sustituir las prioridades de un proyecto."""
+    def __init__(self, reports, cfg, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Importar prioridades")
+        self.setMinimumWidth(570)
+        self._reports = reports
+        self._expiry_edits = {}
+        grouped = {}
+        for report in reports:
+            grouped.setdefault(report.project, []).append(report)
+        self._grouped = grouped
+        layout = QVBoxLayout(self)
+        intro = QLabel("Revisa la fecha de vigencia antes de sustituir las prioridades locales de los proyectos detectados.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        form = QFormLayout()
+        self.effective_date = QDateEdit(QDate.currentDate())
+        self.effective_date.setCalendarPopup(True)
+        self.effective_date.dateChanged.connect(self._reset_default_dates)
+        form.addRow("Vigentes desde", self.effective_date)
+        layout.addLayout(form)
+        self.projects_box = QGroupBox("Informes detectados")
+        projects_form = QFormLayout(self.projects_box)
+        for project, project_reports in grouped.items():
+            total = sum(len(report.items) for report in project_reports)
+            sections = ", ".join(report.section or project for report in project_reports)
+            files = ", ".join(report.path.name for report in project_reports)
+            validity = getattr(cfg, {"TMB": "priority_tmb_validity", "Línea 9": "priority_l9_validity", "RENFE": "priority_renfe_validity"}[project])
+            expiry = QDateEdit()
+            expiry.setCalendarPopup(True)
+            expiry.setDate(QDate.currentDate())
+            self._expiry_edits[project] = (expiry, validity)
+            detail = QLabel(f"{total} OT · {sections}\n{files}")
+            detail.setWordWrap(True)
+            row = QWidget(); row_layout = QVBoxLayout(row); row_layout.setContentsMargins(0, 0, 0, 0); row_layout.addWidget(detail); row_layout.addWidget(expiry)
+            projects_form.addRow(project, row)
+        layout.addWidget(self.projects_box)
+        self._reset_default_dates()
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Ok)
+        buttons.button(QDialogButtonBox.Ok).setText("Importar prioridades")
+        buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _reset_default_dates(self):
+        effective = self.effective_date.date().toPython()
+        for expiry, validity in self._expiry_edits.values():
+            expiration = _priority_expiration(effective, validity)
+            expiry.setDate(QDate(expiration.year, expiration.month, expiration.day))
+
+    def import_plans(self):
+        effective = self.effective_date.date().toPython().isoformat()
+        plans = []
+        for project, reports in self._grouped.items():
+            expiry, _validity = self._expiry_edits[project]
+            items = [item for report in reports for item in report.items]
+            dates = sorted({report.source_report_date for report in reports if report.source_report_date})
+            plans.append({
+                "project": project, "effective_date": effective,
+                "expires_on": expiry.date().toPython().isoformat(),
+                "source_report_date": dates[-1] if dates else None,
+                "source_files": [report.path.name for report in reports], "items": items,
+            })
+        return plans
 
 
 class CalendarLineEdit(QWidget):
@@ -529,6 +605,11 @@ class MaximoDesktopWindow(QMainWindow):
         self.clear_button.clicked.connect(self.clear_filters)
         self.clear_button.setVisible(False)
         toolbar.addWidget(self.clear_button, 1, 4)
+        self.priority_only_button = QPushButton("▲  Solo prioritarias")
+        self.priority_only_button.setCheckable(True)
+        self.priority_only_button.setVisible(False)
+        self.priority_only_button.toggled.connect(self.refresh_table)
+        toolbar.addWidget(self.priority_only_button, 1, 5)
         toolbar.setColumnStretch(1, 1)
         search_layout.addLayout(toolbar)
         self.filter_chips = QLabel("Sin filtros", objectName="filterChips")
@@ -770,6 +851,42 @@ class MaximoDesktopWindow(QMainWindow):
         fault_form.addRow("Pendientes", self.fault_pending_label)
         fault_form.addRow(self.fault_run_button)
 
+        self.priorities_card = QGroupBox("Prioridades locales")
+        priority_form = QFormLayout(self.priorities_card)
+        self.priority_tmb_validity = DecoratedComboBox()
+        self.priority_l9_validity = DecoratedComboBox()
+        self.priority_renfe_validity = DecoratedComboBox()
+        for combo in (self.priority_tmb_validity, self.priority_l9_validity, self.priority_renfe_validity):
+            combo.addItem("Diaria", "daily")
+            combo.addItem("Semanal · hasta viernes", "weekly")
+        self.priority_summary_label = QLabel()
+        self.priority_summary_label.setObjectName("filterHint")
+        self.import_priorities_button = QPushButton("Importar archivos…")
+        self.import_priorities_button.clicked.connect(self.import_priorities)
+        self.priority_snapshot_combo = DecoratedComboBox()
+        self.priority_snapshot_combo.currentIndexChanged.connect(self._priority_snapshot_selected)
+        self.priority_expiry_edit = QDateEdit()
+        self.priority_expiry_edit.setCalendarPopup(True)
+        self.save_priority_expiry_button = QPushButton("Actualizar vigencia")
+        self.save_priority_expiry_button.clicked.connect(self.save_priority_expiration)
+        self.clear_priority_button = QPushButton("Retirar prioridad", objectName="danger")
+        self.clear_priority_button.clicked.connect(self.clear_priority_snapshot)
+        priority_actions = QHBoxLayout()
+        priority_actions.addWidget(self.import_priorities_button)
+        priority_actions.addStretch()
+        manage_actions = QHBoxLayout()
+        manage_actions.addWidget(self.save_priority_expiry_button)
+        manage_actions.addWidget(self.clear_priority_button)
+        manage_actions.addStretch()
+        priority_form.addRow("Vigencia TMB", self.priority_tmb_validity)
+        priority_form.addRow("Vigencia Línea 9", self.priority_l9_validity)
+        priority_form.addRow("Vigencia RENFE", self.priority_renfe_validity)
+        priority_form.addRow("Estado", self.priority_summary_label)
+        priority_form.addRow(priority_actions)
+        priority_form.addRow("Foto cargada", self.priority_snapshot_combo)
+        priority_form.addRow("Vigente hasta", self.priority_expiry_edit)
+        priority_form.addRow(manage_actions)
+
         self.paths_card = QGroupBox("Datos y rutas")
         paths_layout = QVBoxLayout(self.paths_card)
         path_actions = QHBoxLayout()
@@ -825,14 +942,15 @@ class MaximoDesktopWindow(QMainWindow):
         if not force and wide == self._settings_wide:
             return
         self._settings_wide = wide
-        for card in (self.access_card, self.app_updates_card, self.maintenance_card, self.fault_descriptions_card, self.paths_card):
+        for card in (self.access_card, self.app_updates_card, self.maintenance_card, self.fault_descriptions_card, self.priorities_card, self.paths_card):
             self.settings_grid.removeWidget(card)
         if wide:
             self.settings_grid.addWidget(self.access_card, 0, 0, Qt.AlignTop)
             self.settings_grid.addWidget(self.app_updates_card, 0, 1, Qt.AlignTop)
             self.settings_grid.addWidget(self.maintenance_card, 1, 0, Qt.AlignTop)
             self.settings_grid.addWidget(self.fault_descriptions_card, 1, 1, Qt.AlignTop)
-            self.settings_grid.addWidget(self.paths_card, 2, 0, 1, 2, Qt.AlignTop)
+            self.settings_grid.addWidget(self.priorities_card, 2, 0, Qt.AlignTop)
+            self.settings_grid.addWidget(self.paths_card, 2, 1, Qt.AlignTop)
             self.settings_grid.setColumnStretch(0, 3)
             self.settings_grid.setColumnStretch(1, 2)
         else:
@@ -840,9 +958,104 @@ class MaximoDesktopWindow(QMainWindow):
             self.settings_grid.addWidget(self.app_updates_card, 1, 0)
             self.settings_grid.addWidget(self.maintenance_card, 2, 0)
             self.settings_grid.addWidget(self.fault_descriptions_card, 3, 0)
-            self.settings_grid.addWidget(self.paths_card, 4, 0)
+            self.settings_grid.addWidget(self.priorities_card, 4, 0)
+            self.settings_grid.addWidget(self.paths_card, 5, 0)
             self.settings_grid.setColumnStretch(0, 1)
             self.settings_grid.setColumnStretch(1, 0)
+
+    @staticmethod
+    def _set_combo_value(combo, value):
+        index = combo.findData(value)
+        combo.setCurrentIndex(max(0, index))
+
+    def _refresh_priorities(self):
+        """Actualiza el resumen y la gestión de fotos locales de prioridad."""
+        snapshots = current_priority_snapshots()
+        self.priority_snapshot_combo.blockSignals(True)
+        previous = self.priority_snapshot_combo.currentData()
+        self.priority_snapshot_combo.clear()
+        current = [item for item in snapshots if item["is_current"]]
+        for item in snapshots:
+            state = "vigente" if item["is_current"] else "caducada"
+            label = f"{item['project']} · {item['item_count']} OT · {state}"
+            self.priority_snapshot_combo.addItem(label, item)
+        if previous:
+            index = next((i for i in range(self.priority_snapshot_combo.count())
+                          if self.priority_snapshot_combo.itemData(i)["project"] == previous.get("project")), -1)
+            if index >= 0:
+                self.priority_snapshot_combo.setCurrentIndex(index)
+        self.priority_snapshot_combo.blockSignals(False)
+        self._priority_snapshot_selected(self.priority_snapshot_combo.currentIndex())
+        if current:
+            text = " · ".join(f"{item['project']}: {item['item_count']} OT hasta {item['expires_on']}" for item in current)
+        elif snapshots:
+            text = "Las prioridades cargadas han caducado."
+        else:
+            text = "No hay prioridades locales cargadas."
+        self.priority_summary_label.setText(text)
+
+    def _priority_snapshot_selected(self, index):
+        item = self.priority_snapshot_combo.itemData(index) if index >= 0 else None
+        enabled = bool(item)
+        self.priority_expiry_edit.setEnabled(enabled)
+        self.save_priority_expiry_button.setEnabled(enabled)
+        self.clear_priority_button.setEnabled(enabled)
+        if item:
+            expiry = date.fromisoformat(item["expires_on"])
+            self.priority_expiry_edit.setDate(QDate(expiry.year, expiry.month, expiry.day))
+
+    def import_priorities(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Seleccionar informes de prioridades", "", "Informes de prioridades (*.xls)"
+        )
+        if not paths:
+            return
+        try:
+            reports = read_priority_files(paths)
+        except (OSError, RuntimeError, ValueError) as exc:
+            QMessageBox.warning(self, "Importar prioridades", str(exc))
+            return
+        dialog = PriorityImportDialog(reports, self.cfg, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        try:
+            plans = dialog.import_plans()
+            for plan in plans:
+                replace_priority_snapshot(**plan)
+        except Exception as exc:
+            logging.exception("No se pudieron importar las prioridades")
+            QMessageBox.critical(self, "Importar prioridades", f"No se pudieron guardar las prioridades: {exc}")
+            return
+        self._refresh_priorities()
+        self.refresh_table()
+        detail = "\n".join(f"• {plan['project']}: {len(plan['items'])} OT hasta {plan['expires_on']}" for plan in plans)
+        QMessageBox.information(self, "Prioridades importadas", f"Se sustituyó la foto local de los informes seleccionados.\n\n{detail}")
+        self.status.showMessage("Prioridades locales importadas.", 5000)
+
+    def save_priority_expiration(self):
+        snapshot = self.priority_snapshot_combo.currentData()
+        if not snapshot:
+            return
+        expires_on = self.priority_expiry_edit.date().toPython().isoformat()
+        if expires_on < snapshot["effective_date"]:
+            QMessageBox.warning(self, "Vigencia", "La fecha final no puede ser anterior al inicio de vigencia.")
+            return
+        update_priority_expiration(snapshot["project"], expires_on)
+        self._refresh_priorities()
+        self.refresh_table()
+        self.status.showMessage(f"Vigencia de {snapshot['project']} actualizada.", 4000)
+
+    def clear_priority_snapshot(self):
+        snapshot = self.priority_snapshot_combo.currentData()
+        if not snapshot:
+            return
+        project = snapshot["project"]
+        if QMessageBox.question(self, "Retirar prioridad", f"¿Retirar la foto actual de prioridades de {project}?\n\nEl historial se conservará, pero dejará de marcarse en el listado.") != QMessageBox.Yes:
+            return
+        clear_current_priority_snapshot(project)
+        self._refresh_priorities()
+        self.refresh_table()
+        self.status.showMessage(f"Prioridades de {project} retiradas.", 4000)
 
     def _toggle_path_details(self, visible):
         self.path_details.setVisible(visible)
@@ -980,6 +1193,14 @@ class MaximoDesktopWindow(QMainWindow):
             rows = fetch_data(self.search_edit.text(), self.search_field(), "Todos", self.effective_advanced_filters(), include_sync=True, include_fault=True)
         except ValueError as exc:
             QMessageBox.warning(self, "Filtros", str(exc)); return
+        priority_ots = current_priority_ots()
+        self.priority_only_button.setVisible(bool(priority_ots))
+        if not priority_ots and self.priority_only_button.isChecked():
+            self.priority_only_button.blockSignals(True)
+            self.priority_only_button.setChecked(False)
+            self.priority_only_button.blockSignals(False)
+        if self.priority_only_button.isChecked():
+            rows = [raw for raw in rows if raw[0] == 1 and str(raw[2] or "") in priority_ots]
         def ot_sort_key(row):
             value = str(row[2] or "").strip()
             return (0, int(value)) if value.isdigit() else (1, value)
@@ -988,7 +1209,8 @@ class MaximoDesktopWindow(QMainWindow):
         for raw in rows:
             active, last_seen, *data = raw
             fault_description = data.pop()
-            status = "✓ Activo en Maximo" if active == 1 else "× No activo en Maximo" if active == 0 else "? Estado desconocido"
+            is_priority = active == 1 and str(raw[2] or "") in priority_ots
+            status = "▲ Prioridad · ✓ Activo en Maximo" if is_priority else "✓ Activo en Maximo" if active == 1 else "× No activo en Maximo" if active == 0 else "? Estado desconocido"
             try: last_seen = datetime.fromisoformat(last_seen).strftime("%d/%m/%Y %H:%M") if last_seen else ""
             except (TypeError, ValueError): pass
             row = [status, *data, last_seen, fault_description]
@@ -997,13 +1219,15 @@ class MaximoDesktopWindow(QMainWindow):
                 item = QTableWidgetItem(str(value or "")); item.setData(Qt.UserRole, raw[2])
                 item.setForeground(QColor("#172033" if active == 1 else "#718096"))
                 if column == 0:
-                    item.setToolTip("Activo en Maximo: aparece en el listado de reparaciones y recibe actualizaciones.\nNo activo en Maximo: ya no aparece en ese listado y no recibe nuevas actualizaciones.")
-                    item.setForeground(QColor("#2f855a" if active == 1 else "#718096"))
+                    item.setToolTip("Prioridad: marcada en el informe local vigente y todavía activa en Maximo.\n\nActivo en Maximo: aparece en el listado de reparaciones y recibe actualizaciones.\nNo activo en Maximo: ya no aparece en ese listado y no recibe nuevas actualizaciones.")
+                    item.setForeground(QColor("#b7791f" if is_priority else "#2f855a" if active == 1 else "#718096"))
                 self.table.setItem(index, column, item)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
         self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
         summary = self.active_filter_summary()
+        if self.priority_only_button.isChecked():
+            summary.append("Solo prioritarias")
         self.filter_chips.setVisible(bool(summary))
         self.filter_chips.setText("Filtros activos · " + "   •   ".join(summary))
         advanced_count = sum(bool(value) for value in self.advanced_state.values())
@@ -1257,11 +1481,15 @@ class MaximoDesktopWindow(QMainWindow):
         self.reconcile_check.setChecked(self.cfg.reconciliation_enabled); self.batch_spin.setValue(self.cfg.reconciliation_batch_size)
         self.fault_descriptions_check.setChecked(self.cfg.fault_descriptions_enabled)
         self.fault_batch_spin.setValue(self.cfg.fault_description_batch_size)
+        self._set_combo_value(self.priority_tmb_validity, self.cfg.priority_tmb_validity)
+        self._set_combo_value(self.priority_l9_validity, self.cfg.priority_l9_validity)
+        self._set_combo_value(self.priority_renfe_validity, self.cfg.priority_renfe_validity)
         self._refresh_auto_update_summary()
         self._refresh_app_update_block()
         self._refresh_reconciliation_summary()
         self._refresh_fault_description_summary()
         self._update_fault_description_controls()
+        self._refresh_priorities()
 
     def _restore_window_state(self):
         if self.cfg.window_size:
@@ -1295,24 +1523,32 @@ class MaximoDesktopWindow(QMainWindow):
             or self.batch_spin.value() != self.cfg.reconciliation_batch_size
             or self.fault_descriptions_check.isChecked() != self.cfg.fault_descriptions_enabled
             or self.fault_batch_spin.value() != self.cfg.fault_description_batch_size
+            or self.priority_tmb_validity.currentData() != self.cfg.priority_tmb_validity
+            or self.priority_l9_validity.currentData() != self.cfg.priority_l9_validity
+            or self.priority_renfe_validity.currentData() != self.cfg.priority_renfe_validity
         )
 
     def save_settings(self, show_feedback=True):
         self.cfg.username = self.user_edit.text().strip(); self.cfg.password = self.password_edit.text(); self.cfg.auto_update_enabled = self.auto_check.isChecked(); self.cfg.auto_update_interval_min = self.interval_spin.value(); self.cfg.reconciliation_enabled = self.reconcile_check.isChecked(); self.cfg.reconciliation_batch_size = self.batch_spin.value()
         self.cfg.fault_descriptions_enabled = self.fault_descriptions_check.isChecked()
         self.cfg.fault_description_batch_size = self.fault_batch_spin.value()
+        self.cfg.priority_tmb_validity = self.priority_tmb_validity.currentData()
+        self.cfg.priority_l9_validity = self.priority_l9_validity.currentData()
+        self.cfg.priority_renfe_validity = self.priority_renfe_validity.currentData()
         save_config(self.cfg)
         self.schedule_auto_update()
         self._refresh_auto_update_summary()
         self._refresh_reconciliation_summary()
         self._refresh_fault_description_summary()
         self._update_fault_description_controls()
+        self._refresh_priorities()
         self.refresh_table()
         logging.info(
-            "Configuración UI guardada: auto_update=%s, intervalo=%d, conciliación=%s, lote=%d, averías=%s, lote_averías=%d.",
+            "Configuración UI guardada: auto_update=%s, intervalo=%d, conciliación=%s, lote=%d, averías=%s, lote_averías=%d, prioridad TMB=%s, L9=%s, RENFE=%s.",
             self.cfg.auto_update_enabled, self.cfg.auto_update_interval_min,
             self.cfg.reconciliation_enabled, self.cfg.reconciliation_batch_size,
             self.cfg.fault_descriptions_enabled, self.cfg.fault_description_batch_size,
+            self.cfg.priority_tmb_validity, self.cfg.priority_l9_validity, self.cfg.priority_renfe_validity,
         )
         if show_feedback:
             QMessageBox.information(self, "Configuración", "Configuración guardada correctamente.")
