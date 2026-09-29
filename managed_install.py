@@ -6,7 +6,9 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import tkinter as tk
+from tkinter import messagebox
 from pathlib import Path
 from uuid import uuid4
 
@@ -39,6 +41,10 @@ class _InstallProgress:
             self.window.destroy()
         except tk.TclError:
             pass
+
+    def show_error(self, text: str) -> None:
+        self.set(text)
+        messagebox.showerror("No se pudo instalar Maximo Desktop", text, parent=self.window)
 
 
 def distributed_executable() -> Path | None:
@@ -150,7 +156,22 @@ def _replace_managed_distribution(current: Path, managed: Path, progress: _Insta
             previous = APP_ROOT / f"app-previous-v{previous_version}-{uuid4().hex[:8]}"
 
         progress.set("Instalando la nueva versión de Maximo Desktop…")
-        MANAGED_APP_DIR.replace(previous)
+        for attempt, delay in enumerate((0, 1, 2), start=1):
+            try:
+                MANAGED_APP_DIR.replace(previous)
+                break
+            except PermissionError as exc:
+                locked = getattr(exc, "winerror", None) == 32
+                if not locked or attempt == 3:
+                    raise
+                progress.set(
+                    f"Esperando a que Windows libere la instalación… ({attempt}/3)"
+                )
+                logging.info(
+                    "Instalación local bloqueada; reintento %d/3 en %ss.",
+                    attempt + 1, delay or 1,
+                )
+                time.sleep(delay or 1)
         try:
             staging.replace(MANAGED_APP_DIR)
         except OSError:
@@ -244,8 +265,17 @@ def start_managed_install_if_needed() -> bool:
             )
         elif _version_is_newer(current_version, managed_version):
             if not _replace_managed_distribution(current, managed, progress):
+                progress.show_error(
+                    "Windows mantiene en uso la instalación anterior.\n\n"
+                    "Cierra todas las ventanas de Maximo Desktop y espera unos segundos. "
+                    "Si el aviso continúa, reinicia el equipo y ejecuta directamente "
+                    "la última versión descargada desde su carpeta descomprimida, "
+                    "sin abrir antes la copia instalada ni el acceso directo antiguo."
+                )
                 progress.close()
-                return False
+                # La copia externa no debe iniciar la interfaz: coexistir con la
+                # versión gestionada produciría dos instancias con los mismos datos.
+                return True
         else:
             logging.info("La copia gestionada ya es igual o más reciente; se conserva.")
 
