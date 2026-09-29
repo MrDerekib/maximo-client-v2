@@ -830,9 +830,9 @@ class MaximoDesktopWindow(QMainWindow):
         if wide:
             self.settings_grid.addWidget(self.access_card, 0, 0, Qt.AlignTop)
             self.settings_grid.addWidget(self.app_updates_card, 0, 1, Qt.AlignTop)
-            self.settings_grid.addWidget(self.maintenance_card, 1, 0, 1, 2, Qt.AlignTop)
-            self.settings_grid.addWidget(self.fault_descriptions_card, 2, 0, 1, 2, Qt.AlignTop)
-            self.settings_grid.addWidget(self.paths_card, 3, 0, 1, 2, Qt.AlignTop)
+            self.settings_grid.addWidget(self.maintenance_card, 1, 0, Qt.AlignTop)
+            self.settings_grid.addWidget(self.fault_descriptions_card, 1, 1, Qt.AlignTop)
+            self.settings_grid.addWidget(self.paths_card, 2, 0, 1, 2, Qt.AlignTop)
             self.settings_grid.setColumnStretch(0, 3)
             self.settings_grid.setColumnStretch(1, 2)
         else:
