@@ -61,6 +61,8 @@ logging.info("UI Preview v%s iniciada. Datos: %s", version.APP_VERSION, APP_ROOT
 
 STYLESHEET = """
 QMainWindow { background: #f5f7fb; color: #172033; }
+QDialog { background: #f5f7fb; color: #172033; }
+QDialog QLabel, QDialog QCheckBox { color: #172033; }
 QFrame#sidebar { background: #102a43; }
 QLabel#brand { color: white; font-size: 20px; font-weight: 700; }
 QLabel#subtitle { color: #9fb3c8; font-size: 11px; }
@@ -170,11 +172,19 @@ def _resolve_theme(preference: str) -> str:
 
 def _theme_css(css: str, colors=None) -> str:
     colors = colors or ACTIVE_COLORS
+    # La primera pasada usa marcadores. Si sustituyéramos directamente, un
+    # color oscuro podría coincidir con un color claro aún pendiente y acabar
+    # reemplazado una segunda vez.
     for source, role in _LIGHT_HEX_ROLES.items():
-        css = css.replace(source, colors[role])
+        css = css.replace(source, f"__MAXIMO_{role.upper()}__")
     # El azul oscuro se usaba tanto para el encabezado como para la barra
     # lateral; en oscuro son superficies distintas.
-    css = css.replace(f"QFrame#sidebar {{ background: {colors['heading']}; }}", f"QFrame#sidebar {{ background: {colors['sidebar']}; }}")
+    css = css.replace(
+        "QFrame#sidebar { background: __MAXIMO_HEADING__; }",
+        "QFrame#sidebar { background: __MAXIMO_SIDEBAR__; }",
+    )
+    for role, value in colors.items():
+        css = css.replace(f"__MAXIMO_{role.upper()}__", value)
     return css
 
 
