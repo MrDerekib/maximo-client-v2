@@ -234,7 +234,27 @@ class PriorityImportDialog(QDialog):
     def __init__(self, reports, cfg, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Importar prioridades")
-        self.setMinimumWidth(570)
+        self.setMinimumWidth(620)
+        self.setStyleSheet("""
+            QDialog { background: #f5f7fb; color: #172033; }
+            QLabel { color: #172033; font-size: 12px; }
+            QLabel#muted { color: #627d98; }
+            QGroupBox { background: white; border: 1px solid #d9e2ec; border-radius: 9px;
+                        margin-top: 12px; padding: 14px 12px 10px; color: #102a43;
+                        font-size: 14px; font-weight: 700; }
+            QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px;
+                                background: #f5f7fb; }
+            QFrame#priorityReport { background: #f8fafc; border: 1px solid #e2e8f0;
+                                    border-radius: 7px; }
+            QDateEdit { border: 1px solid #bcccdc; border-radius: 6px; padding: 6px 9px;
+                        background: white; color: #172033; min-height: 18px; }
+            QDateEdit:focus { border: 2px solid #2f80ed; }
+            QPushButton { border: 0; border-radius: 6px; padding: 8px 13px;
+                          background: #e8eef5; color: #243b53; font-weight: 600; }
+            QPushButton:hover { background: #d9e2ec; }
+            QPushButton#dialogPrimary { background: #1976d2; color: white; }
+            QPushButton#dialogPrimary:hover { background: #125ea7; }
+        """)
         self._reports = reports
         self._expiry_edits = {}
         grouped = {}
@@ -242,7 +262,7 @@ class PriorityImportDialog(QDialog):
             grouped.setdefault(report.project, []).append(report)
         self._grouped = grouped
         layout = QVBoxLayout(self)
-        intro = QLabel("Revisa la fecha de vigencia antes de sustituir las prioridades locales de los proyectos detectados.")
+        intro = QLabel("Revisa la vigencia antes de sustituir las prioridades locales de los proyectos detectados.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
         form = QFormLayout()
@@ -252,24 +272,38 @@ class PriorityImportDialog(QDialog):
         form.addRow("Vigentes desde", self.effective_date)
         layout.addLayout(form)
         self.projects_box = QGroupBox("Informes detectados")
-        projects_form = QFormLayout(self.projects_box)
+        projects_layout = QVBoxLayout(self.projects_box)
+        projects_layout.setSpacing(8)
         for project, project_reports in grouped.items():
             total = sum(len(report.items) for report in project_reports)
             sections = ", ".join(report.section or project for report in project_reports)
-            files = ", ".join(report.path.name for report in project_reports)
             validity = getattr(cfg, {"TMB": "priority_tmb_validity", "Línea 9": "priority_l9_validity", "RENFE": "priority_renfe_validity"}[project])
             expiry = QDateEdit()
             expiry.setCalendarPopup(True)
             expiry.setDate(QDate.currentDate())
             self._expiry_edits[project] = (expiry, validity)
-            detail = QLabel(f"{total} OT · {sections}\n{files}")
-            detail.setWordWrap(True)
-            row = QWidget(); row_layout = QVBoxLayout(row); row_layout.setContentsMargins(0, 0, 0, 0); row_layout.addWidget(detail); row_layout.addWidget(expiry)
-            projects_form.addRow(project, row)
+            report_card = QFrame(objectName="priorityReport")
+            report_layout = QVBoxLayout(report_card)
+            report_layout.setContentsMargins(10, 8, 10, 9)
+            report_layout.setSpacing(5)
+            heading = QHBoxLayout()
+            title = QLabel(project)
+            title.setStyleSheet("font-size: 13px; font-weight: 700; color: #102a43;")
+            detail = QLabel(f"{total} OT · {sections}")
+            detail.setObjectName("muted")
+            heading.addWidget(title); heading.addStretch(); heading.addWidget(detail)
+            sources = QLabel(f"{len(project_reports)} archivo{'s' if len(project_reports) != 1 else ''} seleccionado{'s' if len(project_reports) != 1 else ''}")
+            sources.setObjectName("muted")
+            sources.setToolTip("\n".join(report.path.name for report in project_reports))
+            expiry_row = QHBoxLayout()
+            expiry_row.addWidget(QLabel("Vigente hasta")); expiry_row.addWidget(expiry, 1)
+            report_layout.addLayout(heading); report_layout.addWidget(sources); report_layout.addLayout(expiry_row)
+            projects_layout.addWidget(report_card)
         layout.addWidget(self.projects_box)
         self._reset_default_dates()
         buttons = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Ok)
         buttons.button(QDialogButtonBox.Ok).setText("Importar prioridades")
+        buttons.button(QDialogButtonBox.Ok).setObjectName("dialogPrimary")
         buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
