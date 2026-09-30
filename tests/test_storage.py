@@ -28,6 +28,11 @@ class CredentialStoreTests(unittest.TestCase):
         self.assertEqual(config.AppConfig(reconciliation_batch_size=0).reconciliation_batch_size, 1)
         self.assertEqual(config.AppConfig(reconciliation_batch_size=500).reconciliation_batch_size, 100)
 
+    def test_theme_defaults_to_system_and_rejects_unknown_values(self):
+        self.assertEqual(config.AppConfig().theme, "system")
+        self.assertEqual(config.AppConfig(theme="dark").theme, "dark")
+        self.assertEqual(config.AppConfig(theme="contraste").theme, "system")
+
 
 class StorageMigrationTests(unittest.TestCase):
     def test_new_installation_copies_default_tracking_options(self):

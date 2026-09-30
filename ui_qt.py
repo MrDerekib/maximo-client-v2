@@ -74,24 +74,28 @@ QListWidget#profileList::item:hover { background: #1e446b; }
 QListWidget#profileList::item:selected { background: #2f80ed; color: white; }
 QPushButton#sidebarAction { background: #1e446b; border: 1px solid #315a82; color: #e6f0ff; text-align: left; padding: 7px 10px; }
 QPushButton#sidebarAction:hover { background: #315a82; color: white; }
-QFrame#card, QGroupBox { background: white; border: 1px solid #d9e2ec; border-radius: 10px; }
-QFrame#filtersCard { background: white; border: 1px solid #d9e2ec; border-radius: 10px; }
+QFrame#card, QGroupBox { background: #ffffff; border: 1px solid #d9e2ec; border-radius: 10px; }
+QFrame#filtersCard { background: #ffffff; border: 1px solid #d9e2ec; border-radius: 10px; }
 QFrame#advancedFilters { background: #f8fafc; border-top: 1px solid #d9e2ec; }
 QWidget#settingsContent { background: #f5f7fb; }
 QLabel#filterHint { color: #627d98; font-size: 12px; }
 QLabel#filterChips { color: #1976d2; font-size: 12px; font-weight: 600; }
+QLabel#developmentMode { color: #9fb3c8; padding: 10px; border: 1px solid #486581; border-radius: 8px; }
+QLabel#pageTitle { font-size: 26px; font-weight: 700; color: #102a43; }
+QLabel#pageSubtitle, QLabel#resultLabel { color: #627d98; }
+QLabel#resultLabel { padding: 5px 2px; }
 QGroupBox { margin-top: 12px; padding: 12px; font-size: 16px; font-weight: 700; color: #334e68; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; color: #102a43; }
 QGroupBox QLabel, QGroupBox QCheckBox { font-size: 12px; font-weight: 400; color: #172033; }
 QGroupBox QLineEdit, QGroupBox QSpinBox { font-size: 12px; font-weight: 400; color: #172033; }
 QGroupBox QPushButton { font-size: 12px; font-weight: 600; }
-QLineEdit, QComboBox, QListWidget, QSpinBox, QDateEdit { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: white; color: #172033; min-height: 18px; }
+QLineEdit, QComboBox, QListWidget, QSpinBox, QDateEdit { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: #ffffff; color: #172033; min-height: 18px; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDateEdit:focus { border: 2px solid #2f80ed; }
 QComboBox { padding-right: 36px; }
 QComboBox:hover, QSpinBox:hover, QDateEdit:hover { border-color: #829ab1; }
 QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 30px; border-left: 1px solid #d9e2ec; background: #f8fafc; border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
 QComboBox::drop-down:hover { background: #e8eef5; }
-QComboBox QAbstractItemView { border: 1px solid #bcccdc; border-radius: 7px; padding: 4px; background: white; color: #172033; selection-background-color: #dbeafe; selection-color: #102a43; outline: 0; }
+QComboBox QAbstractItemView { border: 1px solid #bcccdc; border-radius: 7px; padding: 4px; background: #ffffff; color: #172033; selection-background-color: #dbeafe; selection-color: #102a43; outline: 0; }
 QSpinBox { padding-right: 34px; }
 QSpinBox::up-button, QSpinBox::down-button { subcontrol-origin: border; width: 28px; background: #f8fafc; border-left: 1px solid #d9e2ec; }
 QSpinBox::up-button { subcontrol-position: top right; border-top-right-radius: 6px; border-bottom: 1px solid #d9e2ec; }
@@ -102,14 +106,84 @@ QPushButton:hover { background: #d9e2ec; }
 QPushButton#primary { background: #1976d2; color: white; }
 QPushButton#primary:hover { background: #125ea7; }
 QPushButton#danger { background: #fff1f0; color: #c53030; }
-QPushButton#multiSelect { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: white; min-height: 18px; text-align: left; font-weight: 400; }
+QPushButton#multiSelect { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: #ffffff; min-height: 18px; text-align: left; font-weight: 400; }
 QPushButton#multiSelect:hover { border-color: #829ab1; background: #f8fafc; }
-QTableWidget { background: white; border: 1px solid #d9e2ec; border-radius: 8px; gridline-color: #edf2f7; selection-background-color: #dbeafe; selection-color: #172033; }
+QTableWidget { background: #ffffff; border: 1px solid #d9e2ec; border-radius: 8px; gridline-color: #edf2f7; selection-background-color: #dbeafe; selection-color: #172033; }
 QHeaderView::section { background: #f0f4f8; color: #486581; border: 0; border-right: 1px solid #cbd5e1; border-bottom: 1px solid #d9e2ec; padding: 9px; font-weight: 700; }
 QHeaderView::section:hover { background: #e2e8f0; }
 QTableCornerButton::section { background: #f0f4f8; border: 0; border-right: 1px solid #cbd5e1; border-bottom: 1px solid #d9e2ec; }
-QStatusBar { background: white; border-top: 1px solid #d9e2ec; color: #486581; }
+QStatusBar { background: #ffffff; border-top: 1px solid #d9e2ec; color: #486581; }
 """
+
+# Toda la interfaz parte de estos roles, no de colores de Windows.  Mantener
+# la paleta aquí permite que claro y oscuro cambien de forma coherente.
+THEME_PALETTES = {
+    "light": {
+        "canvas": "#f5f7fb", "surface": "#ffffff", "subtle": "#f8fafc", "text": "#172033",
+        "heading": "#102a43", "muted": "#627d98", "border": "#d9e2ec", "border_strong": "#bcccdc",
+        "control": "#e8eef5", "hover": "#d9e2ec", "accent": "#1976d2", "accent_hover": "#125ea7",
+        "accent_light": "#dbeafe", "sidebar": "#102a43", "sidebar_surface": "#163854",
+        "sidebar_hover": "#1e446b", "nav": "#2f80ed", "nav_border": "#4d9cff",
+        "sidebar_text": "#e6f0ff", "sidebar_muted": "#9fb3c8", "danger_bg": "#fff1f0",
+        "danger": "#c53030", "grid": "#edf2f7", "header": "#f0f4f8", "header_text": "#486581",
+        "header_hover": "#e2e8f0", "separator": "#cbd5e1", "soft_border": "#829ab1",
+        "check_hover": "#eef5ff", "success": "#2f855a", "inactive": "#718096",
+        "priority": "#b7791f", "button_text": "#243b53",
+    },
+    "dark": {
+        "canvas": "#121a26", "surface": "#1b2635", "subtle": "#223044", "text": "#edf2f7",
+        "heading": "#f7fafc", "muted": "#a8bed4", "border": "#344861", "border_strong": "#526b86",
+        "control": "#2a3b50", "hover": "#334a63", "accent": "#4595f5", "accent_hover": "#74b4ff",
+        "accent_light": "#244d78", "sidebar": "#0b1828", "sidebar_surface": "#142d47",
+        "sidebar_hover": "#204969", "nav": "#287ce4", "nav_border": "#67a8ff",
+        "sidebar_text": "#f3f7fc", "sidebar_muted": "#adc6df", "danger_bg": "#512c33",
+        "danger": "#ff9a9a", "grid": "#2a3b50", "header": "#233247", "header_text": "#aac4dd",
+        "header_hover": "#30465e", "separator": "#45617c", "soft_border": "#7190ae",
+        "check_hover": "#294b6f", "success": "#60d394", "inactive": "#a0b5c8",
+        "priority": "#f6c85f", "button_text": "#e6eef8",
+    },
+}
+_LIGHT_HEX_ROLES = {
+    "#f5f7fb": "canvas", "#ffffff": "surface", "#f8fafc": "subtle",
+    "#172033": "text", "#102a43": "heading", "#627d98": "muted", "#d9e2ec": "border",
+    "#bcccdc": "border_strong", "#e8eef5": "control", "#1976d2": "accent", "#125ea7": "accent_hover",
+    "#dbeafe": "accent_light", "#163854": "sidebar_surface", "#1e446b": "sidebar_hover",
+    "#2f80ed": "nav", "#4d9cff": "nav_border", "#e6f0ff": "sidebar_text", "#9fb3c8": "sidebar_muted",
+    "#fff1f0": "danger_bg", "#c53030": "danger", "#edf2f7": "grid", "#f0f4f8": "header",
+    "#486581": "header_text", "#e2e8f0": "header_hover", "#cbd5e1": "separator",
+    "#829ab1": "soft_border", "#eef5ff": "check_hover", "#2f855a": "success",
+    "#718096": "inactive", "#b7791f": "priority", "#243b53": "button_text",
+}
+ACTIVE_THEME = "light"
+ACTIVE_COLORS = THEME_PALETTES[ACTIVE_THEME]
+
+
+def _resolve_theme(preference: str) -> str:
+    if preference in {"light", "dark"}:
+        return preference
+    try:
+        scheme = QApplication.styleHints().colorScheme()
+        return "dark" if "dark" in str(scheme).lower() else "light"
+    except Exception:
+        return "light"
+
+
+def _theme_css(css: str, colors=None) -> str:
+    colors = colors or ACTIVE_COLORS
+    for source, role in _LIGHT_HEX_ROLES.items():
+        css = css.replace(source, colors[role])
+    # El azul oscuro se usaba tanto para el encabezado como para la barra
+    # lateral; en oscuro son superficies distintas.
+    css = css.replace(f"QFrame#sidebar {{ background: {colors['heading']}; }}", f"QFrame#sidebar {{ background: {colors['sidebar']}; }}")
+    return css
+
+
+def apply_application_theme(app, preference: str) -> str:
+    global ACTIVE_THEME, ACTIVE_COLORS
+    ACTIVE_THEME = _resolve_theme(preference)
+    ACTIVE_COLORS = THEME_PALETTES[ACTIVE_THEME]
+    app.setStyleSheet(_theme_css(STYLESHEET, ACTIVE_COLORS))
+    return ACTIVE_THEME
 
 
 class TaskSignals(QObject):
@@ -145,7 +219,7 @@ class DecoratedComboBox(QComboBox):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(QPen(QColor("#486581"), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.setPen(QPen(QColor(ACTIVE_COLORS["header_text"]), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         _draw_chevron(painter, self.width() - 15, self.height() / 2, up=False)
 
 
@@ -154,7 +228,7 @@ class DecoratedSpinBox(QSpinBox):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(QPen(QColor("#486581"), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.setPen(QPen(QColor(ACTIVE_COLORS["header_text"]), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         x = self.width() - 14
         _draw_chevron(painter, x, self.height() * 0.30, up=True)
         _draw_chevron(painter, x, self.height() * 0.70, up=False)
@@ -170,7 +244,13 @@ class MultiSelectButton(QPushButton):
         self._options = []
         self._selected = set()
         self._menu = QMenu(self)
-        self._menu.setStyleSheet("""
+        self._apply_menu_style()
+        self._menu.aboutToShow.connect(self._prepare_menu)
+        self.setMenu(self._menu)
+        self._refresh_text()
+
+    def _apply_menu_style(self):
+        self._menu.setStyleSheet(_theme_css("""
             QMenu { background: #ffffff; color: #172033; border: 1px solid #bcccdc;
                     border-radius: 8px; padding: 5px; }
             QCheckBox { color: #172033; background: transparent; border: 0; border-radius: 6px;
@@ -180,10 +260,10 @@ class MultiSelectButton(QPushButton):
                                    border-radius: 4px; background: #ffffff; }
             QCheckBox::indicator:hover { border-color: #2f80ed; background: #eef5ff; }
             QCheckBox::indicator:checked { border-color: #1976d2; background: #2f80ed; }
-        """)
-        self._menu.aboutToShow.connect(self._prepare_menu)
-        self.setMenu(self._menu)
-        self._refresh_text()
+        """))
+
+    def refresh_theme(self):
+        self._apply_menu_style()
 
     def _prepare_menu(self):
         """Mantiene el desplegable legible y alineado con el control."""
@@ -235,11 +315,11 @@ class PriorityImportDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Importar prioridades")
         self.setMinimumWidth(620)
-        self.setStyleSheet("""
+        self.setStyleSheet(_theme_css("""
             QDialog { background: #f5f7fb; color: #172033; }
             QLabel { color: #172033; font-size: 12px; }
             QLabel#muted { color: #627d98; }
-            QGroupBox { background: white; border: 1px solid #d9e2ec; border-radius: 9px;
+            QGroupBox { background: #ffffff; border: 1px solid #d9e2ec; border-radius: 9px;
                         margin-top: 12px; padding: 14px 12px 10px; color: #102a43;
                         font-size: 14px; font-weight: 700; }
             QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px;
@@ -247,14 +327,14 @@ class PriorityImportDialog(QDialog):
             QFrame#priorityReport { background: #f8fafc; border: 1px solid #e2e8f0;
                                     border-radius: 7px; }
             QDateEdit { border: 1px solid #bcccdc; border-radius: 6px; padding: 6px 9px;
-                        background: white; color: #172033; min-height: 18px; }
+                        background: #ffffff; color: #172033; min-height: 18px; }
             QDateEdit:focus { border: 2px solid #2f80ed; }
             QPushButton { border: 0; border-radius: 6px; padding: 8px 13px;
                           background: #e8eef5; color: #243b53; font-weight: 600; }
             QPushButton:hover { background: #d9e2ec; }
             QPushButton#dialogPrimary { background: #1976d2; color: white; }
             QPushButton#dialogPrimary:hover { background: #125ea7; }
-        """)
+        """))
         self._reports = reports
         self._expiry_edits = {}
         grouped = {}
@@ -288,7 +368,7 @@ class PriorityImportDialog(QDialog):
             report_layout.setSpacing(5)
             heading = QHBoxLayout()
             title = QLabel(project)
-            title.setStyleSheet("font-size: 13px; font-weight: 700; color: #102a43;")
+            title.setStyleSheet(_theme_css("font-size: 13px; font-weight: 700; color: #102a43;"))
             detail = QLabel(f"{total} OT · {sections}")
             detail.setObjectName("muted")
             heading.addWidget(title); heading.addStretch(); heading.addWidget(detail)
@@ -548,8 +628,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.delete_profile_button.clicked.connect(self.delete_selected_profile)
         self.delete_profile_button.setEnabled(False)
         box.addWidget(self.delete_profile_button)
-        mode = QLabel("MODO DESARROLLO\nDatos aislados", objectName="subtitle")
-        mode.setStyleSheet("padding: 10px; border: 1px solid #486581; border-radius: 8px;")
+        mode = QLabel("MODO DESARROLLO\nDatos aislados", objectName="developmentMode")
         box.addWidget(mode)
         return sidebar
 
@@ -558,11 +637,9 @@ class MaximoDesktopWindow(QMainWindow):
         row = QHBoxLayout(header)
         row.setContentsMargins(0, 24, 0, 12)
         texts = QVBoxLayout()
-        heading = QLabel(title)
-        heading.setStyleSheet("font-size: 26px; font-weight: 700; color: #102a43;")
+        heading = QLabel(title, objectName="pageTitle")
         texts.addWidget(heading)
-        detail = QLabel(description)
-        detail.setStyleSheet("color: #627d98;")
+        detail = QLabel(description, objectName="pageSubtitle")
         texts.addWidget(detail)
         row.addLayout(texts)
         row.addStretch()
@@ -652,8 +729,7 @@ class MaximoDesktopWindow(QMainWindow):
 
         outer.addWidget(search_card)
 
-        self.result_label = QLabel()
-        self.result_label.setStyleSheet("color: #627d98; padding: 5px 2px;")
+        self.result_label = QLabel(objectName="resultLabel")
         outer.addWidget(self.result_label)
         self.table = QTableWidget(0, len(self.columns))
         self.table.setHorizontalHeaderLabels(self.columns)
@@ -858,6 +934,18 @@ class MaximoDesktopWindow(QMainWindow):
         update_form.addRow("Estado", self.app_update_status_label)
         update_form.addRow(update_actions)
 
+        self.appearance_card = QGroupBox("Apariencia")
+        appearance_form = QFormLayout(self.appearance_card)
+        self.theme_combo = DecoratedComboBox()
+        self.theme_combo.addItem("Según Windows", "system")
+        self.theme_combo.addItem("Claro", "light")
+        self.theme_combo.addItem("Oscuro", "dark")
+        self.theme_combo.currentIndexChanged.connect(self.preview_theme)
+        theme_hint = QLabel("Se aplica al instante; se conserva al guardar los cambios.")
+        theme_hint.setObjectName("filterHint")
+        appearance_form.addRow("Tema", self.theme_combo)
+        appearance_form.addRow("", theme_hint)
+
         self.maintenance_card = QGroupBox("Mantenimiento")
         mform = QFormLayout(self.maintenance_card)
         self.reconcile_check = QCheckBox("Actualizar estados de OT no activas en segundo plano")
@@ -976,7 +1064,7 @@ class MaximoDesktopWindow(QMainWindow):
         if not force and wide == self._settings_wide:
             return
         self._settings_wide = wide
-        for card in (self.access_card, self.app_updates_card, self.maintenance_card, self.fault_descriptions_card, self.priorities_card, self.paths_card):
+        for card in (self.access_card, self.app_updates_card, self.maintenance_card, self.fault_descriptions_card, self.priorities_card, self.appearance_card, self.paths_card):
             self.settings_grid.removeWidget(card)
         if wide:
             self.settings_grid.addWidget(self.access_card, 0, 0, Qt.AlignTop)
@@ -984,7 +1072,8 @@ class MaximoDesktopWindow(QMainWindow):
             self.settings_grid.addWidget(self.maintenance_card, 1, 0, Qt.AlignTop)
             self.settings_grid.addWidget(self.fault_descriptions_card, 1, 1, Qt.AlignTop)
             self.settings_grid.addWidget(self.priorities_card, 2, 0, Qt.AlignTop)
-            self.settings_grid.addWidget(self.paths_card, 2, 1, Qt.AlignTop)
+            self.settings_grid.addWidget(self.appearance_card, 2, 1, Qt.AlignTop)
+            self.settings_grid.addWidget(self.paths_card, 3, 0, 1, 2, Qt.AlignTop)
             self.settings_grid.setColumnStretch(0, 3)
             self.settings_grid.setColumnStretch(1, 2)
         else:
@@ -993,7 +1082,8 @@ class MaximoDesktopWindow(QMainWindow):
             self.settings_grid.addWidget(self.maintenance_card, 2, 0)
             self.settings_grid.addWidget(self.fault_descriptions_card, 3, 0)
             self.settings_grid.addWidget(self.priorities_card, 4, 0)
-            self.settings_grid.addWidget(self.paths_card, 5, 0)
+            self.settings_grid.addWidget(self.appearance_card, 5, 0)
+            self.settings_grid.addWidget(self.paths_card, 6, 0)
             self.settings_grid.setColumnStretch(0, 1)
             self.settings_grid.setColumnStretch(1, 0)
 
@@ -1001,6 +1091,13 @@ class MaximoDesktopWindow(QMainWindow):
     def _set_combo_value(combo, value):
         index = combo.findData(value)
         combo.setCurrentIndex(max(0, index))
+
+    def preview_theme(self):
+        """Muestra el tema elegido antes de confirmar el resto de ajustes."""
+        preference = self.theme_combo.currentData()
+        self._effective_theme = apply_application_theme(QApplication.instance(), preference)
+        self.client_combo.refresh_theme()
+        self.refresh_table()
 
     def _refresh_priorities(self):
         """Actualiza el resumen y la gestión de fotos locales de prioridad."""
@@ -1251,10 +1348,10 @@ class MaximoDesktopWindow(QMainWindow):
             index = self.table.rowCount(); self.table.insertRow(index)
             for column, value in enumerate(row):
                 item = QTableWidgetItem(str(value or "")); item.setData(Qt.UserRole, raw[2])
-                item.setForeground(QColor("#172033" if active == 1 else "#718096"))
+                item.setForeground(QColor(ACTIVE_COLORS["text"] if active == 1 else ACTIVE_COLORS["inactive"]))
                 if column == 0:
                     item.setToolTip("Prioridad: marcada en el informe local vigente y todavía activa en Maximo.\n\nActivo en Maximo: aparece en el listado de reparaciones y recibe actualizaciones.\nNo activo en Maximo: ya no aparece en ese listado y no recibe nuevas actualizaciones.")
-                    item.setForeground(QColor("#b7791f" if is_priority else "#2f855a" if active == 1 else "#718096"))
+                    item.setForeground(QColor(ACTIVE_COLORS["priority"] if is_priority else ACTIVE_COLORS["success"] if active == 1 else ACTIVE_COLORS["inactive"]))
                 self.table.setItem(index, column, item)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
@@ -1515,6 +1612,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.reconcile_check.setChecked(self.cfg.reconciliation_enabled); self.batch_spin.setValue(self.cfg.reconciliation_batch_size)
         self.fault_descriptions_check.setChecked(self.cfg.fault_descriptions_enabled)
         self.fault_batch_spin.setValue(self.cfg.fault_description_batch_size)
+        self._set_combo_value(self.theme_combo, self.cfg.theme)
         self._set_combo_value(self.priority_tmb_validity, self.cfg.priority_tmb_validity)
         self._set_combo_value(self.priority_l9_validity, self.cfg.priority_l9_validity)
         self._set_combo_value(self.priority_renfe_validity, self.cfg.priority_renfe_validity)
@@ -1560,6 +1658,7 @@ class MaximoDesktopWindow(QMainWindow):
             or self.priority_tmb_validity.currentData() != self.cfg.priority_tmb_validity
             or self.priority_l9_validity.currentData() != self.cfg.priority_l9_validity
             or self.priority_renfe_validity.currentData() != self.cfg.priority_renfe_validity
+            or self.theme_combo.currentData() != self.cfg.theme
         )
 
     def save_settings(self, show_feedback=True):
@@ -1569,6 +1668,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.cfg.priority_tmb_validity = self.priority_tmb_validity.currentData()
         self.cfg.priority_l9_validity = self.priority_l9_validity.currentData()
         self.cfg.priority_renfe_validity = self.priority_renfe_validity.currentData()
+        self.cfg.theme = self.theme_combo.currentData()
         save_config(self.cfg)
         self.schedule_auto_update()
         self._refresh_auto_update_summary()
@@ -1578,11 +1678,12 @@ class MaximoDesktopWindow(QMainWindow):
         self._refresh_priorities()
         self.refresh_table()
         logging.info(
-            "Configuración UI guardada: auto_update=%s, intervalo=%d, conciliación=%s, lote=%d, averías=%s, lote_averías=%d, prioridad TMB=%s, L9=%s, RENFE=%s.",
+            "Configuración UI guardada: auto_update=%s, intervalo=%d, conciliación=%s, lote=%d, averías=%s, lote_averías=%d, prioridad TMB=%s, L9=%s, RENFE=%s, tema=%s.",
             self.cfg.auto_update_enabled, self.cfg.auto_update_interval_min,
             self.cfg.reconciliation_enabled, self.cfg.reconciliation_batch_size,
             self.cfg.fault_descriptions_enabled, self.cfg.fault_description_batch_size,
             self.cfg.priority_tmb_validity, self.cfg.priority_l9_validity, self.cfg.priority_renfe_validity,
+            self.cfg.theme,
         )
         if show_feedback:
             QMessageBox.information(self, "Configuración", "Configuración guardada correctamente.")
@@ -1770,7 +1871,7 @@ class MaximoDesktopWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Maximo Desktop")
-    app.setStyleSheet(STYLESHEET)
+    apply_application_theme(app, load_config().theme)
     window = MaximoDesktopWindow(); window.show()
     return app.exec()
 

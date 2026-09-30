@@ -37,6 +37,7 @@ class AppConfig:
     priority_tmb_validity: str = "daily"
     priority_l9_validity: str = "daily"
     priority_renfe_validity: str = "weekly"
+    theme: str = "system"
     filters: dict | None = None
     last_status: dict | None = None
     latest_release_tag: str = ""
@@ -66,6 +67,8 @@ class AppConfig:
         ):
             if getattr(self, attribute) not in {"daily", "weekly"}:
                 setattr(self, attribute, default)
+        if self.theme not in {"system", "light", "dark"}:
+            self.theme = "system"
         if self.filters is None:
             self.filters = {"mx38_tfrow_[C:26]_txt-tb": "=LAB-BAD"}
         if not isinstance(self.table_column_widths, dict):
