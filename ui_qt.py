@@ -41,6 +41,7 @@ from updater import enrich_fault_descriptions, reconcile_inactive_tracking, run_
 from search_filters import load_profiles, save_profiles
 from update_checker import UpdateDownloadCancelled, download_release_asset, fetch_latest_release, format_version_tag, is_newer
 from update_installer import distributed_executable, start_update
+from managed_install_qt import ManagedInstallError, redirect_to_managed_install
 from priority_importer import read_priority_files
 from deep_links import parse_ot_uri, register_protocol_handler
 from excel_export import write_workorders_xlsx
@@ -52,7 +53,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=(
         RotatingFileHandler(
-            LOG_DIR / "maximo_client.log", maxBytes=5 * 1024 * 1024,
+            LOG_DIR / "maximo_desktop_ui.log", maxBytes=5 * 1024 * 1024,
             backupCount=3, encoding="utf-8", delay=True,
         ),
         logging.StreamHandler(),
@@ -2531,6 +2532,21 @@ def main():
         theme_preference=startup_theme,
     )
     apply_application_theme(app, startup_theme)
+    activity_message = activity_dialog.findChild(QLabel, "activityMessage")
+
+    def installation_progress(message):
+        if activity_message is not None:
+            activity_message.setText(message)
+            QApplication.processEvents()
+
+    try:
+        if redirect_to_managed_install(installation_progress):
+            activity_dialog.close()
+            return 0
+    except ManagedInstallError as exc:
+        activity_dialog.close()
+        QMessageBox.critical(None, "Instalación de Maximo Desktop", str(exc))
+        return 1
     initial_uri = next((argument for argument in sys.argv[1:] if parse_ot_uri(argument)), "")
     try:
         bridge = LocalOpenBridge(DEVELOPMENT_MODE, initial_uri)
@@ -2551,6 +2567,7 @@ def main():
     except OSError:
         logging.warning("No se pudo registrar el protocolo local de OT.", exc_info=True)
     window.show()
+    logging.info("Ventana Qt abierta. Ejecutable: %s", distributed_executable() or sys.argv[0])
     activity_dialog.close()
     return app.exec()
 

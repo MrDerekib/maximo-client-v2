@@ -25,7 +25,17 @@ consultar releases, pero no instalar paquetes sobre el entorno de desarrollo.
 El ZIP se guarda en una carpeta de caché reutilizada para evitar acumular una
 copia completa en cada intento.
 
+En la primera ejecución de un paquete Qt, la app copia la distribución completa
+a `%LOCALAPPDATA%\MaximoDesktop\app`, crea el acceso directo y abre esa copia.
+Si ya existe una instalación gestionada, compara las versiones del ejecutable;
+solo sustituye una versión anterior y avisa si el paquete es más antiguo. La
+copia se prepara antes de cambiar la carpeta instalada y se conserva la versión
+previa. Los datos siguen en las
+carpetas persistentes, fuera de `app`. El arranque Qt registra su actividad en
+`logs/maximo_desktop_ui.log`, separado del historial de Tkinter.
+
 Antes de publicar queda validar el ciclo real entre dos versiones empaquetadas
-con la entrada Qt, incluida la copia y el reinicio, y revisar la primera
-instalación por usuario. Estas pruebas no se sustituyen por las pruebas unitarias
-del flujo. La adaptación del script de build se abordará después.
+con la entrada Qt, incluida la primera instalación, la copia y el reinicio.
+Estas pruebas no se sustituyen por las pruebas unitarias del flujo. La adaptación
+del script de build se abordará después. Esa build deberá llevar un número
+superior al de la última versión Tkinter instalada (`0.9.9.4`).
