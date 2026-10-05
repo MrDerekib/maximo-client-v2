@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Maximo Desktop - Parte de reparación",
+  "version": "0.1.0",
+  "description": "Abre el parte de reparación de la OT visible y su vista de impresión.",
+  "permissions": ["storage", "scripting", "downloads"],
+  "host_permissions": ["https://eam.indraweb.net/maximo/*"],
+  "background": { "service_worker": "service_worker.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://eam.indraweb.net/maximo/*"],
+      "js": ["workflow_logic.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

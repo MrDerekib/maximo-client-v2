@@ -38,6 +38,7 @@ def init_db():
         _migrate_sync_status(conn)
         _migrate_reconciliation_status(conn)
         _migrate_fault_descriptions(conn)
+        _migrate_detailed_descriptions(conn)
         _migrate_priorities(conn)
     finally:
         conn.close()
@@ -121,6 +122,104 @@ def _migrate_fault_descriptions(conn):
         conn.execute("ALTER TABLE maximo ADD COLUMN Ultimo_intento_averia TEXT")
     conn.execute("INSERT INTO client_migrations (name) VALUES (?)", (migration,))
     conn.commit()
+
+
+def _migrate_detailed_descriptions(conn):
+    """Stores the full, optional long description separately from the fault."""
+    conn.execute("CREATE TABLE IF NOT EXISTS client_migrations (name TEXT PRIMARY KEY)")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(maximo)")}
+    for name in ("Descripcion_detallada_texto", "Descripcion_detallada_html",
+                 "Ultima_lectura_detallada", "Ultimo_intento_detallada"):
+        if name not in columns:
+            conn.execute(f"ALTER TABLE maximo ADD COLUMN {name} TEXT")
+    conn.execute("INSERT OR IGNORE INTO client_migrations (name) VALUES ('detailed_descriptions_v1')")
+    conn.commit()
+
+
+def detailed_description_candidates(limit: int | None = 5,
+                                    minimum_age_hours: int | None = 24) -> List[str]:
+    """Active OTs not yet checked, retrying failures when the new queue empties."""
+    conn = get_connection()
+    try:
+        base = "SELECT OT FROM maximo WHERE Activo = 1 AND Ultima_lectura_detallada IS NULL"
+        query = base
+        params = []
+        if minimum_age_hours is not None:
+            cutoff = (datetime.now() - timedelta(hours=minimum_age_hours)).isoformat(timespec="seconds")
+            query += " AND (Ultimo_intento_detallada IS NULL OR Ultimo_intento_detallada < ?)"
+            params.append(cutoff)
+        order = " ORDER BY COALESCE(Ultimo_intento_detallada, ''), OT"
+        query += order
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        rows = conn.execute(query, params).fetchall()
+        if rows or minimum_age_hours is None:
+            return [row[0] for row in rows]
+        fallback = base + order + (" LIMIT ?" if limit is not None else "")
+        return [row[0] for row in conn.execute(fallback, (limit,) if limit is not None else ()).fetchall()]
+    finally:
+        conn.close()
+
+
+def detailed_description_candidate_count(minimum_age_hours: int | None = 24) -> int:
+    return len(detailed_description_candidates(limit=None, minimum_age_hours=minimum_age_hours))
+
+
+def apply_detailed_description(ot: str, text: str, safe_html: str,
+                               read_at: str | None = None) -> bool:
+    """An empty long description is a successful read, not a perpetual retry."""
+    read_at = read_at or datetime.now().isoformat(timespec="seconds")
+    text = (text or "").strip()
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """UPDATE maximo SET Descripcion_detallada_texto = ?, Descripcion_detallada_html = ?,
+               Ultima_lectura_detallada = ?, Ultimo_intento_detallada = ?
+               WHERE OT = ? AND Activo = 1 AND Ultima_lectura_detallada IS NULL""",
+            (text, safe_html if text else "", read_at, read_at, ot),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def mark_detailed_description_attempt(ot: str, attempted_at: str | None = None) -> bool:
+    attempted_at = attempted_at or datetime.now().isoformat(timespec="seconds")
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """UPDATE maximo SET Ultimo_intento_detallada = ?
+               WHERE OT = ? AND Activo = 1 AND Ultima_lectura_detallada IS NULL""",
+            (attempted_at, ot),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def get_detailed_description(ot: str) -> tuple[str, str]:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT Descripcion_detallada_texto, Descripcion_detallada_html FROM maximo WHERE OT = ?",
+            (str(ot).strip(),),
+        ).fetchone()
+        return (row[0] or "", row[1] or "") if row else ("", "")
+    finally:
+        conn.close()
+
+
+def enrichment_candidate_count(include_fault: bool, include_detail: bool,
+                               minimum_age_hours: int | None = 24) -> int:
+    ots = set()
+    if include_fault:
+        ots.update(fault_description_candidates(limit=None, minimum_age_hours=minimum_age_hours))
+    if include_detail:
+        ots.update(detailed_description_candidates(limit=None, minimum_age_hours=minimum_age_hours))
+    return len(ots)
 
 
 def _migrate_priorities(conn):
@@ -478,7 +577,7 @@ def mark_fault_description_attempt(ot: str, attempted_at: str | None = None) -> 
 
 
 def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], advanced=None,
-               include_sync: bool = False, include_fault: bool = False) -> List[Tuple]:
+               include_sync: bool = False, include_fault: bool = False, include_detail: bool = False) -> List[Tuple]:
     from search_filters import validate_filters
     advanced = validate_filters(advanced or {})
     if search_by not in ("OT", "Nº_de_serie", "Descripción"):
@@ -489,6 +588,8 @@ def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], a
         if include_sync else "OT, Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo, Seguimiento, Planta"
     if include_fault:
         columns += ", Descripcion_averia"
+    if include_detail:
+        columns += ", CASE WHEN COALESCE(Descripcion_detallada_texto, '') <> '' THEN 1 ELSE 0 END"
     query = "SELECT " + columns + " FROM maximo"
     params = []
 

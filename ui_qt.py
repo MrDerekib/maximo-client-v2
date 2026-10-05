@@ -17,28 +17,33 @@ from pathlib import Path
 
 from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
     QDialog, QDialogButtonBox, QCompleter, QDateEdit, QFileDialog, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
-    QProgressDialog, QSizePolicy, QSpinBox, QStackedWidget, QStatusBar, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QWidgetAction,
+    QProgressBar, QProgressDialog, QSizePolicy, QSpinBox, QStackedWidget, QStatusBar, QTableWidget, QTableWidgetItem,
+    QTextBrowser, QStyle, QVBoxLayout, QWidget, QWidgetAction,
 )
 
-from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR, PROFILES_PATH
+from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DEVELOPMENT_MODE, DOWNLOAD_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR, PROFILES_PATH, UPDATE_CACHE_DIR
 from config import AppConfig, credentials_configured, load_config, save_config
 from db import (
     clear_current_priority_snapshot, current_priority_ots, current_priority_snapshots,
     delete_all_inactive_records, delete_inactive_record, fetch_data, filter_choices,
-    fault_description_candidate_count, inactive_tracking_candidate_count, init_db, update_seguimiento,
+    fault_description_candidate_count, detailed_description_candidate_count,
+    enrichment_candidate_count, get_detailed_description, inactive_tracking_candidate_count, init_db,
     replace_priority_snapshot, update_priority_expiration,
 )
-from maximo_client import cleanup_edge_profile, open_ot, verify_credentials
+from maximo_client import REPAIR_REPORT_STATUSES, cleanup_edge_profile, open_ot, verify_credentials
 from updater import enrich_fault_descriptions, reconcile_inactive_tracking, run_update
 from search_filters import load_profiles, save_profiles
-from update_checker import fetch_latest_release, format_version_tag, is_newer
+from update_checker import UpdateDownloadCancelled, download_release_asset, fetch_latest_release, format_version_tag, is_newer
+from update_installer import distributed_executable, start_update
 from priority_importer import read_priority_files
+from deep_links import parse_ot_uri, register_protocol_handler
+from excel_export import write_workorders_xlsx
 import version
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -63,6 +68,7 @@ STYLESHEET = """
 QMainWindow { background: #f5f7fb; color: #172033; }
 QDialog { background: #f5f7fb; color: #172033; }
 QDialog QLabel, QDialog QCheckBox { color: #172033; }
+QLabel { color: #172033; }
 QFrame#sidebar { background: #102a43; }
 QLabel#brand { color: white; font-size: 20px; font-weight: 700; }
 QLabel#subtitle { color: #9fb3c8; font-size: 11px; }
@@ -196,6 +202,87 @@ def apply_application_theme(app, preference: str) -> str:
     return ACTIVE_THEME
 
 
+def show_activity_dialog(message: str, parent=None, theme_preference=None):
+    """Muestra un diálogo compacto de actividad con los colores del tema activo."""
+    theme = _resolve_theme(theme_preference) if theme_preference is not None else ACTIVE_THEME
+    colors = THEME_PALETTES[theme]
+    dialog = QDialog(parent)
+    dialog.setWindowFlags(
+        Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+    )
+    dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    dialog.setFixedWidth(390)
+
+    card = QFrame(dialog)
+    card.setObjectName("activityCard")
+    card_layout = QHBoxLayout(card)
+    card_layout.setContentsMargins(18, 16, 18, 14)
+    card_layout.setSpacing(12)
+
+    icon_label = QLabel()
+    icon_path = Path(__file__).resolve().parent / "icon.ico"
+    if icon_path.exists():
+        icon_label.setPixmap(QIcon(str(icon_path)).pixmap(QSize(32, 32)))
+    else:
+        icon_label.setText("✿")
+    icon_label.setFixedSize(32, 32)
+    card_layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignTop)
+
+    content = QVBoxLayout()
+    content.setContentsMargins(0, 0, 0, 0)
+    content.setSpacing(5)
+    title = QLabel("Maximo Desktop")
+    title.setObjectName("activityTitle")
+    status = QLabel(message)
+    status.setObjectName("activityMessage")
+    status.setWordWrap(True)
+    content.addWidget(title)
+    content.addWidget(status)
+
+    progress = QProgressBar()
+    progress.setRange(0, 0)
+    progress.setTextVisible(False)
+    progress.setFixedHeight(5)
+    content.addSpacing(3)
+    content.addWidget(progress)
+    card_layout.addLayout(content, 1)
+
+    dialog_layout = QVBoxLayout(dialog)
+    dialog_layout.setContentsMargins(1, 1, 1, 1)
+    dialog_layout.addWidget(card)
+    dialog.setStyleSheet(f"""
+        QFrame#activityCard {{
+            background: {colors['surface']};
+            border: 1px solid {colors['border']};
+            border-radius: 10px;
+        }}
+        QLabel#activityTitle {{
+            background: transparent; border: none; color: {colors['heading']};
+            font-size: 13px; font-weight: 700;
+        }}
+        QLabel#activityMessage {{
+            background: transparent; border: none; color: {colors['text']};
+            font-size: 11px;
+        }}
+        QProgressBar {{
+            border: none; border-radius: 2px; background: {colors['subtle']};
+        }}
+        QProgressBar::chunk {{
+            border-radius: 2px; background: {colors['accent']};
+        }}
+    """)
+    dialog.adjustSize()
+    if parent is not None:
+        center = parent.mapToGlobal(parent.rect().center())
+    else:
+        screen = QApplication.primaryScreen()
+        center = screen.availableGeometry().center() if screen else QPointF(0, 0).toPoint()
+    dialog.move(center - dialog.rect().center())
+    dialog.show()
+    QApplication.processEvents()
+    return dialog
+
+
 class TaskSignals(QObject):
     completed = Signal(object)
     failed = Signal(str)
@@ -213,6 +300,68 @@ class BackgroundTask(QRunnable):
         except Exception as exc:  # El detalle completo queda en el log.
             logging.exception("Tarea de interfaz fallida")
             self.signals.failed.emit(str(exc))
+
+
+class LocalOpenBridge(QObject):
+    """Forwarda enlaces de Excel a la ventana ya abierta del mismo entorno."""
+    uri_received = Signal(str)
+    activate_requested = Signal()
+
+    def __init__(self, development=False, initial_uri=""):
+        super().__init__()
+        suffix = "-dev" if development else ""
+        self.server_name = f"MaximoDesktop{suffix}"
+        self.server = None
+        self.is_primary = False
+        self._buffers = {}
+
+        client = QLocalSocket()
+        client.connectToServer(self.server_name)
+        if client.waitForConnected(500):
+            payload = initial_uri or "__MAXIMODESK_ACTIVATE__"
+            client.write((payload + "\n").encode("utf-8"))
+            client.waitForBytesWritten(500)
+            client.disconnectFromServer()
+            return
+
+        self.server = QLocalServer(self)
+        self.server.newConnection.connect(self._accept_connections)
+        if not self.server.listen(self.server_name):
+            # Si no hay una instancia que responda, puede quedar un nombre de
+            # socket obsoleto tras un cierre forzado. Limpiarlo y reintentar.
+            QLocalServer.removeServer(self.server_name)
+            if not self.server.listen(self.server_name):
+                raise RuntimeError(f"No se pudo iniciar el puente local: {self.server.errorString()}")
+        self.is_primary = True
+        if initial_uri:
+            QTimer.singleShot(0, lambda value=initial_uri: self.uri_received.emit(value))
+
+    def _accept_connections(self):
+        while self.server and self.server.hasPendingConnections():
+            socket = self.server.nextPendingConnection()
+            self._buffers[socket] = bytearray()
+            socket.readyRead.connect(lambda client=socket: self._read_request(client))
+            socket.disconnected.connect(lambda client=socket: self._forget_client(client))
+            socket.disconnected.connect(socket.deleteLater)
+            if socket.bytesAvailable():
+                self._read_request(socket)
+
+    def _read_request(self, socket):
+        buffer = self._buffers.setdefault(socket, bytearray())
+        buffer.extend(bytes(socket.readAll()))
+        if b"\n" not in buffer:
+            return
+        raw_payload, _, remaining = buffer.partition(b"\n")
+        self._buffers[socket] = bytearray(remaining)
+        payload = raw_payload.decode("utf-8", errors="replace").strip()
+        if payload == "__MAXIMODESK_ACTIVATE__":
+            self.activate_requested.emit()
+            return
+        if parse_ot_uri(payload):
+            self.uri_received.emit(payload)
+
+    def _forget_client(self, socket):
+        self._buffers.pop(socket, None)
 
 
 def _draw_chevron(painter: QPainter, center_x: float, center_y: float, up: bool) -> None:
@@ -539,6 +688,8 @@ class MaximoDesktopWindow(QMainWindow):
     max_column_widths = (180, 140, 600, 240, 160, 220, 220, 240, 160, 1200, 700)
     close_progress = Signal(str)
     close_finished = Signal()
+    app_download_progress = Signal(int, int)
+    app_download_status = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -546,10 +697,18 @@ class MaximoDesktopWindow(QMainWindow):
         self.update_lock = threading.Lock()
         self.reconcile_lock = threading.Lock()
         self.fault_description_lock = threading.Lock()
+        self.enrichment_cancel_event = threading.Event()
         self.pool = QThreadPool.globalInstance()
         self._running_tasks = set()
+        self._tasks_idle = threading.Event()
+        self._tasks_idle.set()
         self._latest_release = None
         self._app_update_checking = False
+        self._app_update_downloading = False
+        self._app_update_cancel = threading.Event()
+        self._pending_update = None
+        self._ready_update = None
+        self._prompted_release_tags = set()
         self.ot_sessions = []
         self.profiles = {}
         self.profiles_error = None
@@ -567,6 +726,8 @@ class MaximoDesktopWindow(QMainWindow):
         self.auto_timer.timeout.connect(lambda: self.update_now(automatic=True))
         self.close_progress.connect(self._set_close_progress)
         self.close_finished.connect(self._finish_close)
+        self.app_download_progress.connect(self._set_app_download_progress)
+        self.app_download_status.connect(self._set_app_download_status)
         self.setWindowTitle(f"Maximo Desktop · UI Preview · v{version.APP_VERSION}")
         self.setMinimumSize(1150, 700)
         self.resize(1500, 900)
@@ -583,8 +744,8 @@ class MaximoDesktopWindow(QMainWindow):
         self._restore_column_widths()
         QTimer.singleShot(0, self._fit_columns_to_viewport)
         self.schedule_auto_update()
-        # No bloquea la apertura ni muestra avisos intrusivos: actualiza el
-        # estado persistente de Configuración cuando la red esté disponible.
+        # La consulta no bloquea el inicio; si hay una versión nueva, ofrece
+        # instalarla una sola vez por sesión.
         QTimer.singleShot(1200, lambda: self.check_app_updates(automatic=True))
 
     def _build_ui(self):
@@ -729,7 +890,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.priority_only_button = QPushButton("▲  Solo prioritarias")
         self.priority_only_button.setCheckable(True)
         self.priority_only_button.setVisible(False)
-        self.priority_only_button.toggled.connect(self.refresh_table)
+        self.priority_only_button.toggled.connect(self._toggle_priority_filter)
         toolbar.addWidget(self.priority_only_button, 1, 5)
         toolbar.setColumnStretch(1, 1)
         search_layout.addLayout(toolbar)
@@ -739,15 +900,21 @@ class MaximoDesktopWindow(QMainWindow):
 
         outer.addWidget(search_card)
 
+        results_row = QHBoxLayout()
         self.result_label = QLabel(objectName="resultLabel")
-        outer.addWidget(self.result_label)
+        self.export_button = QPushButton("Exportar a Excel")
+        self.export_button.clicked.connect(self.export_current_list)
+        results_row.addWidget(self.result_label)
+        results_row.addStretch()
+        results_row.addWidget(self.export_button)
+        outer.addLayout(results_row)
         self.table = QTableWidget(0, len(self.columns))
         self.table.setHorizontalHeaderLabels(self.columns)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.setSortingEnabled(True)
-        self.table.cellDoubleClicked.connect(lambda row, _col: self.open_ot_for_row(row))
+        self.table.cellDoubleClicked.connect(self.open_table_cell)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         header = self.table.horizontalHeader()
@@ -930,12 +1097,17 @@ class MaximoDesktopWindow(QMainWindow):
         self.app_last_check_label = QLabel()
         self.app_update_status_label = QLabel()
         self.app_update_status_label.setObjectName("filterHint")
+        self.app_update_status_label.setWordWrap(True)
         self.check_app_updates_button = QPushButton("Buscar actualizaciones")
         self.check_app_updates_button.clicked.connect(lambda: self.check_app_updates(automatic=False))
         self.open_release_button = QPushButton("Abrir release")
         self.open_release_button.clicked.connect(self.open_latest_release)
+        self.install_update_button = QPushButton("Actualizar ahora")
+        self.install_update_button.setObjectName("primary")
+        self.install_update_button.clicked.connect(self.install_latest_release)
         update_actions = QHBoxLayout()
         update_actions.addWidget(self.check_app_updates_button)
+        update_actions.addWidget(self.install_update_button)
         update_actions.addWidget(self.open_release_button)
         update_actions.addStretch()
         update_form.addRow("Versión instalada", self.app_version_label)
@@ -956,6 +1128,25 @@ class MaximoDesktopWindow(QMainWindow):
         appearance_form.addRow("Tema", self.theme_combo)
         appearance_form.addRow("", theme_hint)
 
+        self.repair_card = QGroupBox("Partes de reparación")
+        repair_form = QFormLayout(self.repair_card)
+        self.repair_extension_check = QCheckBox("Mostrar «Imprimir parte» en Edge")
+        self.repair_mode_combo = DecoratedComboBox()
+        self.repair_mode_combo.addItem("Mostrar diálogo de impresión", "dialog")
+        self.repair_mode_combo.addItem("Imprimir directamente", "direct")
+        self.repair_hint = QLabel(
+            "El modo directo usa la impresora predeterminada de Windows. "
+            "Se aplica a todas las impresiones de esa ventana de Edge. "
+            "Los cambios afectan a las nuevas ventanas de OT."
+        )
+        self.repair_hint.setObjectName("filterHint")
+        self.repair_hint.setWordWrap(True)
+        repair_form.addRow("", self.repair_extension_check)
+        repair_form.addRow("Al pulsar Imprimir parte", self.repair_mode_combo)
+        repair_form.addRow("", self.repair_hint)
+        self.repair_extension_check.toggled.connect(self.repair_mode_combo.setEnabled)
+
+
         self.maintenance_card = QGroupBox("Mantenimiento")
         mform = QFormLayout(self.maintenance_card)
         self.reconcile_check = QCheckBox("Actualizar estados de OT no activas en segundo plano")
@@ -974,14 +1165,25 @@ class MaximoDesktopWindow(QMainWindow):
         fault_form = QFormLayout(self.fault_descriptions_card)
         self.fault_descriptions_check = QCheckBox("Obtener y mostrar descripción de avería")
         self.fault_descriptions_check.toggled.connect(self._update_fault_description_controls)
+        self.detailed_descriptions_check = QCheckBox("Obtener descripciones detalladas de OT")
+        self.detailed_descriptions_check.toggled.connect(self._update_fault_description_controls)
         self.fault_batch_spin = DecoratedSpinBox(); self.fault_batch_spin.setRange(1, 100); self.fault_batch_spin.setSuffix(" OT")
         self.fault_pending_label = QLabel(); self.fault_pending_label.setObjectName("filterHint")
-        self.fault_run_button = QPushButton("Completar descripciones pendientes ahora")
+        self.fault_run_button = QPushButton("Completar información pendiente ahora")
         self.fault_run_button.clicked.connect(self.start_priority_fault_descriptions)
+        self.fault_cancel_button = QPushButton("Cancelar lectura")
+        self.fault_cancel_button.setEnabled(False)
+        self.fault_cancel_button.clicked.connect(self.cancel_fault_descriptions)
         fault_form.addRow("", self.fault_descriptions_check)
+        fault_form.addRow("", self.detailed_descriptions_check)
         fault_form.addRow("Tamaño de lote", self.fault_batch_spin)
-        fault_form.addRow("Pendientes", self.fault_pending_label)
-        fault_form.addRow(self.fault_run_button)
+        fault_form.addRow("Pendientes de avería", self.fault_pending_label)
+        self.detail_pending_label = QLabel(objectName="filterHint")
+        fault_form.addRow("Pendientes de detalle", self.detail_pending_label)
+        fault_actions = QHBoxLayout()
+        fault_actions.addWidget(self.fault_run_button, 1)
+        fault_actions.addWidget(self.fault_cancel_button)
+        fault_form.addRow(fault_actions)
 
         self.priorities_card = QGroupBox("Prioridades locales")
         priority_form = QFormLayout(self.priorities_card)
@@ -1074,7 +1276,7 @@ class MaximoDesktopWindow(QMainWindow):
         if not force and wide == self._settings_wide:
             return
         self._settings_wide = wide
-        for card in (self.access_card, self.app_updates_card, self.maintenance_card, self.fault_descriptions_card, self.priorities_card, self.appearance_card, self.paths_card):
+        for card in (self.access_card, self.app_updates_card, self.maintenance_card, self.fault_descriptions_card, self.priorities_card, self.appearance_card, self.repair_card, self.paths_card):
             self.settings_grid.removeWidget(card)
         if wide:
             self.settings_grid.addWidget(self.access_card, 0, 0, Qt.AlignTop)
@@ -1083,7 +1285,8 @@ class MaximoDesktopWindow(QMainWindow):
             self.settings_grid.addWidget(self.fault_descriptions_card, 1, 1, Qt.AlignTop)
             self.settings_grid.addWidget(self.priorities_card, 2, 0, Qt.AlignTop)
             self.settings_grid.addWidget(self.appearance_card, 2, 1, Qt.AlignTop)
-            self.settings_grid.addWidget(self.paths_card, 3, 0, 1, 2, Qt.AlignTop)
+            self.settings_grid.addWidget(self.repair_card, 3, 0, 1, 2, Qt.AlignTop)
+            self.settings_grid.addWidget(self.paths_card, 4, 0, 1, 2, Qt.AlignTop)
             self.settings_grid.setColumnStretch(0, 3)
             self.settings_grid.setColumnStretch(1, 2)
         else:
@@ -1093,7 +1296,8 @@ class MaximoDesktopWindow(QMainWindow):
             self.settings_grid.addWidget(self.fault_descriptions_card, 3, 0)
             self.settings_grid.addWidget(self.priorities_card, 4, 0)
             self.settings_grid.addWidget(self.appearance_card, 5, 0)
-            self.settings_grid.addWidget(self.paths_card, 6, 0)
+            self.settings_grid.addWidget(self.repair_card, 6, 0)
+            self.settings_grid.addWidget(self.paths_card, 7, 0)
             self.settings_grid.setColumnStretch(0, 1)
             self.settings_grid.setColumnStretch(1, 0)
 
@@ -1105,9 +1309,17 @@ class MaximoDesktopWindow(QMainWindow):
     def preview_theme(self):
         """Muestra el tema elegido antes de confirmar el resto de ajustes."""
         preference = self.theme_combo.currentData()
-        self._effective_theme = apply_application_theme(QApplication.instance(), preference)
-        self.client_combo.refresh_theme()
-        self.refresh_table()
+        activity = show_activity_dialog(
+            "Aplicando el esquema de colores…",
+            self,
+            theme_preference=preference,
+        )
+        try:
+            self._effective_theme = apply_application_theme(QApplication.instance(), preference)
+            self.client_combo.refresh_theme()
+            self.refresh_table()
+        finally:
+            activity.close()
 
     def _refresh_priorities(self):
         """Actualiza el resumen y la gestión de fotos locales de prioridad."""
@@ -1168,7 +1380,7 @@ class MaximoDesktopWindow(QMainWindow):
             QMessageBox.critical(self, "Importar prioridades", f"No se pudieron guardar las prioridades: {exc}")
             return
         self._refresh_priorities()
-        self.refresh_table()
+        self._refresh_priority_indicators()
         detail = "\n".join(f"• {plan['project']}: {len(plan['items'])} OT hasta {plan['expires_on']}" for plan in plans)
         QMessageBox.information(self, "Prioridades importadas", f"Se sustituyó la foto local de los informes seleccionados.\n\n{detail}")
         self.status.showMessage("Prioridades locales importadas.", 5000)
@@ -1183,7 +1395,7 @@ class MaximoDesktopWindow(QMainWindow):
             return
         update_priority_expiration(snapshot["project"], expires_on)
         self._refresh_priorities()
-        self.refresh_table()
+        self._refresh_priority_indicators()
         self.status.showMessage(f"Vigencia de {snapshot['project']} actualizada.", 4000)
 
     def clear_priority_snapshot(self):
@@ -1195,7 +1407,7 @@ class MaximoDesktopWindow(QMainWindow):
             return
         clear_current_priority_snapshot(project)
         self._refresh_priorities()
-        self.refresh_table()
+        self._refresh_priority_indicators()
         self.status.showMessage(f"Prioridades de {project} retiradas.", 4000)
 
     def _toggle_path_details(self, visible):
@@ -1331,7 +1543,7 @@ class MaximoDesktopWindow(QMainWindow):
 
     def refresh_table(self):
         try:
-            rows = fetch_data(self.search_edit.text(), self.search_field(), "Todos", self.effective_advanced_filters(), include_sync=True, include_fault=True)
+            rows = fetch_data(self.search_edit.text(), self.search_field(), "Todos", self.effective_advanced_filters(), include_sync=True, include_fault=True, include_detail=True)
         except ValueError as exc:
             QMessageBox.warning(self, "Filtros", str(exc)); return
         priority_ots = current_priority_ots()
@@ -1340,15 +1552,16 @@ class MaximoDesktopWindow(QMainWindow):
             self.priority_only_button.blockSignals(True)
             self.priority_only_button.setChecked(False)
             self.priority_only_button.blockSignals(False)
-        if self.priority_only_button.isChecked():
-            rows = [raw for raw in rows if raw[0] == 1 and str(raw[2] or "") in priority_ots]
+        self._priority_ots = priority_ots
         def ot_sort_key(row):
             value = str(row[2] or "").strip()
             return (0, int(value)) if value.isdigit() else (1, value)
         rows.sort(key=ot_sort_key, reverse=True)
         self.table.setSortingEnabled(False); self.table.setRowCount(0)
+        detail_column = self.columns.index("Avería" if self.cfg.fault_descriptions_enabled else "Descripción")
         for raw in rows:
             active, last_seen, *data = raw
+            has_detail = bool(data.pop())
             fault_description = data.pop()
             is_priority = active == 1 and str(raw[2] or "") in priority_ots
             status = "▲ Prioridad · ✓ Activo en Maximo" if is_priority else "✓ Activo en Maximo" if active == 1 else "× No activo en Maximo" if active == 0 else "? Estado desconocido"
@@ -1359,13 +1572,72 @@ class MaximoDesktopWindow(QMainWindow):
             for column, value in enumerate(row):
                 item = QTableWidgetItem(str(value or "")); item.setData(Qt.UserRole, raw[2])
                 item.setForeground(QColor(ACTIVE_COLORS["text"] if active == 1 else ACTIVE_COLORS["inactive"]))
+                if column == detail_column and has_detail and self.cfg.detailed_descriptions_enabled:
+                    item.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxInformation))
+                    item.setToolTip("Descripción detallada disponible. Doble clic para verla.")
                 if column == 0:
                     item.setToolTip("Prioridad: marcada en el informe local vigente y todavía activa en Maximo.\n\nActivo en Maximo: aparece en el listado de reparaciones y recibe actualizaciones.\nNo activo en Maximo: ya no aparece en ese listado y no recibe nuevas actualizaciones.")
                     item.setForeground(QColor(ACTIVE_COLORS["priority"] if is_priority else ACTIVE_COLORS["success"] if active == 1 else ACTIVE_COLORS["inactive"]))
+                    item.setData(Qt.UserRole + 1, is_priority)
+                    item.setData(Qt.UserRole + 2, active)
                 self.table.setItem(index, column, item)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
         self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
+        self._apply_priority_filter()
+        self._update_list_summary()
+
+    def _toggle_priority_filter(self, _checked):
+        """Shows or hides existing table rows without querying SQLite or rebuilding cells."""
+        self._apply_priority_filter()
+        self._update_list_summary()
+
+    def _apply_priority_filter(self):
+        checked = self.priority_only_button.isChecked()
+        self.table.setUpdatesEnabled(False)
+        try:
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                self.table.setRowHidden(row, checked and not bool(item and item.data(Qt.UserRole + 1)))
+        finally:
+            self.table.setUpdatesEnabled(True)
+        self.table.viewport().update()
+
+    def _refresh_priority_indicators(self):
+        """Refreshes priority markers and visibility after local priority changes."""
+        priority_ots = current_priority_ots()
+        self._priority_ots = priority_ots
+        self.priority_only_button.setVisible(bool(priority_ots))
+        if not priority_ots and self.priority_only_button.isChecked():
+            self.priority_only_button.blockSignals(True)
+            self.priority_only_button.setChecked(False)
+            self.priority_only_button.blockSignals(False)
+        sorting_enabled = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
+        self.table.setUpdatesEnabled(False)
+        try:
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                if item is None:
+                    continue
+                active = item.data(Qt.UserRole + 2)
+                ot = self.table.item(row, 1).text() if self.table.item(row, 1) else ""
+                is_priority = active == 1 and ot in priority_ots
+                item.setData(Qt.UserRole + 1, is_priority)
+                item.setText("▲ Prioridad · ✓ Activo en Maximo" if is_priority else
+                             "✓ Activo en Maximo" if active == 1 else
+                             "× No activo en Maximo" if active == 0 else "? Estado desconocido")
+                item.setForeground(QColor(
+                    ACTIVE_COLORS["priority"] if is_priority else
+                    ACTIVE_COLORS["success"] if active == 1 else ACTIVE_COLORS["inactive"]
+                ))
+        finally:
+            self.table.setUpdatesEnabled(True)
+            self.table.setSortingEnabled(sorting_enabled)
+        self._apply_priority_filter()
+        self._update_list_summary()
+
+    def _update_list_summary(self):
         summary = self.active_filter_summary()
         if self.priority_only_button.isChecked():
             summary.append("Solo prioritarias")
@@ -1374,7 +1646,9 @@ class MaximoDesktopWindow(QMainWindow):
         advanced_count = sum(bool(value) for value in self.advanced_state.values())
         self.filter_button.setText(f"☷  Filtros ({advanced_count})" if advanced_count else "☷  Filtros")
         self.clear_button.setVisible(bool(summary))
-        self.result_label.setText(f"{len(rows):,} resultados · {'Filtros aplicados' if summary else 'Sin filtros'}")
+        visible_count = sum(not self.table.isRowHidden(row) for row in range(self.table.rowCount()))
+        self.result_label.setText(f"{visible_count:,} resultados · {'Filtros aplicados' if summary else 'Sin filtros'}")
+        self.export_button.setEnabled(visible_count > 0)
 
     def clear_filters(self):
         self.search_edit.clear()
@@ -1395,17 +1669,23 @@ class MaximoDesktopWindow(QMainWindow):
         menu = QMenu(self); menu.addAction("Copiar valor", lambda: QApplication.clipboard().setText(self.table.currentItem().text()))
         menu.addAction("Copiar OT", lambda: QApplication.clipboard().setText(ot))
         menu.addAction("Copiar número de serie", lambda: QApplication.clipboard().setText(self.table.item(row, 3).text()))
-        menu.addSeparator(); menu.addAction("Abrir OT en Maximo", lambda: self.open_ot_for_row(row))
-        tracking = menu.addMenu("Cambiar seguimiento")
-        try: values = [line.strip() for line in (Path(__file__).resolve().parent / "seguimiento_options.txt").read_text(encoding="utf-8").splitlines() if line.strip()]
-        except OSError: values = []
-        for value in values: tracking.addAction(value, lambda new=value: self.change_tracking(ot, new))
+        menu.addSeparator()
+        if self.cfg.detailed_descriptions_enabled and get_detailed_description(ot)[0]:
+            menu.addAction("Ver descripción detallada", lambda: self.show_detailed_description(ot))
+        menu.addAction("Abrir OT en Maximo", lambda: self.open_ot_for_row(row))
+        tracking = self.table.item(row, 7).text().strip().upper()
+        report_enabled = tracking in REPAIR_REPORT_STATUSES
+        print_action = menu.addAction("Imprimir parte…", lambda: self.open_repair_report(ot, "print"))
+        pdf_action = menu.addAction("Guardar parte en PDF…", lambda: self.open_repair_report(ot, "pdf"))
+        print_action.setEnabled(report_enabled)
+        pdf_action.setEnabled(report_enabled)
+        if not report_enabled:
+            reason = f"No disponible en el estado «{tracking or 'desconocido'}». Actualiza Maximo cuando la OT pase a ISSUE/DAR SALIDA o CLOSE."
+            print_action.setToolTip(reason)
+            pdf_action.setToolTip(reason)
         if self.table.item(row, 0).text() == "○ No activo":
             menu.addAction("Eliminar registro local…", lambda: self.delete_inactive(ot))
         menu.exec(self.table.viewport().mapToGlobal(position))
-
-    def change_tracking(self, ot, value):
-        update_seguimiento(ot, value); self.refresh_table(); self._refresh_reconciliation_summary(); self.status.showMessage(f"OT {ot}: seguimiento actualizado a {value}.", 5000)
 
     def delete_inactive(self, ot):
         if QMessageBox.question(self, "Eliminar registro", f"¿Eliminar la OT no activa {ot} de la base local?") == QMessageBox.Yes:
@@ -1425,18 +1705,26 @@ class MaximoDesktopWindow(QMainWindow):
         """
         task = BackgroundTask(function)
         self._running_tasks.add(task)
+        self._tasks_idle.clear()
 
         def on_completed(result):
             try:
                 completed(result)
             finally:
                 self._running_tasks.discard(task)
+                if not self._running_tasks:
+                    self._tasks_idle.set()
 
         def on_failed(error):
             try:
-                (failed or (lambda message: QMessageBox.critical(self, "Error", message)))(error)
+                if failed:
+                    failed(error)
+                elif not self._closing:
+                    QMessageBox.critical(self, "Error", error)
             finally:
                 self._running_tasks.discard(task)
+                if not self._running_tasks:
+                    self._tasks_idle.set()
 
         task.signals.completed.connect(on_completed)
         task.signals.failed.connect(on_failed)
@@ -1449,7 +1737,7 @@ class MaximoDesktopWindow(QMainWindow):
         return False
 
     def update_now(self, automatic=False):
-        if not self._credentials_ready() or not self.update_lock.acquire(False): return
+        if self._closing or not self._credentials_ready() or not self.update_lock.acquire(False): return
         self.status.showMessage("Actualizando listado desde Maximo…" if not automatic else "Actualización automática en curso…")
         def done(result):
             self.update_lock.release(); new, changed = result; self.refresh_choices(); self.refresh_table(); self._refresh_reconciliation_summary()
@@ -1457,15 +1745,24 @@ class MaximoDesktopWindow(QMainWindow):
                 f"Última sincronización de Maximo ({datetime.now().strftime('%H:%M')}): "
                 f"completada · {new} nuevas, {changed} actualizadas"
             )
+            if self._closing:
+                self.status.showMessage(sync_summary)
+                return
             self.status.showMessage(sync_summary + " · Conciliación en segundo plano…")
             self.start_background_reconcile(
                 sync_summary,
                 after=lambda summary: self.start_background_fault_descriptions(summary),
             )
-        def failed(error): self.update_lock.release(); QMessageBox.critical(self, "Actualización", f"No se pudo actualizar:\n{error}"); self.status.showMessage("La actualización falló.")
+        def failed(error):
+            self.update_lock.release()
+            if not self._closing:
+                QMessageBox.critical(self, "Actualización", f"No se pudo actualizar:\n{error}")
+            self.status.showMessage("La actualización falló.")
         self._start_task(lambda: run_update(headless=True), done, failed)
 
     def start_background_reconcile(self, sync_summary=None, after=None):
+        if self._closing:
+            return
         if not self.cfg.reconciliation_enabled:
             if after:
                 after(sync_summary)
@@ -1501,6 +1798,12 @@ class MaximoDesktopWindow(QMainWindow):
         if not hasattr(self, "fault_pending_label"):
             return
         pending = fault_description_candidate_count()
+        detail_pending = detailed_description_candidate_count()
+        self.detail_pending_label.setText(
+            f"{detail_pending} OT activas pendientes de comprobar."
+            if self.cfg.detailed_descriptions_enabled else
+            f"Desactivado. {detail_pending} OT activas pendientes."
+        )
         if self.cfg.fault_descriptions_enabled:
             self.fault_pending_label.setText(f"{pending} OT activas pendientes de completar.")
         else:
@@ -1520,49 +1823,69 @@ class MaximoDesktopWindow(QMainWindow):
             )
 
     def _update_fault_description_controls(self):
-        enabled = self.fault_descriptions_check.isChecked()
+        enabled = self.fault_descriptions_check.isChecked() or self.detailed_descriptions_check.isChecked()
         self.fault_batch_spin.setEnabled(enabled)
         self.fault_run_button.setEnabled(enabled)
         if hasattr(self, "table"):
-            self.table.setColumnHidden(self.columns.index("Avería"), not enabled)
+            self.table.setColumnHidden(self.columns.index("Avería"), not self.fault_descriptions_check.isChecked())
             QTimer.singleShot(0, self._fit_columns_to_viewport)
+
+    def cancel_fault_descriptions(self):
+        if self.fault_description_lock.locked():
+            self.enrichment_cancel_event.set()
+            self.fault_cancel_button.setEnabled(False)
+            self.status.showMessage("Cancelando lectura de OT…")
 
     def start_background_fault_descriptions(self, sync_summary=None):
         """Enriquece en segundo plano solo las OT activas sin avería local."""
-        if not self.cfg.fault_descriptions_enabled or not self.update_lock.acquire(False):
+        if self._closing:
+            return
+        if not (self.cfg.fault_descriptions_enabled or self.cfg.detailed_descriptions_enabled) or not self.update_lock.acquire(False):
             return
         if not self.fault_description_lock.acquire(False):
             self.update_lock.release()
             return
+        self.enrichment_cancel_event.clear()
+        self.fault_cancel_button.setEnabled(True)
         batch = self.cfg.fault_description_batch_size
         if sync_summary:
-            self.status.showMessage(sync_summary + " · Completando averías en segundo plano…")
+            self.status.showMessage(sync_summary + " · Completando información de OT en segundo plano…")
         else:
-            self.status.showMessage(f"Completando hasta {batch} descripciones de avería…")
+            self.status.showMessage(f"Completando información de hasta {batch} OT…")
 
         def done(completed):
+            cancelled = self.enrichment_cancel_event.is_set()
+            self.fault_cancel_button.setEnabled(False)
             self.fault_description_lock.release(); self.update_lock.release()
             self.refresh_table(); self._refresh_fault_description_summary()
-            detail = "Averías: sin pendientes nuevas" if not completed else f"Averías: {completed} descripciones completadas"
+            detail = (f"Lectura cancelada: {completed} campos guardados" if cancelled else
+                      "Información ampliada: sin pendientes nuevas" if not completed else
+                      f"Información ampliada: {completed} campos completados")
             self.status.showMessage(f"{sync_summary} · {detail}" if sync_summary else detail)
 
         def failed(error):
+            self.fault_cancel_button.setEnabled(False)
             self.fault_description_lock.release(); self.update_lock.release()
             logging.warning("Enriquecimiento de averías falló: %s", error)
             self._refresh_fault_description_summary()
-            self.status.showMessage(f"{sync_summary} · Averías: error; consulta el log." if sync_summary else "No se pudieron completar las averías; consulta el log.")
+            self.status.showMessage(f"{sync_summary} · Información ampliada: error; consulta el log." if sync_summary else "No se pudo completar la información de OT; consulta el log.")
 
-        self._start_task(lambda: enrich_fault_descriptions(limit=batch), done, failed)
+        self._start_task(lambda: enrich_fault_descriptions(
+            limit=batch, include_fault=self.cfg.fault_descriptions_enabled,
+            include_detail=self.cfg.detailed_descriptions_enabled,
+            cancel_event=self.enrichment_cancel_event), done, failed)
 
     def start_priority_fault_descriptions(self):
         if not self._credentials_ready():
             return
-        count = fault_description_candidate_count(minimum_age_hours=None)
+        count = enrichment_candidate_count(
+            self.cfg.fault_descriptions_enabled, self.cfg.detailed_descriptions_enabled,
+            minimum_age_hours=None)
         if not count:
-            QMessageBox.information(self, "Información ampliada", "No hay descripciones de avería pendientes.")
+            QMessageBox.information(self, "Información ampliada", "No hay información ampliada pendiente.")
             return
         if QMessageBox.question(
-            self, "Completar averías", f"Se revisarán {count} OT activas. La operación puede tardar varios minutos.\n\n¿Continuar?",
+            self, "Completar información", f"Se revisarán {count} OT activas. La operación puede tardar varios minutos.\n\n¿Continuar?",
         ) != QMessageBox.Yes:
             return
         if not self.update_lock.acquire(False):
@@ -1570,23 +1893,35 @@ class MaximoDesktopWindow(QMainWindow):
             return
         if not self.fault_description_lock.acquire(False):
             self.update_lock.release()
-            QMessageBox.information(self, "Información ampliada", "Ya hay una lectura de averías en curso.")
+            QMessageBox.information(self, "Información ampliada", "Ya hay una lectura de información ampliada en curso.")
             return
-        self.status.showMessage(f"Completando {count} descripciones de avería…")
+        self.enrichment_cancel_event.clear()
+        self.fault_cancel_button.setEnabled(True)
+        self.status.showMessage(f"Completando información de {count} OT…")
 
         def done(completed):
+            cancelled = self.enrichment_cancel_event.is_set()
+            self.fault_cancel_button.setEnabled(False)
             self.fault_description_lock.release(); self.update_lock.release()
             self.refresh_table(); self._refresh_fault_description_summary()
-            self.status.showMessage(f"Averías completadas: {completed} OT.", 7000)
-            QMessageBox.information(self, "Información ampliada", f"Lectura completada. Descripciones obtenidas: {completed}.")
+            if cancelled:
+                self.status.showMessage(f"Lectura cancelada: {completed} campos guardados.", 7000)
+            else:
+                self.status.showMessage(f"Información ampliada: {completed} campos leídos.", 7000)
+                QMessageBox.information(self, "Información ampliada", f"Lectura completada. Campos obtenidos: {completed}.")
 
         def failed(error):
+            self.fault_cancel_button.setEnabled(False)
             self.fault_description_lock.release(); self.update_lock.release()
             self._refresh_fault_description_summary()
-            self.status.showMessage("La lectura de averías falló; consulta el detalle.", 7000)
-            QMessageBox.critical(self, "Información ampliada", error)
+            self.status.showMessage("La lectura de información ampliada falló; consulta el detalle.", 7000)
+            if not self._closing:
+                QMessageBox.critical(self, "Información ampliada", error)
 
-        self._start_task(lambda: enrich_fault_descriptions(limit=None, minimum_age_hours=None), done, failed)
+        self._start_task(lambda: enrich_fault_descriptions(
+            limit=None, minimum_age_hours=None, include_fault=self.cfg.fault_descriptions_enabled,
+            include_detail=self.cfg.detailed_descriptions_enabled,
+            cancel_event=self.enrichment_cancel_event), done, failed)
 
     def start_priority_reconcile(self):
         if not self._credentials_ready(): return
@@ -1600,29 +1935,144 @@ class MaximoDesktopWindow(QMainWindow):
         def done(changed):
             self.reconcile_lock.release(); self.update_lock.release(); self.refresh_table(); self._refresh_reconciliation_summary()
             self.status.showMessage(f"Revisión prioritaria completada: {changed} seguimientos actualizados.", 7000)
-            QMessageBox.information(self, "Mantenimiento", f"Revisión completada. Seguimientos actualizados: {changed}.")
+            if not self._closing:
+                QMessageBox.information(self, "Mantenimiento", f"Revisión completada. Seguimientos actualizados: {changed}.")
         def failed(error):
             self.reconcile_lock.release(); self.update_lock.release()
             self.status.showMessage("La revisión prioritaria falló; consulta el detalle.", 7000)
-            QMessageBox.critical(self, "Mantenimiento", error)
+            if not self._closing:
+                QMessageBox.critical(self, "Mantenimiento", error)
         self._start_task(lambda: reconcile_inactive_tracking(limit=None, minimum_age_hours=None), done, failed)
+
+    def open_table_cell(self, row, column):
+        detail_column = self.columns.index("Avería" if self.cfg.fault_descriptions_enabled else "Descripción")
+        if column == detail_column and self.cfg.detailed_descriptions_enabled:
+            ot = self.selected_ot(row)
+            if get_detailed_description(ot)[0]:
+                self.show_detailed_description(ot)
+                return
+        self.open_ot_for_row(row)
+
+    def show_detailed_description(self, ot):
+        text, safe_html = get_detailed_description(ot)
+        if not text:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"OT {ot} · Descripción detallada")
+        available = self.screen().availableGeometry()
+        dialog.resize(min(1480, available.width() - 80), min(560, available.height() - 80))
+        layout = QVBoxLayout(dialog)
+        viewer = QTextBrowser()
+        viewer.setOpenExternalLinks(False)
+        viewer.setStyleSheet(
+            f"QTextBrowser {{ background: {ACTIVE_COLORS['surface']}; "
+            f"color: {ACTIVE_COLORS['text']}; border: 1px solid {ACTIVE_COLORS['border']}; }}"
+        )
+        viewer.document().setDefaultStyleSheet(f"body {{ color: {ACTIVE_COLORS['text']}; }}")
+        viewer.setHtml(safe_html) if safe_html else viewer.setPlainText(text)
+        layout.addWidget(viewer)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def open_ot_for_row(self, row):
         ot = self.selected_ot(row)
-        if not ot or not self._credentials_ready(): return
+        self.open_ot_number(ot)
+
+    def open_ot_number(self, ot):
+        if self._closing or not ot or not self._credentials_ready(): return
         self.status.showMessage(f"Abriendo OT {ot} en Maximo…")
         def done(session):
             if session: self.ot_sessions.append(session)
             self.status.showMessage(f"OT {ot} abierta en Microsoft Edge.")
         self._start_task(lambda: open_ot(ot, headless=False), done)
 
+    def open_repair_report(self, ot, action):
+        if self._closing or not ot or not self._credentials_ready(): return
+        label = "impresión" if action == "print" else "PDF"
+        self.status.showMessage(f"Abriendo OT {ot} y preparando parte para {label}…")
+        def done(session):
+            if session: self.ot_sessions.append(session)
+            self.status.showMessage(f"OT {ot}: parte en preparación en Microsoft Edge.")
+        self._start_task(lambda: open_ot(ot, headless=False, report_action=action), done)
+
+    def export_current_list(self):
+        if not any(not self.table.isRowHidden(row) for row in range(self.table.rowCount())):
+            QMessageBox.information(self, "Exportar a Excel", "No hay órdenes que exportar.")
+            return
+        suggested = EXPORT_DIR / f"ordenes_trabajo_{date.today():%Y%m%d}.xlsx"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exportar listado a Excel", str(suggested), "Libro de Excel (*.xlsx)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+        header = self.table.horizontalHeader()
+        visible_columns = sorted(
+            (column for column in range(self.table.columnCount()) if not self.table.isColumnHidden(column)),
+            key=header.visualIndex,
+        )
+        headers = [self.table.horizontalHeaderItem(column).text() for column in visible_columns]
+        try:
+            ot_column = headers.index("OT")
+        except ValueError:
+            QMessageBox.critical(self, "Exportar a Excel", "No se encuentra la columna OT en el listado.")
+            return
+        rows = [
+            [self.table.item(row, column).text() if self.table.item(row, column) else "" for column in visible_columns]
+            for row in range(self.table.rowCount()) if not self.table.isRowHidden(row)
+        ]
+        scheme_is_development = DEVELOPMENT_MODE
+        try:
+            count = write_workorders_xlsx(
+                path, headers, rows, ot_column,
+                uri_scheme="maximodesk-dev" if scheme_is_development else "maximodesk",
+            )
+        except PermissionError:
+            QMessageBox.warning(self, "Exportar a Excel", "No se pudo guardar el archivo. Comprueba que no esté abierto en Excel y vuelve a intentarlo.")
+            return
+        except ImportError:
+            QMessageBox.critical(self, "Exportar a Excel", "Falta el componente de Excel. Instala las dependencias de Maximo Desktop y vuelve a abrir la aplicación.")
+            return
+        except Exception as exc:
+            logging.exception("No se pudo exportar el listado a Excel")
+            QMessageBox.critical(self, "Exportar a Excel", f"No se pudo crear el archivo:\n{exc}")
+            return
+        self.status.showMessage(f"Exportadas {count:,} OT a Excel.", 6000)
+        QMessageBox.information(
+            self, "Exportar a Excel",
+            f"Se exportaron {count:,} órdenes a:\n{path}\n\nLa columna OT incluye un enlace para abrirla con Maximo Desktop.",
+        )
+
+    def handle_deep_link(self, uri):
+        ot = parse_ot_uri(uri)
+        if not ot:
+            return
+        self.pages.setCurrentIndex(0)
+        self.nav_buttons[0].setChecked(True)
+        self.open_ot_number(ot)
+
+    def activate_window(self):
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
     def _load_config(self):
         self.user_edit.setText(self.cfg.username); self.password_edit.setText(self.cfg.password)
         self.auto_check.setChecked(self.cfg.auto_update_enabled); self.interval_spin.setValue(self.cfg.auto_update_interval_min)
         self.reconcile_check.setChecked(self.cfg.reconciliation_enabled); self.batch_spin.setValue(self.cfg.reconciliation_batch_size)
         self.fault_descriptions_check.setChecked(self.cfg.fault_descriptions_enabled)
+        self.detailed_descriptions_check.setChecked(self.cfg.detailed_descriptions_enabled)
+        self.repair_extension_check.setChecked(self.cfg.repair_extension_enabled)
+        self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
+        self.repair_mode_combo.setEnabled(self.cfg.repair_extension_enabled)
         self.fault_batch_spin.setValue(self.cfg.fault_description_batch_size)
+        theme_signals_blocked = self.theme_combo.blockSignals(True)
         self._set_combo_value(self.theme_combo, self.cfg.theme)
+        self.theme_combo.blockSignals(theme_signals_blocked)
         self._set_combo_value(self.priority_tmb_validity, self.cfg.priority_tmb_validity)
         self._set_combo_value(self.priority_l9_validity, self.cfg.priority_l9_validity)
         self._set_combo_value(self.priority_renfe_validity, self.cfg.priority_renfe_validity)
@@ -1664,6 +2114,9 @@ class MaximoDesktopWindow(QMainWindow):
             or self.reconcile_check.isChecked() != self.cfg.reconciliation_enabled
             or self.batch_spin.value() != self.cfg.reconciliation_batch_size
             or self.fault_descriptions_check.isChecked() != self.cfg.fault_descriptions_enabled
+            or self.detailed_descriptions_check.isChecked() != self.cfg.detailed_descriptions_enabled
+            or self.repair_extension_check.isChecked() != self.cfg.repair_extension_enabled
+            or self.repair_mode_combo.currentData() != self.cfg.repair_print_mode
             or self.fault_batch_spin.value() != self.cfg.fault_description_batch_size
             or self.priority_tmb_validity.currentData() != self.cfg.priority_tmb_validity
             or self.priority_l9_validity.currentData() != self.cfg.priority_l9_validity
@@ -1674,6 +2127,9 @@ class MaximoDesktopWindow(QMainWindow):
     def save_settings(self, show_feedback=True):
         self.cfg.username = self.user_edit.text().strip(); self.cfg.password = self.password_edit.text(); self.cfg.auto_update_enabled = self.auto_check.isChecked(); self.cfg.auto_update_interval_min = self.interval_spin.value(); self.cfg.reconciliation_enabled = self.reconcile_check.isChecked(); self.cfg.reconciliation_batch_size = self.batch_spin.value()
         self.cfg.fault_descriptions_enabled = self.fault_descriptions_check.isChecked()
+        self.cfg.detailed_descriptions_enabled = self.detailed_descriptions_check.isChecked()
+        self.cfg.repair_extension_enabled = self.repair_extension_check.isChecked()
+        self.cfg.repair_print_mode = self.repair_mode_combo.currentData()
         self.cfg.fault_description_batch_size = self.fault_batch_spin.value()
         self.cfg.priority_tmb_validity = self.priority_tmb_validity.currentData()
         self.cfg.priority_l9_validity = self.priority_l9_validity.currentData()
@@ -1740,10 +2196,25 @@ class MaximoDesktopWindow(QMainWindow):
         self.app_latest_label.setText(format_version_tag(tag) if tag else "—")
         self.app_last_check_label.setText(checked_at or "—")
         self.open_release_button.setEnabled(bool(release_url))
-        self.check_app_updates_button.setEnabled(not self._app_update_checking)
+        self.check_app_updates_button.setEnabled(not self._app_update_checking and not self._app_update_downloading)
+        newer = bool(tag and is_newer(tag, version.APP_VERSION))
+        installable = bool(
+            newer and self._latest_release and self._latest_release.tag == tag
+            and self._latest_release.asset_url and self._latest_release.asset_digest
+            and not DEVELOPMENT_MODE and distributed_executable()
+        )
+        self.install_update_button.setEnabled(
+            installable and not self._app_update_checking and not self._app_update_downloading and not self._closing
+        )
         if message:
             state = message
-        elif tag and is_newer(tag, version.APP_VERSION):
+        elif newer and DEVELOPMENT_MODE:
+            state = f"Hay una versión publicada: {format_version_tag(tag)}. La edición de desarrollo no se actualiza automáticamente."
+        elif newer and not distributed_executable():
+            state = f"Hay una versión publicada: {format_version_tag(tag)}. La instalación requiere la app distribuida."
+        elif newer and not installable:
+            state = f"Hay una versión publicada: {format_version_tag(tag)}. El paquete verificable aún no está disponible."
+        elif newer:
             state = f"Hay una actualización disponible: {format_version_tag(tag)}."
         elif tag:
             state = "La aplicación está actualizada."
@@ -1752,8 +2223,8 @@ class MaximoDesktopWindow(QMainWindow):
         self.app_update_status_label.setText(state)
 
     def check_app_updates(self, automatic=False):
-        """Comprueba releases en segundo plano; no instala nada desde la preview."""
-        if self._app_update_checking:
+        """Busca una release y ofrece instalarla en la edición distribuida."""
+        if self._closing or self._app_update_checking or self._app_update_downloading:
             return
         self._app_update_checking = True
         self._refresh_app_update_block("Comprobando versiones en GitHub…")
@@ -1773,7 +2244,23 @@ class MaximoDesktopWindow(QMainWindow):
                 "Comprobación de versión UI completada: local=%s, remota=%s, nueva=%s.",
                 version.APP_VERSION, latest.tag, newer,
             )
-            if not automatic:
+            installable = self.install_update_button.isEnabled()
+            should_prompt = (
+                installable and not self._closing
+                and (not automatic or latest.tag not in self._prompted_release_tags)
+            )
+            if should_prompt:
+                self._prompted_release_tags.add(latest.tag)
+                answer = QMessageBox.question(
+                    self, "Actualización disponible",
+                    f"Está disponible Maximo Desktop {format_version_tag(latest.tag)}.\n\n"
+                    "¿Descargarla, instalarla y reiniciar la aplicación ahora?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+                )
+                if answer == QMessageBox.Yes:
+                    self.install_latest_release()
+                    return
+            elif not automatic and not self._closing:
                 text = (
                     f"Hay una nueva versión disponible: {format_version_tag(latest.tag)}."
                     if newer else "Ya tienes la versión más reciente disponible."
@@ -1786,11 +2273,113 @@ class MaximoDesktopWindow(QMainWindow):
             detail = "No se pudo comprobar GitHub. Reinténtalo cuando haya conexión."
             self._refresh_app_update_block(detail)
             logging.warning("Comprobación de versión UI no completada: %s", error)
-            if not automatic:
+            if not automatic and not self._closing:
                 QMessageBox.warning(self, "Actualizaciones", f"{detail}\n\n{error}")
                 self.status.showMessage("No se pudo comprobar la versión.", 4000)
 
         self._start_task(self._fetch_latest_release_with_retry, done, failed)
+
+    def _set_app_download_progress(self, downloaded, total):
+        if not hasattr(self, "app_download_dialog") or not self.app_download_dialog:
+            return
+        if total:
+            self.app_download_dialog.setRange(0, 100)
+            self.app_download_dialog.setValue(min(100, int(downloaded * 100 / total)))
+        else:
+            self.app_download_dialog.setRange(0, 0)
+        self.app_download_dialog.setLabelText(f"Descargando actualización… {downloaded / 1048576:.1f} MB")
+
+    def _set_app_download_status(self, message):
+        if hasattr(self, "app_download_dialog") and self.app_download_dialog:
+            self.app_download_dialog.setRange(0, 0)
+            self.app_download_dialog.setLabelText(message)
+
+    def _close_app_download_dialog(self):
+        if hasattr(self, "app_download_dialog") and self.app_download_dialog:
+            # Cerrar el diálogo al completar la descarga no es una cancelación.
+            self.app_download_dialog.blockSignals(True)
+            self.app_download_dialog.close()
+            self.app_download_dialog.deleteLater()
+            self.app_download_dialog = None
+
+    def install_latest_release(self):
+        """Descarga y valida el paquete antes de iniciar el cierre de la UI."""
+        latest = self._latest_release
+        if self._closing or self._app_update_downloading or DEVELOPMENT_MODE or not distributed_executable():
+            return
+        if not latest or not is_newer(latest.tag, version.APP_VERSION) or not latest.asset_url or not latest.asset_digest:
+            QMessageBox.warning(self, "Actualizaciones", "No hay un paquete de actualización verificable disponible.")
+            return
+        if self._ready_update and self._ready_update[0] == latest.tag and self._ready_update[1].is_dir():
+            self._begin_update_close(self._ready_update[1])
+            return
+        self._app_update_downloading = True
+        self._app_update_cancel.clear()
+        self._refresh_app_update_block("Descargando y verificando la actualización…")
+        dialog = QProgressDialog("Preparando descarga…", "Cancelar descarga", 0, 0, self)
+        dialog.setWindowTitle("Actualizando Maximo Desktop")
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.canceled.connect(self._app_update_cancel.set)
+        self.app_download_dialog = dialog
+        dialog.show()
+        destination = UPDATE_CACHE_DIR / "qt-release"
+
+        def download():
+            last_error = None
+            for attempt in range(3):
+                if self._app_update_cancel.is_set():
+                    raise UpdateDownloadCancelled("Descarga cancelada.")
+                try:
+                    return download_release_asset(
+                        latest, destination, progress=self.app_download_progress.emit,
+                        status=self.app_download_status.emit, cancel_event=self._app_update_cancel,
+                    )
+                except UpdateDownloadCancelled:
+                    raise
+                except Exception as exc:
+                    last_error = exc
+                    logging.warning("Descarga de actualización: intento %d/3 falló: %s", attempt + 1, exc)
+                    if attempt < 2 and self._app_update_cancel.wait(attempt + 1):
+                        raise UpdateDownloadCancelled("Descarga cancelada.")
+            raise RuntimeError(f"No se pudo descargar la actualización: {last_error}")
+
+        def done(source):
+            self._app_update_downloading = False
+            self._close_app_download_dialog()
+            self._ready_update = (latest.tag, source)
+            self._refresh_app_update_block("Actualización descargada y verificada; lista para instalar.")
+            if self._app_update_cancel.is_set():
+                if not self._closing:
+                    self.status.showMessage("Actualización preparada. La instalación se ha cancelado.", 5000)
+            elif not self._closing:
+                self._begin_update_close(source)
+
+        def failed(error):
+            self._app_update_downloading = False
+            self._close_app_download_dialog()
+            self._refresh_app_update_block()
+            if self._closing:
+                return
+            if self._app_update_cancel.is_set():
+                self.status.showMessage("Descarga de actualización cancelada.", 5000)
+            else:
+                QMessageBox.warning(self, "Actualizaciones", error)
+
+        self._start_task(download, done, failed)
+
+    def _begin_update_close(self, source):
+        executable = distributed_executable()
+        if not executable:
+            QMessageBox.warning(self, "Actualizaciones", "No se encontró el ejecutable instalado.")
+            return
+        self._pending_update = (executable, source)
+        self.close()
+        if not self._closing:
+            # El usuario decidió seguir trabajando o conservar cambios.
+            self._pending_update = None
+            self._refresh_app_update_block("Actualización preparada. Pulsa «Actualizar ahora» cuando quieras reiniciar.")
 
     def open_latest_release(self):
         url = self.cfg.latest_release_url or ""
@@ -1807,12 +2396,17 @@ class MaximoDesktopWindow(QMainWindow):
             save_config(self.cfg)
             logging.info("Credenciales UI verificadas y guardadas.")
             self.status.showMessage("Credenciales verificadas y guardadas.")
+            if self._closing:
+                return
             QMessageBox.information(
                 self, "Credenciales válidas",
                 "El acceso a Maximo se ha comprobado y las credenciales se han guardado.\n\n"
                 "Los demás cambios de la página siguen pendientes hasta pulsar «Guardar cambios»."
             )
-        def failed(error): self.test_button.setEnabled(True); QMessageBox.critical(self, "No se pudo comprobar el acceso", error)
+        def failed(error):
+            self.test_button.setEnabled(True)
+            if not self._closing:
+                QMessageBox.critical(self, "No se pudo comprobar el acceso", error)
         self._start_task(lambda: verify_credentials(user, password), done, failed)
 
     def open_data_folder(self):
@@ -1827,7 +2421,37 @@ class MaximoDesktopWindow(QMainWindow):
         event.ignore()
         if self._closing:
             return
+        if self.settings_dirty():
+            prompt = QMessageBox(self)
+            prompt.setWindowTitle("Cambios sin guardar")
+            prompt.setText("Hay cambios de configuración pendientes de guardar.")
+            save = prompt.addButton("Guardar y salir", QMessageBox.AcceptRole)
+            discard = prompt.addButton("Salir sin guardar", QMessageBox.DestructiveRole)
+            keep_open = prompt.addButton("Seguir trabajando", QMessageBox.RejectRole)
+            prompt.setDefaultButton(keep_open)
+            prompt.exec()
+            if prompt.clickedButton() is save:
+                self.save_settings(show_feedback=False)
+            elif prompt.clickedButton() is not discard:
+                return
+        if self.ot_sessions:
+            prompt = QMessageBox(self)
+            prompt.setIcon(QMessageBox.Warning)
+            prompt.setWindowTitle("Sesiones de Maximo abiertas")
+            prompt.setText("Maximo Desktop cerrará las ventanas de OT que abrió en Edge.")
+            prompt.setInformativeText(
+                "Si hay cambios sin guardar en alguna OT, vuelve a esa ventana y guárdalos "
+                "antes de salir."
+            )
+            keep_open = prompt.addButton("Seguir trabajando", QMessageBox.RejectRole)
+            close_sessions = prompt.addButton("Cerrar sesiones y salir", QMessageBox.AcceptRole)
+            prompt.setDefaultButton(keep_open)
+            prompt.exec()
+            if prompt.clickedButton() is not close_sessions:
+                return
         self._closing = True
+        self.enrichment_cancel_event.set()
+        self._app_update_cancel.set()
         self._save_window_state()
         self.auto_timer.stop()
         self.close_dialog = QProgressDialog("Preparando cierre ordenado…", None, 0, 0, self)
@@ -1848,10 +2472,16 @@ class MaximoDesktopWindow(QMainWindow):
         labels = (
             (self.update_lock, "Esperando a que termine la actualización de Maximo…"),
             (self.reconcile_lock, "Esperando a que termine la conciliación de OT…"),
-            (self.fault_description_lock, "Esperando a que termine la lectura de averías…"),
+            (self.fault_description_lock, "Cancelando la lectura de información ampliada…"),
         )
-        while pending := [label for lock, label in labels if lock.locked()]:
-            self.close_progress.emit(pending[0])
+        while True:
+            pending = [label for lock, label in labels if lock.locked()]
+            if pending:
+                self.close_progress.emit(pending[0])
+            elif not self._tasks_idle.is_set():
+                self.close_progress.emit("Esperando a que terminen las tareas en segundo plano…")
+            else:
+                break
             time.sleep(0.25)
         sessions = list(self.ot_sessions)
         for index, (driver, profile) in enumerate(sessions, start=1):
@@ -1874,6 +2504,20 @@ class MaximoDesktopWindow(QMainWindow):
         self.close_progress.emit("Cierre completado.")
         if hasattr(self, "close_dialog"):
             self.close_dialog.close()
+        if self._pending_update:
+            executable, source = self._pending_update
+            try:
+                start_update(executable, source)
+            except Exception as exc:
+                logging.exception("No se pudo iniciar el instalador de la actualización")
+                self._pending_update = None
+                self._closing = False
+                self.ot_sessions = []
+                self.enrichment_cancel_event.clear()
+                self.schedule_auto_update()
+                self._refresh_app_update_block("La actualización está descargada, pero no se pudo iniciar la instalación.")
+                QMessageBox.critical(self, "Actualizaciones", f"No se pudo iniciar la instalación:\n\n{exc}")
+                return
         self._close_finalized = True
         self.close()
 
@@ -1881,8 +2525,33 @@ class MaximoDesktopWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Maximo Desktop")
-    apply_application_theme(app, load_config().theme)
-    window = MaximoDesktopWindow(); window.show()
+    startup_theme = load_config().theme
+    activity_dialog = show_activity_dialog(
+        "Iniciando Maximo Desktop…\nCargando datos locales",
+        theme_preference=startup_theme,
+    )
+    apply_application_theme(app, startup_theme)
+    initial_uri = next((argument for argument in sys.argv[1:] if parse_ot_uri(argument)), "")
+    try:
+        bridge = LocalOpenBridge(DEVELOPMENT_MODE, initial_uri)
+    except RuntimeError as exc:
+        activity_dialog.close()
+        QMessageBox.critical(None, "Maximo Desktop", str(exc))
+        return 1
+    if not bridge.is_primary:
+        activity_dialog.close()
+        return 0
+    window = MaximoDesktopWindow()
+    bridge.uri_received.connect(window.handle_deep_link)
+    bridge.activate_requested.connect(window.activate_window)
+    try:
+        registered = register_protocol_handler(DEVELOPMENT_MODE)
+        if registered:
+            logging.info("Protocolo local de OT registrado para el usuario actual.")
+    except OSError:
+        logging.warning("No se pudo registrar el protocolo local de OT.", exc_info=True)
+    window.show()
+    activity_dialog.close()
     return app.exec()
 
 

@@ -3,6 +3,8 @@
 Inicia la rama de diseño con datos aislados de Maximo Desktop.
 #>
 
+param([string]$DeepLink)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -33,4 +35,6 @@ if ($null -ne $stableInstance) {
 }
 
 $env:MAXIMO_DESKTOP_DEV = "1"
-& $python (Join-Path $projectRoot "ui_qt.py")
+$arguments = @((Join-Path $projectRoot "ui_qt.py"))
+if ($DeepLink) { $arguments += $DeepLink }
+& $python @arguments

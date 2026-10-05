@@ -1,5 +1,6 @@
 # maximo_client.py
 import os
+import json
 import time
 import shutil
 import pandas as pd
@@ -7,7 +8,7 @@ import logging
 from pathlib import Path
 from uuid import uuid4
 from config import load_config, get_credentials
-from app_paths import EDGE_PROFILE_DIR, create_unique_directory
+from app_paths import EDGE_PROFILE_DIR, PROGRAM_DIR, create_unique_directory
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -19,6 +20,11 @@ from selenium.common.exceptions import StaleElementReferenceException
 
 PAGE_TIMEOUT = 60
 DOWNLOAD_TIMEOUT = 180
+REPAIR_REPORT_STATUSES = {"ISSUE", "CLOSE", "DAR SALIDA"}
+
+
+class ExportDownloadTimeout(TimeoutException):
+    """Maximo did not deliver a complete XLS in the isolated download folder."""
 
 
 def create_edge_profile(prefix: str) -> str:
@@ -50,14 +56,20 @@ def cleanup_edge_profile(profile_dir: str | Path) -> bool:
     return False
 
 
-def wait_for(driver, condition, description, timeout=PAGE_TIMEOUT):
+def wait_for(driver, condition, description, timeout=PAGE_TIMEOUT, cancel_event=None):
     """Espera solo hasta que se cumple la condición y registra el tiempo real."""
     started = time.monotonic()
+
+    def checked_condition(browser):
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("Lectura de información ampliada cancelada.")
+        return condition(browser)
+
     try:
         return WebDriverWait(
             driver, timeout, poll_frequency=0.25,
             ignored_exceptions=(StaleElementReferenceException,),
-        ).until(condition)
+        ).until(checked_condition)
     except TimeoutException as exc:
         raise TimeoutException(
             f"Tiempo agotado ({timeout}s): {description}"
@@ -66,7 +78,28 @@ def wait_for(driver, condition, description, timeout=PAGE_TIMEOUT):
         logging.info("Espera %s: %.2fs", description, time.monotonic() - started)
 
 
-def setup_driver(headless=True, profile_dir=None, download_dir=None):
+def visible_ot_print_preferences():
+    """Initial print preview choices for each disposable interactive OT profile."""
+    app_state = {
+        "version": 2,
+        "recentDestinations": [],
+        "isColorEnabled": False,
+        "isHeaderFooterEnabled": False,
+    }
+    return {"appState": json.dumps(app_state, separators=(",", ":"))}
+
+
+def default_printer_name() -> str:
+    """Read the Windows default without changing system printer settings."""
+    try:
+        from PySide6.QtPrintSupport import QPrinterInfo
+        return QPrinterInfo.defaultPrinterName().strip()
+    except Exception:
+        logging.warning("No se pudo consultar la impresora predeterminada", exc_info=True)
+        return ""
+
+
+def setup_driver(headless=True, profile_dir=None, download_dir=None, force_repair_extension=False):
     cfg = load_config()
     logging.info("Inicializando Edge...")
 
@@ -85,15 +118,30 @@ def setup_driver(headless=True, profile_dir=None, download_dir=None):
             f"Usando perfil temporal por defecto: {profile_dir}"
         )
     options.add_argument(f"--user-data-dir={profile_dir}")
+    if not headless and (force_repair_extension or getattr(cfg, "repair_extension_enabled", False)):
+        extension = PROGRAM_DIR / "browser_extension"
+        if not (extension / "manifest.json").is_file():
+            raise FileNotFoundError(f"No se encuentra la extensión del parte: {extension}")
+        options.add_argument(f"--load-extension={extension}")
+        if getattr(cfg, "repair_print_mode", "dialog") == "direct":
+            printer = default_printer_name()
+            if printer:
+                options.add_argument("--kiosk-printing")
+                logging.info("Impresión directa del parte: impresora predeterminada %s", printer)
+            else:
+                logging.warning("No hay impresora predeterminada; se mostrará el diálogo de impresión")
 
     # Descarga por defecto
     target_dir = Path(download_dir or cfg.download_dir).resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
-    options.add_experimental_option("prefs", {
+    prefs = {
         "download.default_directory": str(target_dir),
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
-    })
+    }
+    if not headless:
+        prefs["printing.print_preview_sticky_settings"] = visible_ot_print_preferences()
+    options.add_experimental_option("prefs", prefs)
 
     driver = webdriver.Edge(options=options)
     try:
@@ -215,11 +263,11 @@ def read_workorder_status(driver, ot: str) -> str:
     return " ".join((value or "").split())
 
 
-def read_workorder_fault_description(driver, ot: str) -> str:
+def read_workorder_fault_description(driver, ot: str, cancel_event=None) -> str:
     """Busca una OT y devuelve la descripción de avería del campo mx46-tb."""
     search_box = wait_for(
         driver, EC.element_to_be_clickable((By.ID, "quicksearch")),
-        "búsqueda rápida de OT para descripción de avería",
+        "búsqueda rápida de OT para descripción de avería", timeout=20, cancel_event=cancel_event,
     )
     search_box.clear()
     search_box.send_keys(ot)
@@ -233,14 +281,62 @@ def read_workorder_fault_description(driver, ot: str) -> str:
     wait_for(
         driver,
         current_workorder_is_loaded,
-        f"carga de la OT {target_ot} para descripción de avería",
+        f"carga de la OT {target_ot} para descripción de avería", timeout=20, cancel_event=cancel_event,
     )
     fault_field = wait_for(
         driver, EC.visibility_of_element_located((By.ID, "mx46-tb")),
-        f"descripción de avería de la OT {ot}",
+        f"descripción de avería de la OT {ot}", timeout=15, cancel_event=cancel_event,
     )
     value = fault_field.get_attribute("value") or fault_field.text
     return " ".join((value or "").split())
+
+
+def read_workorder_detailed_description(driver, ot: str, already_loaded: bool = False, cancel_event=None) -> tuple[str, str]:
+    """Read the long-description editor without accepting or changing the OT."""
+    if not already_loaded:
+        search_box = wait_for(driver, EC.element_to_be_clickable((By.ID, "quicksearch")),
+                              "búsqueda rápida de OT para descripción detallada", timeout=20,
+                              cancel_event=cancel_event)
+        search_box.clear()
+        search_box.send_keys(str(ot).strip())
+        search_box.send_keys(Keys.RETURN)
+        wait_for(driver, lambda browser: (
+            browser.find_element(By.ID, "mx45-tb").get_attribute("value") or ""
+        ).strip() == str(ot).strip(), f"carga de la OT {ot} para descripción detallada",
+                 timeout=20, cancel_event=cancel_event)
+
+    icons = driver.find_elements(By.ID, "mx45-img2")
+    if not icons or "img_longdescription_on" not in (icons[0].get_attribute("source") or ""):
+        return "", ""
+
+    icons[0].click()
+    try:
+        wait_for(driver, EC.visibility_of_element_located((By.ID, "longdesc_dialog-dialog_inner")),
+                 f"diálogo de descripción detallada de la OT {ot}", timeout=12,
+                 cancel_event=cancel_event)
+        def editor_content(browser):
+            return browser.execute_script("""
+                const frame = document.getElementById('mx253-rte_iframe');
+                const body = frame?.contentDocument?.getElementById('dijitEditorBody');
+                return body ? {text: body.innerText || '', html: body.innerHTML || ''} : false;
+            """)
+        content = wait_for(driver, editor_content, f"contenido detallado de la OT {ot}",
+                           timeout=12, cancel_event=cancel_event)
+        from detailed_description import sanitize_detail_html
+        text = (content["text"] or "").strip()
+        return text, sanitize_detail_html(content["html"]) if text else ""
+    finally:
+        # Cancel closes the read-only editor without sending its contents to Maximo.
+        cancel = driver.find_elements(By.ID, "mx260-pb")
+        if not cancel:
+            raise RuntimeError(
+                f"El diálogo detallado de la OT {ot} quedó incompleto; "
+                "se reiniciará la vista antes de la siguiente OT."
+            )
+        cancel[0].click()
+        wait_for(driver, EC.invisibility_of_element_located((By.ID, "longdesc_dialog-dialog_inner")),
+                 "cierre del diálogo de descripción detallada", timeout=10,
+                 cancel_event=cancel_event)
 
 
 def apply_filter(driver):
@@ -268,13 +364,11 @@ def download_file(driver, download_dir, timeout=DOWNLOAD_TIMEOUT):
     )
     driver.execute_script("arguments[0].click();", download_button)
     observations = {}
+    clicked_at = time.monotonic()
 
     def completed(_):
         files = set(folder.iterdir()) - previous_files
-        # Edge mantiene .crdownload hasta finalizar la descarga.
-        if any(p.suffix.lower() in (".crdownload", ".tmp", ".part") for p in files):
-            observations.clear()
-            return False
+        # A completed XLS can coexist with a stale partial file. Check it first.
         for path in sorted(files):
             if path.suffix.lower() != ".xls" or not path.is_file():
                 continue
@@ -289,9 +383,21 @@ def download_file(driver, download_dir, timeout=DOWNLOAD_TIMEOUT):
                     return str(path)
             except OSError:
                 observations.pop(path, None)
+        if not files and time.monotonic() - clicked_at >= min(60, timeout):
+            raise ExportDownloadTimeout("Maximo no inició la descarga XLS en 60 segundos.")
         return False
 
-    file_path = wait_for(driver, completed, "finalización de la descarga XLS", timeout)
+    try:
+        file_path = wait_for(driver, completed, "finalización de la descarga XLS", timeout)
+    except TimeoutException as exc:
+        state = []
+        for path in sorted(set(folder.iterdir()) - previous_files):
+            try:
+                state.append(f"{path.name} ({path.stat().st_size} bytes)")
+            except OSError:
+                state.append(f"{path.name} (no accesible)")
+        logging.warning("Descarga XLS incompleta; carpeta temporal: %s", ", ".join(state) or "sin archivos")
+        raise ExportDownloadTimeout(str(exc)) from exc
     logging.info("Archivo descargado: %s", file_path)
     return file_path
 
@@ -327,7 +433,7 @@ def process_html_table(file_path):
     return df
 
 
-def open_ot(ot: str, headless: bool = False):
+def open_ot(ot: str, headless: bool = False, report_action: str | None = None):
     """
     Abre Maximo, entra en la aplicación de OT favorita y busca una OT concreta.
 
@@ -336,12 +442,15 @@ def open_ot(ot: str, headless: bool = False):
       La GUI debe conservar la referencia y decidir cuándo cerrar/limpiar.
     - Si headless=True, cerramos y eliminamos el perfil temporal.
     """
+    if report_action not in (None, "print", "pdf") or (report_action and headless):
+        raise ValueError("La acción del parte requiere una ventana visible y un formato válido.")
     profile_dir = create_edge_profile("maximo-ot-")
     logging.info(f"OT {ot}: usando perfil temporal {profile_dir}")
 
     driver = None
     try:
-        driver = setup_driver(headless=headless, profile_dir=profile_dir)
+        options = {"force_repair_extension": True} if report_action else {}
+        driver = setup_driver(headless=headless, profile_dir=profile_dir, **options)
         login(driver, headless=headless)
         logging.info("Login OK, abriendo aplicación de órdenes de trabajo favoritas...")
 
@@ -365,6 +474,9 @@ def open_ot(ot: str, headless: bool = False):
         search_box.send_keys(Keys.RETURN)
         logging.info(f"OT {ot} enviada a Maximo.")
 
+        if report_action:
+            start_repair_report(driver, ot, report_action)
+
         if headless:
             if driver is not None:
                 driver.quit()
@@ -383,3 +495,34 @@ def open_ot(ot: str, headless: bool = False):
             pass
         cleanup_edge_profile(profile_dir)
         raise
+
+
+def start_repair_report(driver, ot: str, action: str):
+    """Inicia el flujo de la extensión solo cuando la ficha solicitada está lista."""
+    if action not in ("print", "pdf"):
+        raise ValueError("Acción de parte desconocida.")
+
+    wait_for(
+        driver,
+        lambda browser: (
+            element if str((element := browser.find_element(By.ID, "mx45-tb")).get_attribute("value") or "").strip()
+            == str(ot).strip() else False
+        ),
+        f"carga de la OT {ot} para el parte", timeout=45,
+    )
+    status = str(driver.find_element(By.ID, "mx73-tb").get_attribute("value") or "").strip().upper()
+    if status not in REPAIR_REPORT_STATUSES:
+        raise RuntimeError(f"La OT {ot} no admite parte en su estado actual ({status or 'desconocido'}).")
+
+    def ready(browser):
+        try:
+            button = browser.find_element(By.ID, "maximo-desktop-print-part")
+            return button if button.is_displayed() and button.is_enabled() else False
+        except Exception:
+            return False
+
+    button = wait_for(driver, ready, f"botón de parte para la OT {ot}", timeout=20)
+    driver.execute_script(
+        "arguments[0].dataset.maximoReportAction = arguments[1]; arguments[0].click();",
+        button, action,
+    )

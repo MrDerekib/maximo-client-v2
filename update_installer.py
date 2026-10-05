@@ -3,9 +3,19 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from app_paths import LOG_DIR
+
+
+def distributed_executable() -> Path | None:
+    """Distingue el ejecutable instalado del script Python de desarrollo."""
+    try:
+        candidate = Path(sys.argv[0]).resolve()
+    except OSError:
+        return None
+    return candidate if candidate.name.lower() == "maximodesktop.exe" and candidate.is_file() else None
 
 
 def start_update(installed_executable: Path, source_dir: Path) -> None:
