@@ -376,6 +376,12 @@ def _draw_chevron(painter: QPainter, center_x: float, center_y: float, up: bool)
 
 
 class DecoratedComboBox(QComboBox):
+    def wheelEvent(self, event):
+        if self.view().isVisible():
+            super().wheelEvent(event)
+            return
+        event.ignore()
+
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
