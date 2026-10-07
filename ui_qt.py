@@ -19,7 +19,7 @@ from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, QSize, Qt, QThrea
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
+    QApplication, QBoxLayout, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
     QDialog, QDialogButtonBox, QCompleter, QDateEdit, QFileDialog, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
@@ -92,6 +92,7 @@ QLabel#filterChips { color: #1976d2; font-size: 12px; font-weight: 600; }
 QLabel#developmentMode { color: #9fb3c8; padding: 10px; border: 1px solid #486581; border-radius: 8px; }
 QLabel#pageTitle { font-size: 26px; font-weight: 700; color: #102a43; }
 QLabel#pageSubtitle, QLabel#resultLabel { color: #627d98; }
+QLabel#settingsSectionTitle { color: #486581; font-size: 12px; font-weight: 700; padding: 0 2px; }
 QLabel#resultLabel { padding: 5px 2px; }
 QGroupBox { margin-top: 12px; padding: 12px; font-size: 16px; font-weight: 700; color: #334e68; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; color: #102a43; }
@@ -1053,7 +1054,7 @@ class MaximoDesktopWindow(QMainWindow):
         settings_header_host = QWidget()
         settings_header_layout = QHBoxLayout(settings_header_host)
         settings_header_layout.setContentsMargins(0, 0, 0, 0)
-        self.settings_header = self._page_header("Configuración", "Acceso, actualización y mantenimiento de Maximo Desktop.")
+        self.settings_header = self._page_header("Configuración", "Ajustes de la aplicación y de las órdenes de trabajo.")
         self.settings_header.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         settings_header_layout.addStretch(1)
         settings_header_layout.addWidget(self.settings_header)
@@ -1070,10 +1071,19 @@ class MaximoDesktopWindow(QMainWindow):
         content_layout.addWidget(self.settings_center, 0, Qt.AlignTop)
         content_layout.addStretch(1)
         body = QVBoxLayout(self.settings_center); body.setContentsMargins(0, 0, 0, 0); body.setSpacing(0)
-        self.settings_grid = QGridLayout()
-        self.settings_grid.setContentsMargins(0, 0, 0, 0)
-        self.settings_grid.setHorizontalSpacing(16)
-        self.settings_grid.setVerticalSpacing(16)
+        self.settings_columns = QBoxLayout(QBoxLayout.LeftToRight)
+        self.settings_columns.setContentsMargins(0, 0, 0, 0)
+        self.settings_columns.setSpacing(16)
+        self.settings_sections = []
+        for title in ("Aplicación", "Órdenes de trabajo"):
+            column = QWidget()
+            column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            column_layout = QVBoxLayout(column)
+            column_layout.setContentsMargins(0, 0, 0, 0)
+            column_layout.setSpacing(16)
+            column_layout.addWidget(QLabel(title, objectName="settingsSectionTitle"))
+            self.settings_columns.addWidget(column, 1, Qt.AlignTop)
+            self.settings_sections.append(column_layout)
         self._settings_wide = None
 
         self.access_card = QGroupBox("Acceso a Maximo")
@@ -1242,7 +1252,13 @@ class MaximoDesktopWindow(QMainWindow):
         self.path_details.setVisible(False)
         paths_layout.addWidget(self.path_details)
 
-        body.addLayout(self.settings_grid)
+        for card in (self.access_card, self.app_updates_card,
+                     self.appearance_card, self.paths_card):
+            self.settings_sections[0].addWidget(card)
+        for card in (self.maintenance_card, self.fault_descriptions_card,
+                     self.priorities_card, self.repair_card):
+            self.settings_sections[1].addWidget(card)
+        body.addLayout(self.settings_columns)
         body.addStretch()
         save_row = QHBoxLayout()
         save_hint = QLabel("Los cambios de esta página se aplican al guardar.")
@@ -1269,38 +1285,16 @@ class MaximoDesktopWindow(QMainWindow):
             self.settings_header.setFixedWidth(content_width)
         self._arrange_settings_cards()
 
-    def _arrange_settings_cards(self, force=False):
-        """Alterna entre dos columnas legibles y una columna para ventana estrecha."""
-        if not hasattr(self, "settings_grid"):
+    def _arrange_settings_cards(self):
+        """Muestra los grupos en dos columnas o apilados según el ancho."""
+        if not hasattr(self, "settings_columns"):
             return
         wide = self.settings_center.width() >= 980
-        if not force and wide == self._settings_wide:
+        if wide == self._settings_wide:
             return
         self._settings_wide = wide
-        for card in (self.access_card, self.app_updates_card, self.maintenance_card, self.fault_descriptions_card, self.priorities_card, self.appearance_card, self.repair_card, self.paths_card):
-            self.settings_grid.removeWidget(card)
-        if wide:
-            self.settings_grid.addWidget(self.access_card, 0, 0, Qt.AlignTop)
-            self.settings_grid.addWidget(self.app_updates_card, 0, 1, Qt.AlignTop)
-            self.settings_grid.addWidget(self.maintenance_card, 1, 0, Qt.AlignTop)
-            self.settings_grid.addWidget(self.fault_descriptions_card, 1, 1, Qt.AlignTop)
-            self.settings_grid.addWidget(self.priorities_card, 2, 0, Qt.AlignTop)
-            self.settings_grid.addWidget(self.appearance_card, 2, 1, Qt.AlignTop)
-            self.settings_grid.addWidget(self.repair_card, 3, 0, 1, 2, Qt.AlignTop)
-            self.settings_grid.addWidget(self.paths_card, 4, 0, 1, 2, Qt.AlignTop)
-            self.settings_grid.setColumnStretch(0, 3)
-            self.settings_grid.setColumnStretch(1, 2)
-        else:
-            self.settings_grid.addWidget(self.access_card, 0, 0)
-            self.settings_grid.addWidget(self.app_updates_card, 1, 0)
-            self.settings_grid.addWidget(self.maintenance_card, 2, 0)
-            self.settings_grid.addWidget(self.fault_descriptions_card, 3, 0)
-            self.settings_grid.addWidget(self.priorities_card, 4, 0)
-            self.settings_grid.addWidget(self.appearance_card, 5, 0)
-            self.settings_grid.addWidget(self.repair_card, 6, 0)
-            self.settings_grid.addWidget(self.paths_card, 7, 0)
-            self.settings_grid.setColumnStretch(0, 1)
-            self.settings_grid.setColumnStretch(1, 0)
+        direction = QBoxLayout.LeftToRight if wide else QBoxLayout.TopToBottom
+        self.settings_columns.setDirection(direction)
 
     @staticmethod
     def _set_combo_value(combo, value):
