@@ -62,7 +62,7 @@ logging.basicConfig(
 )
 logging.getLogger("selenium").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.info("UI Preview v%s iniciada. Datos: %s", version.APP_VERSION, APP_ROOT)
+logging.info("Maximo Desktop v%s iniciada. Datos: %s", version.APP_VERSION, APP_ROOT)
 
 
 STYLESHEET = """
@@ -753,7 +753,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.close_finished.connect(self._finish_close)
         self.app_download_progress.connect(self._set_app_download_progress)
         self.app_download_status.connect(self._set_app_download_status)
-        self.setWindowTitle(f"Maximo Desktop · UI Preview · v{version.APP_VERSION}")
+        self.setWindowTitle(f"Maximo Desktop · v{version.APP_VERSION}")
         self.setMinimumSize(1150, 700)
         self.resize(1500, 900)
         icon = Path(__file__).resolve().parent / "icon.ico"

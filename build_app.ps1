@@ -12,16 +12,21 @@ Reemplaza la compilación existente de la versión actual.
 [CmdletBinding()]
 param(
     [switch]$Force,
-    [switch]$KeepBuild
+    [switch]$KeepBuild,
+    [string]$PythonPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $projectRoot = $PSScriptRoot
-$python = Join-Path $projectRoot ".venv\Scripts\python.exe"
+$python = if ($PythonPath) {
+    (Resolve-Path -LiteralPath $PythonPath).Path
+} else {
+    Join-Path $projectRoot ".venv\Scripts\python.exe"
+}
 if (-not (Test-Path -LiteralPath $python)) {
-    throw "No se encontró el entorno virtual: $python"
+    throw "No se encontró el intérprete Python indicado: $python"
 }
 
 $version = (& $python -c "from version import APP_VERSION; print(APP_VERSION)").Trim()
@@ -50,13 +55,15 @@ $previousCacheDir = $env:NUITKA_CACHE_DIR
 $env:NUITKA_CACHE_DIR = $cacheDir
 
 $nuitkaArguments = @(
-    "gui_main.py",
+    "ui_qt.py",
     "--standalone",
     "--assume-yes-for-downloads",
-    "--enable-plugin=tk-inter",
+    "--enable-plugin=pyside6",
     "--include-package=lxml",
     "--include-data-file=$projectRoot\icon.ico=icon.ico",
     "--include-data-file=$projectRoot\seguimiento_options.txt=seguimiento_options.txt",
+    "--include-data-dir=$projectRoot\browser_extension=browser_extension",
+    "--include-data-dir=$projectRoot\ui_assets=ui_assets",
     "--windows-icon-from-ico=$projectRoot\icon.ico",
     "--windows-console-mode=disable",
     "--product-name=Maximo Desktop",

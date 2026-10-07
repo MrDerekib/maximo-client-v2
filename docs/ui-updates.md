@@ -34,8 +34,11 @@ previa. Los datos siguen en las
 carpetas persistentes, fuera de `app`. El arranque Qt registra su actividad en
 `logs/maximo_desktop_ui.log`, separado del historial de Tkinter.
 
-Antes de publicar queda validar el ciclo real entre dos versiones empaquetadas
-con la entrada Qt, incluida la primera instalación, la copia y el reinicio.
-Estas pruebas no se sustituyen por las pruebas unitarias del flujo. La adaptación
-del script de build se abordará después. Esa build deberá llevar un número
-superior al de la última versión Tkinter instalada (`0.9.9.4`).
+El script `build_app.ps1` compila la entrada Qt con Nuitka y empaqueta los
+recursos de la extensión y de la interfaz. Para una prueba local se puede pasar
+un intérprete alternativo con `-PythonPath`; en uso normal se emplea `.venv`.
+
+Antes de publicar hay que validar dos paquetes Qt consecutivos en un perfil
+aislado: primera instalación, actualización, cierre y reinicio. Las pruebas
+unitarias no sustituyen ese ciclo real. La versión de lanzamiento V1 es `1.0.0`,
+superior a la última versión Tkinter (`0.9.9.4`).
