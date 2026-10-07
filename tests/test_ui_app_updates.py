@@ -95,3 +95,81 @@ class AppUpdateFlowTests(TestCase):
         self.assertFalse(window._close_finalized)
         self.assertIsNone(window._pending_update)
         error.assert_called_once()
+
+    def test_release_check_retries_transient_errors(self):
+        release = object()
+        with patch("ui_qt.fetch_latest_release", side_effect=[OSError("closed"), release]) as fetch, \
+             patch("ui_qt.time.sleep") as sleep, self.assertLogs(level="INFO"):
+            result = MaximoDesktopWindow._fetch_latest_release_with_retry(SimpleNamespace())
+        self.assertIs(result, release)
+        self.assertEqual(fetch.call_count, 2)
+        sleep.assert_called_once_with(1.0)
+
+    def test_release_check_reports_failure_after_three_attempts(self):
+        with patch("ui_qt.fetch_latest_release", side_effect=OSError("closed")) as fetch, \
+             patch("ui_qt.time.sleep"), self.assertLogs(level="WARNING"):
+            with self.assertRaisesRegex(RuntimeError, "No se pudo consultar GitHub"):
+                MaximoDesktopWindow._fetch_latest_release_with_retry(SimpleNamespace())
+        self.assertEqual(fetch.call_count, 3)
+
+    def update_window(self):
+        return SimpleNamespace(
+            _closing=False, _credentials_ready=Mock(return_value=True),
+            update_lock=threading.Lock(), _start_task=Mock(), status=Mock(),
+            refresh_choices=Mock(), refresh_table=Mock(),
+            _refresh_reconciliation_summary=Mock(), start_background_reconcile=Mock(),
+        )
+
+    def test_running_update_blocks_another_worker(self):
+        window = self.update_window()
+        window.update_lock.acquire()
+        try:
+            MaximoDesktopWindow.update_now(window, automatic=True)
+            window._start_task.assert_not_called()
+        finally:
+            window.update_lock.release()
+
+    def test_update_failure_releases_lock(self):
+        window = self.update_window()
+        MaximoDesktopWindow.update_now(window, automatic=True)
+        failed = window._start_task.call_args.args[2]
+        with patch("ui_qt.QMessageBox.critical"):
+            failed("failed")
+        self.assertFalse(window.update_lock.locked())
+        window.start_background_reconcile.assert_not_called()
+
+    def test_update_success_releases_lock_and_starts_reconciliation(self):
+        window = self.update_window()
+        MaximoDesktopWindow.update_now(window, automatic=True)
+        completed = window._start_task.call_args.args[1]
+        completed((2, 3))
+        self.assertFalse(window.update_lock.locked())
+        window.refresh_table.assert_called_once()
+        window.start_background_reconcile.assert_called_once()
+
+    def test_close_worker_waits_for_tasks_then_closes_sessions_and_profiles(self):
+        events = []
+        idle = threading.Event()
+        lock = threading.Lock()
+        lock.acquire()
+        driver = Mock()
+        driver.quit.side_effect = lambda: events.append("edge_closed")
+        window = SimpleNamespace(
+            update_lock=lock, reconcile_lock=threading.Lock(),
+            fault_description_lock=threading.Lock(), _tasks_idle=idle,
+            ot_sessions=[(driver, "C:/profile")], close_progress=SimpleNamespace(emit=Mock()),
+            close_finished=SimpleNamespace(emit=lambda: events.append("finished")),
+        )
+        def wait(_seconds):
+            self.assertEqual(events, [])
+            if lock.locked():
+                lock.release()
+            else:
+                idle.set()
+        with patch("ui_qt.time.sleep", side_effect=wait), \
+             patch("ui_qt.time.monotonic", side_effect=[0, 1]), \
+             patch("ui_qt.cleanup_edge_profile", side_effect=lambda _path: events.append("profile_removed")) as cleanup:
+            MaximoDesktopWindow._close_worker(window)
+        self.assertTrue(idle.is_set())
+        cleanup.assert_called_once_with("C:/profile")
+        self.assertEqual(events, ["edge_closed", "profile_removed", "finished"])

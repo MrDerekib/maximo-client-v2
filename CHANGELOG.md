@@ -1,5 +1,12 @@
 # Historial de cambios
 
+## Sin publicar — Limpieza del proyecto V1
+
+- Retirados la interfaz, el instalador y las pruebas exclusivos de Tkinter.
+- Eliminadas las opciones de seguimiento manual y sus recursos obsoletos.
+- El entorno de desarrollo utiliza exclusivamente la `.venv` de este proyecto.
+- La build incluye solo los recursos ejecutables de la extensión, sin sus pruebas ni documentación.
+
 ## 1.0.1 — Ajustes para el primer lanzamiento
 
 - El registro de la aplicación se guarda en `maximo_desktop.log`.

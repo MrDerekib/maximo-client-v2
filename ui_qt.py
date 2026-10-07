@@ -1,8 +1,4 @@
-"""Interfaz PySide6 en desarrollo para Maximo Desktop.
-
-La lógica de Maximo y el almacenamiento permanecen en los módulos existentes.
-Este archivo contiene solo la experiencia de escritorio nueva.
-"""
+"""Interfaz de escritorio Qt de Maximo Desktop."""
 from __future__ import annotations
 
 import logging

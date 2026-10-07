@@ -10,8 +10,7 @@ from pathlib import Path
 
 from app_paths import (
     BACKUP_DIR, BASE_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR,
-    DEFAULT_TRACKING_OPTIONS_PATH, EXPORT_DIR, LOG_DIR, PROFILES_PATH,
-    TRACKING_OPTIONS_PATH,
+    EXPORT_DIR, LOG_DIR, PROFILES_PATH,
     create_unique_file, ensure_user_directories,
 )
 from credential_store import load_credentials, save_credentials
@@ -132,11 +131,6 @@ def _copy_if_missing(source: Path, destination: Path) -> None:
         shutil.copy2(source, destination)
 
 
-def _ensure_tracking_options() -> None:
-    """Inicializa las opciones editables para instalaciones nuevas."""
-    _copy_if_missing(DEFAULT_TRACKING_OPTIONS_PATH, TRACKING_OPTIONS_PATH)
-
-
 def _redact_file(path: Path, secrets: tuple[str, ...]) -> None:
     if not path.exists():
         return
@@ -201,7 +195,6 @@ def _migrate_legacy_storage() -> None:
     _copy_database(old_db, DB_PATH)
     _copy_if_missing(old_data / "search_profiles.json", PROFILES_PATH)
     _copy_if_missing(BASE_DIR / "data" / "search_profiles.json", PROFILES_PATH)
-    _copy_if_missing(BASE_DIR / "seguimiento_options.txt", TRACKING_OPTIONS_PATH)
     old_backups = old_data / "backups"
     if old_backups.exists():
         for item in old_backups.glob("*.db"):
@@ -217,7 +210,6 @@ def _migrate_legacy_storage() -> None:
 def load_config() -> AppConfig:
     ensure_user_directories()
     _migrate_legacy_storage()
-    _ensure_tracking_options()
     _sanitize_legacy_artifacts()
     if CONFIG_PATH.exists():
         data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))

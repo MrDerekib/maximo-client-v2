@@ -1,6 +1,4 @@
-import threading
 import json
-import logging
 import shutil
 import unittest
 from pathlib import Path
@@ -13,8 +11,6 @@ from tests.test_support import temporary_directory
 
 import maximo_client as client
 import updater
-with patch("logging.handlers.RotatingFileHandler", return_value=logging.NullHandler()), patch("logging.basicConfig"):
-    import gui_main
 
 
 class AccessTests(unittest.TestCase):
@@ -119,71 +115,6 @@ class AccessTests(unittest.TestCase):
             client.setup_driver(headless=True, profile_dir=str(Path(directory) / "background"))
             background_prefs = launch.call_args.kwargs["options"].experimental_options["prefs"]
             self.assertNotIn("printing.print_preview_sticky_settings", background_prefs)
-
-    def _check_releases(self, results, notify=True):
-        app = SimpleNamespace(cfg=SimpleNamespace(), after=Mock(), _refresh_update_block=Mock())
-        def thread(**kwargs):
-            return SimpleNamespace(start=kwargs["target"])
-        with patch.object(gui_main.threading, "Thread", side_effect=thread), \
-             patch.object(gui_main, "fetch_latest_release", side_effect=results), \
-             patch.object(gui_main, "save_config"), patch.object(gui_main.time, "sleep"), \
-             self.assertLogs(level="INFO") as logs:
-            gui_main.MaximoApp.check_updates(app, notify)
-        return [line for line in logs.output if line.startswith("WARNING")]
-
-    def test_release_retry_success_does_not_warn_of_final_failure(self):
-        release = SimpleNamespace(tag="v0.9.2", html_url="https://example.invalid", checked_at="today")
-        self.assertEqual(self._check_releases([OSError("connection closed"), release]), [])
-
-    def test_release_exhaustion_warns_once_with_actual_attempt_count(self):
-        for notify, count in ((True, 3), (False, 1)):
-            warnings = self._check_releases([OSError("connection closed")] * count, notify)
-            self.assertEqual(len(warnings), 1)
-            self.assertIn(f"tras {count} intento(s)", warnings[0])
-
-    def test_running_update_blocks_another_worker(self):
-        app = SimpleNamespace(
-            _ensure_credentials=Mock(return_value=True),
-            update_lock=threading.Lock(),
-        )
-        app.update_lock.acquire()
-        with patch.object(gui_main.threading, "Thread") as thread:
-            gui_main.MaximoApp.update_now_threaded(app, show_popup=False)
-            thread.assert_not_called()
-        app.update_lock.release()
-
-    def test_worker_releases_lock_after_failure(self):
-        app = SimpleNamespace(update_lock=threading.Lock(), after=Mock())
-        app.update_lock.acquire()
-        with patch.object(gui_main, "run_update", side_effect=RuntimeError("failed")):
-            gui_main.MaximoApp._update_now_worker(app, show_popup=False)
-        self.assertFalse(app.update_lock.locked())
-
-    def test_worker_releases_lock_after_success(self):
-        app = SimpleNamespace(update_lock=threading.Lock(), after=Mock())
-        app.update_lock.acquire()
-        with patch.object(gui_main, "run_update", return_value=(2, 3)):
-            gui_main.MaximoApp._update_now_worker(app, show_popup=False)
-        self.assertFalse(app.update_lock.locked())
-
-    def test_close_worker_closes_visible_sessions_and_profiles(self):
-        driver = Mock()
-        finish = Mock()
-        app = SimpleNamespace(
-            update_lock=threading.Lock(),
-            reconcile_lock=threading.Lock(),
-            credential_test_lock=threading.Lock(),
-            ot_sessions=[(driver, "C:/profile")],
-            _finish_close=finish,
-            after=lambda _delay, callback: callback(),
-        )
-        status = Mock()
-        with patch.object(gui_main, "cleanup_edge_profile") as cleanup, \
-             patch.object(gui_main, "CLOSE_PROGRESS_MIN_SECONDS", 0):
-            gui_main.MaximoApp._close_worker(app, Mock(), status)
-        driver.quit.assert_called_once()
-        cleanup.assert_called_once_with("C:/profile")
-        finish.assert_called_once()
 
     def test_wait_retries_stale_elements(self):
         condition = Mock(side_effect=[StaleElementReferenceException(), "ready"])

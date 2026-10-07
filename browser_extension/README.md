@@ -1,9 +1,9 @@
-# Prototipo: imprimir parte desde Edge
+# Parte de reparación desde Edge
 
-Esta extensión de desarrollo añade «Imprimir parte» a la ficha de una OT en estado
+Esta extensión de Maximo Desktop añade «Imprimir parte» a la ficha de una OT en estado
 `ISSUE` o `CLOSE` de Maximo. Abre «Ejecutar informes» → «Parte de reparación», envía el número
-de OT, selecciona HTML en BIRT y abre la vista de impresión de Edge. El usuario
-revisa impresora, blanco y negro y encabezados/pies antes de pulsar «Imprimir».
+de OT, selecciona HTML en BIRT y abre la vista de impresión de Edge. En modo diálogo, Edge abre la impresión con blanco y negro y sin encabezados
+ni pies; el usuario elige la impresora y confirma «Imprimir».
 El clic de «Ejecutar informes» se hace en el contexto JavaScript de Maximo,
 porque su menú depende de código de la propia página.
 
@@ -30,7 +30,7 @@ usa la impresora predeterminada de Windows y las preferencias de blanco y negro
 sin encabezados; si no hay impresora predeterminada al abrir Edge, se muestra
 el diálogo. El modo directo afecta a cualquier impresión de esa ventana Edge.
 
-El prototipo no modifica la OT. En modo diálogo, requiere confirmar la impresión en Edge. Solo
+La extensión no modifica la OT. En modo diálogo, requiere confirmar la impresión en Edge. Solo
 funciona en `https://eam.indraweb.net/maximo/*`. No almacena credenciales ni URLs
 de informes; conserva durante tres minutos el número de OT en memoria de la
 extensión para asociar las ventanas BIRT con la solicitud.

@@ -1,4 +1,4 @@
-"""Instalación por usuario de la edición Qt, sin cargar la interfaz Tkinter."""
+"""Instalación por usuario de Maximo Desktop con Qt."""
 from __future__ import annotations
 
 import ctypes

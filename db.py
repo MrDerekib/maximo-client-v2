@@ -405,16 +405,6 @@ def update_database_from_df(df):
 
 
 
-def update_seguimiento(ot: str, value: str):
-    value = normalize_filter_value(value)
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("UPDATE maximo SET Seguimiento = ? WHERE OT = ?", (value, ot))
-    conn.commit()
-    conn.close()
-    logging.info(f"BD: Seguimiento actualizado OT={ot} -> {value}")
-
-
 def delete_inactive_record(ot: str) -> bool:
     """Elimina solo una OT que ya no aparece en la última importación."""
     conn = get_connection()
