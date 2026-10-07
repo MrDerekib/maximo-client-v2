@@ -102,9 +102,11 @@ QGroupBox QPushButton { font-size: 12px; font-weight: 600; }
 QLineEdit, QComboBox, QListWidget, QSpinBox, QDateEdit { border: 1px solid #bcccdc; border-radius: 7px; padding: 7px 10px; background: #ffffff; color: #172033; min-height: 18px; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDateEdit:focus { border: 2px solid #2f80ed; }
 QComboBox { padding-right: 36px; }
+QDateEdit { padding-right: 36px; }
 QComboBox:hover, QSpinBox:hover, QDateEdit:hover { border-color: #829ab1; }
-QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 30px; border-left: 1px solid #d9e2ec; background: #f8fafc; border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
-QComboBox::drop-down:hover { background: #e8eef5; }
+QComboBox::drop-down, QDateEdit::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 30px; border-left: 1px solid #d9e2ec; background: #f8fafc; border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
+QComboBox::drop-down:hover, QDateEdit::drop-down:hover { background: #e8eef5; }
+QDateEdit::down-arrow { image: none; }
 QComboBox QAbstractItemView { border: 1px solid #bcccdc; border-radius: 7px; padding: 4px; background: #ffffff; color: #172033; selection-background-color: #dbeafe; selection-color: #102a43; outline: 0; }
 QSpinBox { padding-right: 34px; }
 QSpinBox::up-button, QSpinBox::down-button { subcontrol-origin: border; width: 28px; background: #f8fafc; border-left: 1px solid #d9e2ec; }
@@ -378,6 +380,21 @@ def _draw_chevron(painter: QPainter, center_x: float, center_y: float, up: bool)
 class DecoratedComboBox(QComboBox):
     def wheelEvent(self, event):
         if self.view().isVisible():
+            super().wheelEvent(event)
+            return
+        event.ignore()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor(ACTIVE_COLORS["header_text"]), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        _draw_chevron(painter, self.width() - 15, self.height() / 2, up=False)
+
+
+class DecoratedDateEdit(QDateEdit):
+    def wheelEvent(self, event):
+        if self.calendarWidget().isVisible():
             super().wheelEvent(event)
             return
         event.ignore()
@@ -1216,7 +1233,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.import_priorities_button.clicked.connect(self.import_priorities)
         self.priority_snapshot_combo = DecoratedComboBox()
         self.priority_snapshot_combo.currentIndexChanged.connect(self._priority_snapshot_selected)
-        self.priority_expiry_edit = QDateEdit()
+        self.priority_expiry_edit = DecoratedDateEdit()
         self.priority_expiry_edit.setCalendarPopup(True)
         self.save_priority_expiry_button = QPushButton("Actualizar vigencia")
         self.save_priority_expiry_button.clicked.connect(self.save_priority_expiration)
