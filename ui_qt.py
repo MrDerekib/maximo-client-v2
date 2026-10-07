@@ -53,7 +53,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=(
         RotatingFileHandler(
-            LOG_DIR / "maximo_desktop_ui.log", maxBytes=5 * 1024 * 1024,
+            LOG_DIR / "maximo_desktop.log", maxBytes=5 * 1024 * 1024,
             backupCount=3, encoding="utf-8", delay=True,
         ),
         logging.StreamHandler(),
@@ -824,8 +824,9 @@ class MaximoDesktopWindow(QMainWindow):
         self.delete_profile_button.clicked.connect(self.delete_selected_profile)
         self.delete_profile_button.setEnabled(False)
         box.addWidget(self.delete_profile_button)
-        mode = QLabel("MODO DESARROLLO\nDatos aislados", objectName="developmentMode")
-        box.addWidget(mode)
+        if DEVELOPMENT_MODE:
+            mode = QLabel("MODO DESARROLLO\nDatos aislados", objectName="developmentMode")
+            box.addWidget(mode)
         return sidebar
 
     def _page_header(self, title, description, action=None):

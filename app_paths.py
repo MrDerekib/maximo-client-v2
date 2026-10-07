@@ -1,15 +1,32 @@
 """Rutas persistentes de la aplicación, separadas del código actualizable."""
 import os
+import sys
 from pathlib import Path
 from uuid import uuid4
 
 
 def _program_dir() -> Path:
+    """Find the application directory that contains packaged resources."""
+    candidates = []
     compiled = globals().get("__compiled__")
     containing_dir = getattr(compiled, "containing_dir", None)
     if containing_dir:
-        return Path(containing_dir).resolve()
-    return Path(__file__).resolve().parent
+        candidates.append(Path(containing_dir).resolve())
+
+    # In standalone builds, Nuitka's runtime directory may differ from the
+    # directory beside the executable where --include-data-dir places assets.
+    try:
+        candidates.append(Path(sys.argv[0]).resolve().parent)
+    except (OSError, IndexError):
+        pass
+
+    candidates.append(Path(__file__).resolve().parent)
+    unique_candidates = list(dict.fromkeys(candidates))
+    for candidate in unique_candidates:
+        if (candidate / "browser_extension" / "manifest.json").is_file():
+            return candidate
+
+    return unique_candidates[0]
 
 
 PROGRAM_DIR = _program_dir()

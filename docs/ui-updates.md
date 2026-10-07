@@ -32,7 +32,7 @@ solo sustituye una versión anterior y avisa si el paquete es más antiguo. La
 copia se prepara antes de cambiar la carpeta instalada y se conserva la versión
 previa. Los datos siguen en las
 carpetas persistentes, fuera de `app`. El arranque Qt registra su actividad en
-`logs/maximo_desktop_ui.log`, separado del historial de Tkinter.
+`logs/maximo_desktop.log`, separado del historial de Tkinter.
 
 El script `build_app.ps1` compila la entrada Qt con Nuitka y empaqueta los
 recursos de la extensión y de la interfaz. Para una prueba local se puede pasar
@@ -40,5 +40,5 @@ un intérprete alternativo con `-PythonPath`; en uso normal se emplea `.venv`.
 
 Antes de publicar hay que validar dos paquetes Qt consecutivos en un perfil
 aislado: primera instalación, actualización, cierre y reinicio. Las pruebas
-unitarias no sustituyen ese ciclo real. La versión de lanzamiento V1 es `1.0.0`,
+unitarias no sustituyen ese ciclo real. La versión inicial V1 fue `1.0.0`; este parche la actualiza a `1.0.1`.
 superior a la última versión Tkinter (`0.9.9.4`).
