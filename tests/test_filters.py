@@ -1,6 +1,6 @@
 import sqlite3
 import unittest
-from contextlib import closing
+from contextlib import ExitStack, closing, contextmanager
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -51,7 +51,8 @@ class FilterTests(unittest.TestCase):
             row = conn.execute("SELECT * FROM maximo WHERE OT='5'").fetchone()
         self.assertEqual(row[1:3], ("Radio\u00a0cabina", "A\u00a0B"))
         self.assertEqual(row[4:7], ("TMB SUR", "REP TALLER", "DAR SALIDA"))
-        db.update_seguimiento("5", " EN\u00a0TALLER  ")
+        frame.iloc[0, 6] = " EN\u00a0TALLER  "
+        self.assertEqual(db.update_database_from_df(frame), (0, 1))
         self.assertEqual(self.ids({"tracking": ["EN TALLER"]}), ["1", "3", "5"])
         with closing(sqlite3.connect(self.path)) as conn:
             self.assertEqual(conn.execute("SELECT Seguimiento FROM maximo WHERE OT='5'").fetchone()[0], "EN TALLER")
@@ -204,56 +205,52 @@ class FilterTests(unittest.TestCase):
             save_profiles(path, {"bad": {"search_by": "sql"}})
         self.assertEqual(load_profiles(path), {})
 
-    def test_panel_profile_and_collapsed_summary(self):
-        import tkinter as tk
-        from tkinter import ttk
-        from unittest.mock import Mock
-        import filter_panel
-        root = tk.Tk()
-        root.withdraw()
-        self.addCleanup(root.destroy)
-        root.search_var = tk.StringVar(root)
-        root.search_by = tk.StringVar(root, value="OT")
-        root.client_var = tk.StringVar(root, value="Todos")
-        root.client_combo = ttk.Combobox(root, textvariable=root.client_var)
-        root.update_table = Mock()
-        with patch.object(filter_panel, "PROFILES_PATH", Path(self.temp_path) / "search_profiles.json"):
-            panel = filter_panel.FilterPanel(root, root)
-        panel.pack()
-        panel.profiles = {"TMB pendientes": {"search": "", "search_by": "OT", "client": "TMB",
-                          "advanced": validate_filters({"tracking": ["EN TALLER"]})}}
-        panel.profile.set("TMB pendientes")
-        panel.load_selected()
-        panel.show_result(1, panel.filters())
-        self.assertIn("EN TALLER", panel.summary.get())
-        self.assertIn("1 resultados", panel.summary.get())
-        self.assertFalse(panel.visible)
-        panel.toggle_panel()
-        panel.toggle_panel()
-        self.assertEqual(panel.filters()["tracking"], ["EN TALLER"])
-        panel.clear()
-        self.assertEqual(panel.filters()["tracking"], [])
-        self.assertEqual(root.client_var.get(), "Todos")
-
-    def test_main_window_initialization_and_combined_filter(self):
+    @contextmanager
+    def qt_window(self):
         import logging
+        import os
         from config import AppConfig
-        import filter_panel
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         with patch("logging.handlers.RotatingFileHandler", return_value=logging.NullHandler()), patch("logging.basicConfig"):
-            import gui_main
-        with patch.object(gui_main, "load_config", return_value=AppConfig()), \
-             patch.object(gui_main.threading, "Thread"), \
-            patch.object(filter_panel, "PROFILES_PATH", Path(self.temp_path) / "search_profiles.json"):
-            app = gui_main.MaximoApp()
-            app.withdraw()
+            import ui_qt
+        FilterTests.qt_app = ui_qt.QApplication.instance() or ui_qt.QApplication([])
+        with ExitStack() as patches:
+            patches.enter_context(patch.object(ui_qt, "load_config", return_value=AppConfig()))
+            patches.enter_context(patch.object(ui_qt, "save_config"))
+            patches.enter_context(patch.object(ui_qt, "PROFILES_PATH", Path(self.temp_path) / "profiles.json"))
+            patches.enter_context(patch.object(ui_qt, "DEVELOPMENT_MODE", False))
+            patches.enter_context(patch.object(ui_qt.QTimer, "singleShot"))
+            window = ui_qt.MaximoDesktopWindow()
             try:
-                self.assertEqual(len(app.tree.get_children()), 4)
-                app.client_var.set("TMB")
-                app.filter_panel.refresh_choices({"tracking": ["EN TALLER"]})
-                app.update_table()
-                self.assertEqual(len(app.tree.get_children()), 1)
-                app.filter_panel.toggle_panel()
-                app.update_idletasks()
-                self.assertGreater(app.filter_panel.details.winfo_reqheight(), 100)
+                yield window, ui_qt
             finally:
-                app.destroy()
+                window._close_finalized = True
+                window.close()
+                window.deleteLater()
+
+    def test_qt_window_initialization_and_combined_filter(self):
+        with self.qt_window() as (window, qt):
+            self.assertEqual(window.table.rowCount(), 4)
+            self.assertIsNone(window.findChild(qt.QLabel, "developmentMode"))
+            window.client_combo.set_options(["TMB", "OTRO"], ["TMB"])
+            window.advanced_state["tracking"] = ["EN TALLER"]
+            window.refresh_table()
+            self.assertEqual(window.table.rowCount(), 1)
+            self.assertEqual(window.table.item(0, 1).text(), "1")
+
+    def test_qt_saved_profile_applies_filters_and_can_be_cleared(self):
+        with self.qt_window() as (window, qt):
+            name = "TMB pendientes"
+            profile = {"search": "", "search_by": "OT", "client": "TMB",
+                       "advanced": validate_filters({"tracking": ["EN TALLER"]})}
+            save_profiles(Path(self.temp_path) / "profiles.json", {name: profile})
+            window.refresh_profiles()
+            item = window.profile_list.item(0)
+            self.assertEqual(item.data(qt.Qt.UserRole), name)
+            window.load_selected_profile(item)
+            self.assertEqual(window.table.rowCount(), 1)
+            self.assertIn("EN TALLER", window.filter_chips.text())
+            self.assertEqual(window.current_profile_state()["advanced"]["tracking"], ["EN TALLER"])
+            window.clear_filters()
+            self.assertEqual(window.table.rowCount(), 4)
+            self.assertEqual(window.advanced_state["tracking"], [])

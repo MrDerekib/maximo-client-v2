@@ -1,6 +1,7 @@
 # db.py
 import sqlite3
 import logging
+import json
 from datetime import datetime, timedelta
 from contextlib import closing
 from pathlib import Path
@@ -36,6 +37,9 @@ def init_db():
         _normalize_stored_categories(conn)
         _migrate_sync_status(conn)
         _migrate_reconciliation_status(conn)
+        _migrate_fault_descriptions(conn)
+        _migrate_detailed_descriptions(conn)
+        _migrate_priorities(conn)
     finally:
         conn.close()
 
@@ -103,6 +107,243 @@ def _migrate_reconciliation_status(conn):
     conn.commit()
 
 
+def _migrate_fault_descriptions(conn):
+    """Añade la información ampliada de avería sin alterar los datos base."""
+    migration = "fault_descriptions_v1"
+    conn.execute("CREATE TABLE IF NOT EXISTS client_migrations (name TEXT PRIMARY KEY)")
+    if conn.execute("SELECT 1 FROM client_migrations WHERE name = ?", (migration,)).fetchone():
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(maximo)")}
+    if "Descripcion_averia" not in columns:
+        conn.execute("ALTER TABLE maximo ADD COLUMN Descripcion_averia TEXT")
+    if "Ultima_lectura_averia" not in columns:
+        conn.execute("ALTER TABLE maximo ADD COLUMN Ultima_lectura_averia TEXT")
+    if "Ultimo_intento_averia" not in columns:
+        conn.execute("ALTER TABLE maximo ADD COLUMN Ultimo_intento_averia TEXT")
+    conn.execute("INSERT INTO client_migrations (name) VALUES (?)", (migration,))
+    conn.commit()
+
+
+def _migrate_detailed_descriptions(conn):
+    """Stores the full, optional long description separately from the fault."""
+    conn.execute("CREATE TABLE IF NOT EXISTS client_migrations (name TEXT PRIMARY KEY)")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(maximo)")}
+    for name in ("Descripcion_detallada_texto", "Descripcion_detallada_html",
+                 "Ultima_lectura_detallada", "Ultimo_intento_detallada"):
+        if name not in columns:
+            conn.execute(f"ALTER TABLE maximo ADD COLUMN {name} TEXT")
+    conn.execute("INSERT OR IGNORE INTO client_migrations (name) VALUES ('detailed_descriptions_v1')")
+    conn.commit()
+
+
+def detailed_description_candidates(limit: int | None = 5,
+                                    minimum_age_hours: int | None = 24) -> List[str]:
+    """Active OTs not yet checked, retrying failures when the new queue empties."""
+    conn = get_connection()
+    try:
+        base = "SELECT OT FROM maximo WHERE Activo = 1 AND Ultima_lectura_detallada IS NULL"
+        query = base
+        params = []
+        if minimum_age_hours is not None:
+            cutoff = (datetime.now() - timedelta(hours=minimum_age_hours)).isoformat(timespec="seconds")
+            query += " AND (Ultimo_intento_detallada IS NULL OR Ultimo_intento_detallada < ?)"
+            params.append(cutoff)
+        order = " ORDER BY COALESCE(Ultimo_intento_detallada, ''), OT"
+        query += order
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        rows = conn.execute(query, params).fetchall()
+        if rows or minimum_age_hours is None:
+            return [row[0] for row in rows]
+        fallback = base + order + (" LIMIT ?" if limit is not None else "")
+        return [row[0] for row in conn.execute(fallback, (limit,) if limit is not None else ()).fetchall()]
+    finally:
+        conn.close()
+
+
+def detailed_description_candidate_count(minimum_age_hours: int | None = 24) -> int:
+    return len(detailed_description_candidates(limit=None, minimum_age_hours=minimum_age_hours))
+
+
+def apply_detailed_description(ot: str, text: str, safe_html: str,
+                               read_at: str | None = None) -> bool:
+    """An empty long description is a successful read, not a perpetual retry."""
+    read_at = read_at or datetime.now().isoformat(timespec="seconds")
+    text = (text or "").strip()
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """UPDATE maximo SET Descripcion_detallada_texto = ?, Descripcion_detallada_html = ?,
+               Ultima_lectura_detallada = ?, Ultimo_intento_detallada = ?
+               WHERE OT = ? AND Activo = 1 AND Ultima_lectura_detallada IS NULL""",
+            (text, safe_html if text else "", read_at, read_at, ot),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def mark_detailed_description_attempt(ot: str, attempted_at: str | None = None) -> bool:
+    attempted_at = attempted_at or datetime.now().isoformat(timespec="seconds")
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """UPDATE maximo SET Ultimo_intento_detallada = ?
+               WHERE OT = ? AND Activo = 1 AND Ultima_lectura_detallada IS NULL""",
+            (attempted_at, ot),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def get_detailed_description(ot: str) -> tuple[str, str]:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT Descripcion_detallada_texto, Descripcion_detallada_html FROM maximo WHERE OT = ?",
+            (str(ot).strip(),),
+        ).fetchone()
+        return (row[0] or "", row[1] or "") if row else ("", "")
+    finally:
+        conn.close()
+
+
+def enrichment_candidate_count(include_fault: bool, include_detail: bool,
+                               minimum_age_hours: int | None = 24) -> int:
+    ots = set()
+    if include_fault:
+        ots.update(fault_description_candidates(limit=None, minimum_age_hours=minimum_age_hours))
+    if include_detail:
+        ots.update(detailed_description_candidates(limit=None, minimum_age_hours=minimum_age_hours))
+    return len(ots)
+
+
+def _migrate_priorities(conn):
+    """Guarda las fotos locales de prioridades sin alterar las OT de Maximo."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS priority_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project TEXT NOT NULL,
+            effective_date TEXT NOT NULL,
+            expires_on TEXT NOT NULL,
+            source_report_date TEXT,
+            source_files TEXT NOT NULL,
+            imported_at TEXT NOT NULL,
+            is_current INTEGER NOT NULL DEFAULT 1
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS priority_items (
+            snapshot_id INTEGER NOT NULL,
+            OT TEXT NOT NULL,
+            section TEXT,
+            PRIMARY KEY (snapshot_id, OT),
+            FOREIGN KEY (snapshot_id) REFERENCES priority_snapshots(id) ON DELETE CASCADE
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_priority_current ON priority_snapshots(project, is_current, expires_on)")
+    conn.commit()
+
+
+def replace_priority_snapshot(project: str, effective_date: str, expires_on: str,
+                              source_report_date: str | None, source_files: list[str],
+                              items: list[tuple[str, str | None]]) -> int:
+    """Sustituye la foto vigente de un proyecto y conserva las anteriores."""
+    imported_at = datetime.now().isoformat(timespec="seconds")
+    # La clave de la tabla es OT: una misma OT no debe duplicarse aunque un
+    # informe accidentalmente la incluya en dos líneas.
+    normalized = {}
+    for ot, section in items:
+        ot = str(ot).strip()
+        if ot:
+            normalized.setdefault(ot, section)
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("UPDATE priority_snapshots SET is_current = 0 WHERE project = ? AND is_current = 1", (project,))
+        cur = conn.execute(
+            """INSERT INTO priority_snapshots
+               (project, effective_date, expires_on, source_report_date, source_files, imported_at, is_current)
+               VALUES (?, ?, ?, ?, ?, ?, 1)""",
+            (project, effective_date, expires_on, source_report_date, json.dumps(source_files, ensure_ascii=False), imported_at),
+        )
+        snapshot_id = cur.lastrowid
+        conn.executemany(
+            "INSERT INTO priority_items (snapshot_id, OT, section) VALUES (?, ?, ?)",
+            [(snapshot_id, ot, section) for ot, section in normalized.items()],
+        )
+        conn.commit()
+        return snapshot_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def current_priority_snapshots(today: str | None = None) -> list[dict]:
+    today = today or datetime.now().date().isoformat()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT id, project, effective_date, expires_on, source_report_date, source_files, imported_at
+               FROM priority_snapshots WHERE is_current = 1 ORDER BY project"""
+        ).fetchall()
+        result = []
+        for row in rows:
+            files = json.loads(row[5])
+            result.append({
+                "id": row[0], "project": row[1], "effective_date": row[2], "expires_on": row[3],
+                "source_report_date": row[4], "source_files": files, "imported_at": row[6],
+                "is_current": row[2] <= today <= row[3],
+                "item_count": conn.execute("SELECT COUNT(*) FROM priority_items WHERE snapshot_id = ?", (row[0],)).fetchone()[0],
+            })
+        return result
+    finally:
+        conn.close()
+
+
+def current_priority_ots(today: str | None = None) -> set[str]:
+    today = today or datetime.now().date().isoformat()
+    conn = get_connection()
+    try:
+        return {row[0] for row in conn.execute(
+            """SELECT DISTINCT i.OT FROM priority_items i
+               JOIN priority_snapshots s ON s.id = i.snapshot_id
+               WHERE s.is_current = 1 AND s.effective_date <= ? AND s.expires_on >= ?""",
+            (today, today),
+        )}
+    finally:
+        conn.close()
+
+
+def update_priority_expiration(project: str, expires_on: str) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE priority_snapshots SET expires_on = ? WHERE project = ? AND is_current = 1",
+            (expires_on, project),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def clear_current_priority_snapshot(project: str) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute("UPDATE priority_snapshots SET is_current = 0 WHERE project = ? AND is_current = 1", (project,))
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
 def update_database_from_df(df):
     init_db()  # Incluye la migración antes de importar.
     conn = get_connection()
@@ -162,16 +403,6 @@ def update_database_from_df(df):
     logging.info(f"BD: nuevas entradas={new_entries}, actualizadas={updated_entries}")
     return new_entries, updated_entries
 
-
-
-def update_seguimiento(ot: str, value: str):
-    value = normalize_filter_value(value)
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("UPDATE maximo SET Seguimiento = ? WHERE OT = ?", (value, ot))
-    conn.commit()
-    conn.close()
-    logging.info(f"BD: Seguimiento actualizado OT={ot} -> {value}")
 
 
 def delete_inactive_record(ot: str) -> bool:
@@ -268,8 +499,75 @@ def apply_reconciled_status(ot: str, status: str, checked_at: str | None = None)
         conn.close()
 
 
+def fault_description_candidates(limit: int | None = 5,
+                                 minimum_age_hours: int | None = 24) -> List[str]:
+    """OT activas sin avería; si no quedan nuevas, recupera el reintento más antiguo."""
+    conn = get_connection()
+    try:
+        query = "SELECT OT FROM maximo WHERE Activo = 1 AND Ultima_lectura_averia IS NULL"
+        params = []
+        if minimum_age_hours is not None:
+            cutoff = (datetime.now() - timedelta(hours=minimum_age_hours)).isoformat(timespec="seconds")
+            query += " AND (Ultimo_intento_averia IS NULL OR Ultimo_intento_averia < ?)"
+            params.append(cutoff)
+        query += " ORDER BY COALESCE(Ultimo_intento_averia, ''), OT"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        rows = conn.execute(query, params).fetchall()
+        if rows or minimum_age_hours is None:
+            return [row[0] for row in rows]
+
+        # Si todas las pendientes fallaron hace poco, se reintenta la más
+        # antigua. Así el aplazamiento no deja el proceso sin trabajo.
+        fallback = "SELECT OT FROM maximo WHERE Activo = 1 AND Ultima_lectura_averia IS NULL ORDER BY COALESCE(Ultimo_intento_averia, ''), OT"
+        fallback_params = []
+        if limit is not None:
+            fallback += " LIMIT ?"
+            fallback_params.append(limit)
+        return [row[0] for row in conn.execute(fallback, fallback_params).fetchall()]
+    finally:
+        conn.close()
+
+
+def fault_description_candidate_count(minimum_age_hours: int | None = 24) -> int:
+    return len(fault_description_candidates(limit=None, minimum_age_hours=minimum_age_hours))
+
+
+def apply_fault_description(ot: str, description: str, read_at: str | None = None) -> bool:
+    """Guarda una lectura válida, incluso si Maximo informa una avería vacía."""
+    read_at = read_at or datetime.now().isoformat(timespec="seconds")
+    description = " ".join((description or "").split())
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """UPDATE maximo SET Descripcion_averia = ?, Ultima_lectura_averia = ?, Ultimo_intento_averia = ?
+               WHERE OT = ? AND Activo = 1 AND Ultima_lectura_averia IS NULL""",
+            (description, read_at, read_at, ot),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def mark_fault_description_attempt(ot: str, attempted_at: str | None = None) -> bool:
+    """Evita que una OT que falla bloquee todos los lotes posteriores."""
+    attempted_at = attempted_at or datetime.now().isoformat(timespec="seconds")
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE maximo SET Ultimo_intento_averia = ? WHERE OT = ? AND Activo = 1 AND Ultima_lectura_averia IS NULL",
+            (attempted_at, ot),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
 def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], advanced=None,
-               include_sync: bool = False) -> List[Tuple]:
+               include_sync: bool = False, include_fault: bool = False, include_detail: bool = False) -> List[Tuple]:
     from search_filters import validate_filters
     advanced = validate_filters(advanced or {})
     if search_by not in ("OT", "Nº_de_serie", "Descripción"):
@@ -278,6 +576,10 @@ def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], a
     filter_words = filter_text.strip().split()
     columns = "Activo, Ultima_vez_visto, OT, Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo, Seguimiento, Planta" \
         if include_sync else "OT, Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo, Seguimiento, Planta"
+    if include_fault:
+        columns += ", Descripcion_averia"
+    if include_detail:
+        columns += ", CASE WHEN COALESCE(Descripcion_detallada_texto, '') <> '' THEN 1 ELSE 0 END"
     query = "SELECT " + columns + " FROM maximo"
     params = []
 

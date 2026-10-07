@@ -1,5 +1,4 @@
-import threading
-import logging
+import json
 import shutil
 import unittest
 from pathlib import Path
@@ -12,75 +11,110 @@ from tests.test_support import temporary_directory
 
 import maximo_client as client
 import updater
-with patch("logging.handlers.RotatingFileHandler", return_value=logging.NullHandler()), patch("logging.basicConfig"):
-    import gui_main
 
 
 class AccessTests(unittest.TestCase):
-    def _check_releases(self, results, notify=True):
-        app = SimpleNamespace(cfg=SimpleNamespace(), after=Mock(), _refresh_update_block=Mock())
-        def thread(**kwargs):
-            return SimpleNamespace(start=kwargs["target"])
-        with patch.object(gui_main.threading, "Thread", side_effect=thread), \
-             patch.object(gui_main, "fetch_latest_release", side_effect=results), \
-             patch.object(gui_main, "save_config"), patch.object(gui_main.time, "sleep"), \
-             self.assertLogs(level="INFO") as logs:
-            gui_main.MaximoApp.check_updates(app, notify)
-        return [line for line in logs.output if line.startswith("WARNING")]
+    def test_repair_extension_print_mode_applies_only_to_visible_edge(self):
+        with temporary_directory() as directory:
+            root = Path(directory)
+            extension = root / "browser_extension"
+            extension.mkdir()
+            (extension / "manifest.json").write_text("{}", encoding="utf-8")
+            cfg = SimpleNamespace(download_dir=directory, repair_extension_enabled=True,
+                                  repair_print_mode="direct")
+            with patch.object(client, "PROGRAM_DIR", root), \
+                 patch.object(client, "load_config", return_value=cfg), \
+                 patch.object(client, "default_printer_name", return_value="Printer") as default_printer, \
+                 patch.object(client.webdriver, "Edge", return_value=Mock()) as launch:
+                client.setup_driver(headless=False, profile_dir=str(root / "visible"))
+                arguments = launch.call_args.kwargs["options"].arguments
+                self.assertIn(f"--load-extension={extension}", arguments)
+                self.assertIn("--kiosk-printing", arguments)
 
-    def test_release_retry_success_does_not_warn_of_final_failure(self):
-        release = SimpleNamespace(tag="v0.9.2", html_url="https://example.invalid", checked_at="today")
-        self.assertEqual(self._check_releases([OSError("connection closed"), release]), [])
+                cfg.repair_print_mode = "dialog"
+                client.setup_driver(headless=False, profile_dir=str(root / "dialog"))
+                arguments = launch.call_args.kwargs["options"].arguments
+                self.assertIn(f"--load-extension={extension}", arguments)
+                self.assertNotIn("--kiosk-printing", arguments)
 
-    def test_release_exhaustion_warns_once_with_actual_attempt_count(self):
-        for notify, count in ((True, 3), (False, 1)):
-            warnings = self._check_releases([OSError("connection closed")] * count, notify)
-            self.assertEqual(len(warnings), 1)
-            self.assertIn(f"tras {count} intento(s)", warnings[0])
+                cfg.repair_print_mode = "direct"
+                default_printer.return_value = ""
+                client.setup_driver(headless=False, profile_dir=str(root / "no-printer"))
+                arguments = launch.call_args.kwargs["options"].arguments
+                self.assertNotIn("--kiosk-printing", arguments)
 
-    def test_running_update_blocks_another_worker(self):
-        app = SimpleNamespace(
-            _ensure_credentials=Mock(return_value=True),
-            update_lock=threading.Lock(),
-        )
-        app.update_lock.acquire()
-        with patch.object(gui_main.threading, "Thread") as thread:
-            gui_main.MaximoApp.update_now_threaded(app, show_popup=False)
-            thread.assert_not_called()
-        app.update_lock.release()
+                cfg.repair_print_mode = "direct"
+                client.setup_driver(headless=True, profile_dir=str(root / "background"))
+                arguments = launch.call_args.kwargs["options"].arguments
+                self.assertFalse(any(argument.startswith("--load-extension=") for argument in arguments))
+                self.assertNotIn("--kiosk-printing", arguments)
 
-    def test_worker_releases_lock_after_failure(self):
-        app = SimpleNamespace(update_lock=threading.Lock(), after=Mock())
-        app.update_lock.acquire()
-        with patch.object(gui_main, "run_update", side_effect=RuntimeError("failed")):
-            gui_main.MaximoApp._update_now_worker(app, show_popup=False)
-        self.assertFalse(app.update_lock.locked())
+    def test_desktop_report_forces_extension_and_starts_only_for_matching_ot(self):
+        with temporary_directory() as directory:
+            root = Path(directory)
+            extension = root / "browser_extension"
+            extension.mkdir()
+            (extension / "manifest.json").write_text("{}", encoding="utf-8")
+            cfg = SimpleNamespace(download_dir=directory, repair_extension_enabled=False,
+                                  repair_print_mode="dialog")
+            with patch.object(client, "PROGRAM_DIR", root), \
+                 patch.object(client, "load_config", return_value=cfg), \
+                 patch.object(client.webdriver, "Edge", return_value=Mock()) as launch:
+                client.setup_driver(headless=False, profile_dir=str(root / "report"),
+                                    force_repair_extension=True)
+                self.assertIn(f"--load-extension={extension}",
+                              launch.call_args.kwargs["options"].arguments)
 
-    def test_worker_releases_lock_after_success(self):
-        app = SimpleNamespace(update_lock=threading.Lock(), after=Mock())
-        app.update_lock.acquire()
-        with patch.object(gui_main, "run_update", return_value=(2, 3)):
-            gui_main.MaximoApp._update_now_worker(app, show_popup=False)
-        self.assertFalse(app.update_lock.locked())
-
-    def test_close_worker_closes_visible_sessions_and_profiles(self):
         driver = Mock()
-        finish = Mock()
-        app = SimpleNamespace(
-            update_lock=threading.Lock(),
-            reconcile_lock=threading.Lock(),
-            credential_test_lock=threading.Lock(),
-            ot_sessions=[(driver, "C:/profile")],
-            _finish_close=finish,
-            after=lambda _delay, callback: callback(),
-        )
+        number = Mock()
+        number.get_attribute.side_effect = ["other", "4228010"]
         status = Mock()
-        with patch.object(gui_main, "cleanup_edge_profile") as cleanup, \
-             patch.object(gui_main, "CLOSE_PROGRESS_MIN_SECONDS", 0):
-            gui_main.MaximoApp._close_worker(app, Mock(), status)
-        driver.quit.assert_called_once()
-        cleanup.assert_called_once_with("C:/profile")
-        finish.assert_called_once()
+        status.get_attribute.return_value = "ISSUE"
+        button = Mock()
+        button.is_displayed.return_value = True
+        button.is_enabled.return_value = True
+        driver.find_element.side_effect = lambda _, id: (
+            number if id == "mx45-tb" else status if id == "mx73-tb" else button
+        )
+
+        def wait(browser, condition, description, timeout):
+            if "carga de la OT" in description:
+                self.assertFalse(condition(browser))
+                return condition(browser)
+            return condition(browser)
+
+        with patch.object(client, "wait_for", side_effect=wait):
+            client.start_repair_report(driver, "4228010", "pdf")
+        driver.execute_script.assert_called_once_with(
+            "arguments[0].dataset.maximoReportAction = arguments[1]; arguments[0].click();",
+            button, "pdf")
+
+    def test_desktop_report_stops_before_extension_for_ineligible_status(self):
+        driver = Mock()
+        number = Mock()
+        number.get_attribute.return_value = "4228010"
+        status = Mock()
+        status.get_attribute.return_value = "APPR"
+        driver.find_element.side_effect = lambda _, id: number if id == "mx45-tb" else status
+        with patch.object(client, "wait_for", side_effect=lambda browser, condition, *_args, **_kwargs: condition(browser)):
+            with self.assertRaisesRegex(RuntimeError, "no admite parte"):
+                client.start_repair_report(driver, "4228010", "print")
+        driver.execute_script.assert_not_called()
+
+    def test_visible_ot_profiles_start_with_monochrome_printing_without_headers(self):
+        with temporary_directory() as directory, \
+             patch.object(client, "load_config", return_value=SimpleNamespace(download_dir=directory)), \
+             patch.object(client.webdriver, "Edge", return_value=Mock()) as launch:
+            client.setup_driver(headless=False, profile_dir=str(Path(directory) / "visible"))
+            visible_prefs = launch.call_args.kwargs["options"].experimental_options["prefs"]
+            app_state = json.loads(visible_prefs["printing.print_preview_sticky_settings"]["appState"])
+            self.assertIs(app_state["isColorEnabled"], False)
+            self.assertIs(app_state["isHeaderFooterEnabled"], False)
+            self.assertEqual(app_state["recentDestinations"], [])
+
+            client.setup_driver(headless=True, profile_dir=str(Path(directory) / "background"))
+            background_prefs = launch.call_args.kwargs["options"].experimental_options["prefs"]
+            self.assertNotIn("printing.print_preview_sticky_settings", background_prefs)
 
     def test_wait_retries_stale_elements(self):
         condition = Mock(side_effect=[StaleElementReferenceException(), "ready"])
@@ -113,6 +147,23 @@ class AccessTests(unittest.TestCase):
             with patch.object(client, "wait_for", side_effect=wait):
                 self.assertEqual(client.download_file(Mock(), directory), str(result))
             self.assertEqual(old.read_bytes(), b"old")
+
+    def test_complete_xls_is_accepted_beside_stale_partial(self):
+        with temporary_directory() as directory:
+            folder = Path(directory)
+            partial = folder / "stale.xls.crdownload"
+            result = folder / "new.xls"
+
+            def wait(driver, condition, description, *args):
+                if description == "botón de descarga":
+                    return Mock()
+                partial.write_bytes(b"unfinished")
+                result.write_bytes(b"complete")
+                self.assertFalse(condition(driver))
+                return condition(driver)
+
+            with patch.object(client, "wait_for", side_effect=wait):
+                self.assertEqual(client.download_file(Mock(), directory), str(result))
 
     def test_empty_download_times_out(self):
         with temporary_directory() as directory:
@@ -252,6 +303,51 @@ class AccessTests(unittest.TestCase):
                 driver.quit.assert_called_once()
                 self.assertFalse(Path(setup.call_args.kwargs["profile_dir"]).exists())
                 self.assertFalse(Path(setup.call_args.kwargs["download_dir"]).exists())
+
+    def test_export_retries_once_with_clean_edge_and_updates_database_once(self):
+        with temporary_directory() as directory:
+            drivers = [Mock(), Mock()]
+            exported = Path(directory) / "export.xls"
+            with patch.object(updater, "load_config", return_value=SimpleNamespace(download_dir=directory)), \
+                 patch.object(client, "EDGE_PROFILE_DIR", Path(directory) / "edge-profiles"), \
+                 patch.object(updater, "setup_driver", side_effect=drivers) as setup, \
+                 patch.object(updater, "login"), patch.object(updater, "open_workorders_app"), \
+                 patch.object(updater, "download_file", side_effect=[
+                     client.ExportDownloadTimeout("no se inició"), "new.xls"
+                 ]) as download, \
+                 patch.object(updater, "move_downloaded_file", return_value=str(exported)), \
+                 patch.object(updater, "process_html_table", return_value=Mock()), \
+                 patch.object(updater, "update_database_from_df", return_value=(1, 2)) as update_db, \
+                 patch.object(updater, "cleanup_exports"):
+                self.assertEqual(updater.run_update(), (1, 2))
+            self.assertEqual(setup.call_count, 2)
+            self.assertEqual(download.call_count, 2)
+            self.assertNotEqual(
+                setup.call_args_list[0].kwargs["profile_dir"],
+                setup.call_args_list[1].kwargs["profile_dir"],
+            )
+            for call in setup.call_args_list:
+                self.assertFalse(Path(call.kwargs["profile_dir"]).exists())
+                self.assertFalse(Path(call.kwargs["download_dir"]).exists())
+            for driver in drivers:
+                driver.quit.assert_called_once()
+            update_db.assert_called_once()
+
+    def test_two_export_timeouts_leave_database_unchanged(self):
+        with temporary_directory() as directory:
+            drivers = [Mock(), Mock()]
+            with patch.object(updater, "load_config", return_value=SimpleNamespace(download_dir=directory)), \
+                 patch.object(client, "EDGE_PROFILE_DIR", Path(directory) / "edge-profiles"), \
+                 patch.object(updater, "setup_driver", side_effect=drivers), \
+                 patch.object(updater, "login"), patch.object(updater, "open_workorders_app"), \
+                 patch.object(updater, "download_file", side_effect=client.ExportDownloadTimeout("sin XLS")) as download, \
+                 patch.object(updater, "update_database_from_df") as update_db:
+                with self.assertRaises(client.ExportDownloadTimeout):
+                    updater.run_update()
+            self.assertEqual(download.call_count, 2)
+            update_db.assert_not_called()
+            for driver in drivers:
+                driver.quit.assert_called_once()
 
     def test_visible_ots_keep_independent_sessions(self):
         drivers = [Mock(), Mock()]

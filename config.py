@@ -10,8 +10,7 @@ from pathlib import Path
 
 from app_paths import (
     BACKUP_DIR, BASE_DIR, CONFIG_PATH, DB_PATH, DOWNLOAD_DIR,
-    DEFAULT_TRACKING_OPTIONS_PATH, EXPORT_DIR, LOG_DIR, PROFILES_PATH,
-    TRACKING_OPTIONS_PATH,
+    EXPORT_DIR, LOG_DIR, PROFILES_PATH,
     create_unique_file, ensure_user_directories,
 )
 from credential_store import load_credentials, save_credentials
@@ -32,11 +31,24 @@ class AppConfig:
     auto_update_interval_min: int = 10
     reconciliation_enabled: bool = True
     reconciliation_batch_size: int = 5
+    fault_descriptions_enabled: bool = False
+    detailed_descriptions_enabled: bool = False
+    fault_description_batch_size: int = 5
+    priority_tmb_validity: str = "daily"
+    priority_l9_validity: str = "daily"
+    priority_renfe_validity: str = "weekly"
+    theme: str = "system"
+    repair_extension_enabled: bool = False
+    repair_print_mode: str = "dialog"
     filters: dict | None = None
     last_status: dict | None = None
     latest_release_tag: str = ""
     latest_release_url: str = ""
     latest_release_checked_at: str = ""
+    table_column_widths: dict | None = None
+    table_layout_initialized: bool = False
+    window_size: list | None = None
+    window_maximized: bool = False
 
     def __post_init__(self):
         self.download_dir = str(DOWNLOAD_DIR)
@@ -46,8 +58,27 @@ class AppConfig:
             self.reconciliation_batch_size = min(100, max(1, int(self.reconciliation_batch_size)))
         except (TypeError, ValueError):
             self.reconciliation_batch_size = 5
+        try:
+            self.fault_description_batch_size = min(100, max(1, int(self.fault_description_batch_size)))
+        except (TypeError, ValueError):
+            self.fault_description_batch_size = 5
+        for attribute, default in (
+            ("priority_tmb_validity", "daily"),
+            ("priority_l9_validity", "daily"),
+            ("priority_renfe_validity", "weekly"),
+        ):
+            if getattr(self, attribute) not in {"daily", "weekly"}:
+                setattr(self, attribute, default)
+        if self.theme not in {"system", "light", "dark"}:
+            self.theme = "system"
+        if self.repair_print_mode not in {"dialog", "direct"}:
+            self.repair_print_mode = "dialog"
         if self.filters is None:
             self.filters = {"mx38_tfrow_[C:26]_txt-tb": "=LAB-BAD"}
+        if not isinstance(self.table_column_widths, dict):
+            self.table_column_widths = {}
+        if not isinstance(self.window_size, list) or len(self.window_size) != 2:
+            self.window_size = None
 
 
 def _atomic_json(path: Path, data: dict) -> None:
@@ -98,11 +129,6 @@ def _copy_if_missing(source: Path, destination: Path) -> None:
     if source.exists() and not destination.exists():
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
-
-
-def _ensure_tracking_options() -> None:
-    """Inicializa las opciones editables para instalaciones nuevas."""
-    _copy_if_missing(DEFAULT_TRACKING_OPTIONS_PATH, TRACKING_OPTIONS_PATH)
 
 
 def _redact_file(path: Path, secrets: tuple[str, ...]) -> None:
@@ -169,7 +195,6 @@ def _migrate_legacy_storage() -> None:
     _copy_database(old_db, DB_PATH)
     _copy_if_missing(old_data / "search_profiles.json", PROFILES_PATH)
     _copy_if_missing(BASE_DIR / "data" / "search_profiles.json", PROFILES_PATH)
-    _copy_if_missing(BASE_DIR / "seguimiento_options.txt", TRACKING_OPTIONS_PATH)
     old_backups = old_data / "backups"
     if old_backups.exists():
         for item in old_backups.glob("*.db"):
@@ -185,7 +210,6 @@ def _migrate_legacy_storage() -> None:
 def load_config() -> AppConfig:
     ensure_user_directories()
     _migrate_legacy_storage()
-    _ensure_tracking_options()
     _sanitize_legacy_artifacts()
     if CONFIG_PATH.exists():
         data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))

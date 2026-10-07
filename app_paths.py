@@ -1,25 +1,49 @@
 """Rutas persistentes de la aplicación, separadas del código actualizable."""
 import os
+import sys
 from pathlib import Path
 from uuid import uuid4
 
 
 def _program_dir() -> Path:
+    """Find the application directory that contains packaged resources."""
+    candidates = []
     compiled = globals().get("__compiled__")
     containing_dir = getattr(compiled, "containing_dir", None)
     if containing_dir:
-        return Path(containing_dir).resolve()
-    return Path(__file__).resolve().parent
+        candidates.append(Path(containing_dir).resolve())
+
+    # In standalone builds, Nuitka's runtime directory may differ from the
+    # directory beside the executable where --include-data-dir places assets.
+    try:
+        candidates.append(Path(sys.argv[0]).resolve().parent)
+    except (OSError, IndexError):
+        pass
+
+    candidates.append(Path(__file__).resolve().parent)
+    unique_candidates = list(dict.fromkeys(candidates))
+    for candidate in unique_candidates:
+        if (candidate / "browser_extension" / "manifest.json").is_file():
+            return candidate
+
+    return unique_candidates[0]
 
 
 PROGRAM_DIR = _program_dir()
 BASE_DIR = PROGRAM_DIR
 
+# La rama de interfaz puede ejecutarse con datos aislados sin afectar a la
+# instalación distribuida. No se activa en compilaciones ni ejecuciones normales.
+DEVELOPMENT_MODE = os.environ.get("MAXIMO_DESKTOP_DEV", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+APP_FOLDER_NAME = "MaximoDesktop-dev" if DEVELOPMENT_MODE else "MaximoDesktop"
+
 if os.name == "nt":
     _local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    APP_ROOT = _local_app_data / "MaximoDesktop"
+    APP_ROOT = _local_app_data / APP_FOLDER_NAME
 else:
-    APP_ROOT = Path.home() / ".local" / "share" / "MaximoDesktop"
+    APP_ROOT = Path.home() / ".local" / "share" / APP_FOLDER_NAME
 
 CONFIG_DIR = APP_ROOT / "config"
 DATA_DIR = APP_ROOT / "data"
@@ -30,19 +54,16 @@ DOWNLOAD_DIR = CACHE_DIR / "downloads"
 EXPORT_DIR = CACHE_DIR / "exports"
 UPDATE_CACHE_DIR = CACHE_DIR / "updates"
 EDGE_PROFILE_DIR = CACHE_DIR / "edge-profiles"
-CUSTOM_DIR = APP_ROOT / "custom"
 MANAGED_APP_DIR = APP_ROOT / "app"
 
 CONFIG_PATH = CONFIG_DIR / "config.json"
 CREDENTIAL_PATH = CONFIG_DIR / "credentials.dat"
 DB_PATH = DATA_DIR / "maximo_data.db"
 PROFILES_PATH = DATA_DIR / "search_profiles.json"
-TRACKING_OPTIONS_PATH = CUSTOM_DIR / "seguimiento_options.txt"
-DEFAULT_TRACKING_OPTIONS_PATH = PROGRAM_DIR / "seguimiento_options.txt"
 
 USER_DIRECTORIES = (
     CONFIG_DIR, DATA_DIR, BACKUP_DIR, LOG_DIR, DOWNLOAD_DIR,
-    EXPORT_DIR, UPDATE_CACHE_DIR, EDGE_PROFILE_DIR, CUSTOM_DIR,
+    EXPORT_DIR, UPDATE_CACHE_DIR, EDGE_PROFILE_DIR,
 )
 
 

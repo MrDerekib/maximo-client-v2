@@ -28,22 +28,13 @@ class CredentialStoreTests(unittest.TestCase):
         self.assertEqual(config.AppConfig(reconciliation_batch_size=0).reconciliation_batch_size, 1)
         self.assertEqual(config.AppConfig(reconciliation_batch_size=500).reconciliation_batch_size, 100)
 
+    def test_theme_defaults_to_system_and_rejects_unknown_values(self):
+        self.assertEqual(config.AppConfig().theme, "system")
+        self.assertEqual(config.AppConfig(theme="dark").theme, "dark")
+        self.assertEqual(config.AppConfig(theme="contraste").theme, "system")
+
 
 class StorageMigrationTests(unittest.TestCase):
-    def test_new_installation_copies_default_tracking_options(self):
-        with temporary_directory() as folder:
-            root = Path(folder)
-            default = root / "program" / "seguimiento_options.txt"
-            target = root / "MaximoDesktop" / "custom" / "seguimiento_options.txt"
-            default.parent.mkdir()
-            default.write_text("EN TALLER\nRETENIDO\n", encoding="utf-8")
-
-            with patch.object(config, "DEFAULT_TRACKING_OPTIONS_PATH", default), \
-                 patch.object(config, "TRACKING_OPTIONS_PATH", target):
-                config._ensure_tracking_options()
-
-            self.assertEqual(target.read_text(encoding="utf-8"), "EN TALLER\nRETENIDO\n")
-
     def test_migration_copies_and_verifies_data_and_removes_plaintext_secrets(self):
         with temporary_directory() as folder:
             root = Path(folder)
@@ -60,7 +51,6 @@ class StorageMigrationTests(unittest.TestCase):
             (old_data / "search_profiles.json").write_text('{"Pendientes": {}}', encoding="utf-8")
             (old_data / "backups").mkdir()
             (old_data / "backups" / "previous.db").write_bytes(b"backup")
-            (legacy_root / "seguimiento_options.txt").write_text("EN TALLER", encoding="utf-8")
             legacy_config = legacy_root / "config.json"
             legacy_config.write_text(json.dumps({
                 "username": "usuario-secreto",
@@ -75,7 +65,6 @@ class StorageMigrationTests(unittest.TestCase):
             db_path = target / "data" / "maximo_data.db"
             profiles_path = target / "data" / "search_profiles.json"
             backup_dir = target / "backups"
-            tracking_path = target / "custom" / "seguimiento_options.txt"
             log_dir = target / "logs"
             credentials = {}
 
@@ -89,7 +78,6 @@ class StorageMigrationTests(unittest.TestCase):
                 patch.object(config, "DB_PATH", db_path),
                 patch.object(config, "PROFILES_PATH", profiles_path),
                 patch.object(config, "BACKUP_DIR", backup_dir),
-                patch.object(config, "TRACKING_OPTIONS_PATH", tracking_path),
                 patch.object(config, "LOG_DIR", log_dir),
                 patch.object(config, "DOWNLOAD_DIR", target / "cache" / "downloads"),
                 patch.object(config, "EXPORT_DIR", target / "cache" / "exports"),
@@ -108,7 +96,6 @@ class StorageMigrationTests(unittest.TestCase):
                 self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertTrue(profiles_path.exists())
             self.assertTrue((backup_dir / "previous.db").exists())
-            self.assertEqual(tracking_path.read_text(encoding="utf-8"), "EN TALLER")
             self.assertNotIn("username", json.loads(config_path.read_text(encoding="utf-8")))
             sanitized = legacy_config.read_text(encoding="utf-8")
             self.assertNotIn("usuario-secreto", sanitized)
