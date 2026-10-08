@@ -250,6 +250,14 @@ async function handleMessage(message, sender) {
         }
         field.dispatchEvent(new KeyboardEvent("keyup", keyOptions));
         field.dispatchEvent(new Event("change", { bubbles: true }));
+        // Maximo's async setvalue processing is commonly committed when the
+        // operator tabs out of the field. A textarea must not receive Enter,
+        // which would insert a newline into the parameter.
+        const tabOptions = {
+          bubbles: true, cancelable: true, key: "Tab", code: "Tab", keyCode: 9, which: 9
+        };
+        field.dispatchEvent(new KeyboardEvent("keydown", tabOptions));
+        field.dispatchEvent(new KeyboardEvent("keyup", tabOptions));
         field.blur();
         return {
           updated: field.value === value,

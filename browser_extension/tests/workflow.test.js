@@ -351,7 +351,7 @@ test("repair parameter entry emits keyboard events and verifies Maximo accepted 
   };
   try {
     assert.deepEqual(executions[0].func("N"), { updated: true, maximoChanged: true });
-    assert.deepEqual(events, ["keydown", "keypress", "keyup", "change"]);
+    assert.deepEqual(events, ["keydown", "keypress", "keyup", "change", "keydown", "keyup"]);
   } finally {
     global.document = previousDocument;
     global.KeyboardEvent = previousKeyboardEvent;
