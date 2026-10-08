@@ -109,10 +109,17 @@
       const includeTechnicianAndTime = variantIndex === 0 ? "S" : "N";
       targetButton.textContent = variantIndex === 0
         ? "Configurando parte 1/2…" : "Configurando parte 2/2…";
-      await send("SET_REPAIR_INFO", { jobId, value: includeTechnicianAndTime });
-      await waitFor(() => repairInfoField()?.value === includeTechnicianAndTime
-        ? repairInfoField() : null,
-      `confirmación del parámetro ${includeTechnicianAndTime}`, 5000);
+      const currentField = repairInfoField();
+      if (!currentField) throw new Error("No se encontró el parámetro «Incluir nombre y tiempo reparación» del informe.");
+      if (currentField.value !== includeTechnicianAndTime) {
+        await send("SET_REPAIR_INFO", { jobId, value: includeTechnicianAndTime });
+        await waitFor(() => {
+          const field = repairInfoField();
+          return field?.value === includeTechnicianAndTime &&
+            (field.getAttribute("changed") === "true" ||
+              field.getAttribute("changed_by_user") === "true") ? field : null;
+        }, `confirmación de Maximo del parámetro ${includeTechnicianAndTime}`, 8000);
+      }
     }
     await new Promise(resolve => setTimeout(resolve, 1500));
     await waitFor(() => {

@@ -315,6 +315,51 @@ test("repair report variants set Maximo's include-technician parameter in the pa
   assert.deepEqual(executions[0].args, ["N"]);
 });
 
+test("repair parameter entry emits keyboard events and verifies Maximo accepted the edit", async () => {
+  const { handleMessage, executions } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const { jobId } = await handleMessage({ type: "START", ot: "4228010",
+    outputFormat: "html", client: "TMB BOIXERES" }, source);
+  await handleMessage({ type: "SET_REPAIR_INFO", jobId, value: "N" }, source);
+
+  const events = [];
+  const field = {
+    id: "mx396-ta", value: "S", attributes: {},
+    getClientRects: () => [1], getAttribute(name) { return this.attributes[name] || null; },
+    focus() {}, select() {}, blur() {}, closest() { return null; },
+    dispatchEvent(event) {
+      events.push(event.type);
+      if (event.type === "keydown") this.attributes.changed_by_user = "true";
+    }
+  };
+  const label = { htmlFor: "mx396-ta", textContent: "Incluir nombre y tiempo reparacion:" };
+  const previousDocument = global.document;
+  const previousKeyboardEvent = global.KeyboardEvent;
+  const previousTextarea = global.HTMLTextAreaElement;
+  const previousEvent = global.Event;
+  global.KeyboardEvent = class { constructor(type) { this.type = type; } };
+  global.HTMLTextAreaElement = class {};
+  global.Event = class { constructor(type) { this.type = type; } };
+  global.document = {
+    querySelectorAll(selector) {
+      if (selector === "input, textarea, select") return [field];
+      if (selector === "label[for]") return [label];
+      return [];
+    },
+    getElementById: () => null,
+    execCommand(command, _ui, value) { field.value = value; return true; }
+  };
+  try {
+    assert.deepEqual(executions[0].func("N"), { updated: true, maximoChanged: true });
+    assert.deepEqual(events, ["keydown", "keypress", "keyup", "change"]);
+  } finally {
+    global.document = previousDocument;
+    global.KeyboardEvent = previousKeyboardEvent;
+    global.HTMLTextAreaElement = previousTextarea;
+    global.Event = previousEvent;
+  }
+});
+
 test("PDF output requests Save As for BIRT's native PDF from the correct viewer", async () => {
   const { handleMessage, handlePdfOutput, session, downloads, JOB_KEY } = chromeHarness();
   const source = { tab: { id: 1 } };

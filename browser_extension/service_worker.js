@@ -227,6 +227,13 @@ async function handleMessage(message, sender) {
         if (!field) return { updated: false, reason: "field" };
         field.focus();
         field.select?.();
+        const keyCode = value.charCodeAt(0);
+        const keyOptions = {
+          bubbles: true, cancelable: true, key: value,
+          code: `Key${value.toUpperCase()}`, keyCode, which: keyCode
+        };
+        field.dispatchEvent(new KeyboardEvent("keydown", keyOptions));
+        field.dispatchEvent(new KeyboardEvent("keypress", { ...keyOptions, charCode: keyCode }));
         let inserted = false;
         try { inserted = document.execCommand?.("insertText", false, value) || false; }
         catch (_) { /* Set the native control value below. */ }
@@ -241,10 +248,14 @@ async function handleMessage(message, sender) {
             bubbles: true, data: value, inputType: "insertText"
           }));
         }
-        field.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: value }));
+        field.dispatchEvent(new KeyboardEvent("keyup", keyOptions));
         field.dispatchEvent(new Event("change", { bubbles: true }));
         field.blur();
-        return { updated: field.value === value };
+        return {
+          updated: field.value === value,
+          maximoChanged: field.getAttribute("changed") === "true" ||
+            field.getAttribute("changed_by_user") === "true"
+        };
       }
     });
     if (execution?.result?.updated === false) {
