@@ -62,15 +62,7 @@
   }
 
   function repairClient() {
-    const labels = [...document.querySelectorAll("td, span, label, div")]
-      .filter(element => visible(element) && /^cliente\s*:?$/i.test(
-        (element.innerText || element.textContent || "").replace(/\s+/g, " ").trim()));
-    for (const label of labels) {
-      const row = label.closest("tr");
-      const text = row?.innerText || "";
-      if (logic.isBoixeresClient(text)) return text;
-    }
-    return "";
+    return logic.clientFromWorkorder(document);
   }
 
   async function submitReportVariant(jobId, targetButton, variantIndex, variantCount) {

@@ -1,7 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { pageKind, containsOt, canPrintStatus, isBoixeresClient } = require("../workflow_logic.js");
+const { pageKind, containsOt, canPrintStatus, isBoixeresClient,
+  clientFromWorkorder } = require("../workflow_logic.js");
 
 test("only the Maximo WO page and the repair report windows are handled", () => {
   assert.equal(pageKind("https://eam.indraweb.net/maximo/ui/?event=loadapp"), "workorder");
@@ -30,6 +31,12 @@ test("Boixeres client recognition ignores case, accents, and repeated spaces", (
   assert.equal(isBoixeresClient("TMB BOIXERES"), true);
   assert.equal(isBoixeresClient("  tmb   boixerès  "), true);
   assert.equal(isBoixeresClient("TMB"), false);
+});
+
+test("the client is read from Maximo's mx47-tb work-order field", () => {
+  assert.equal(clientFromWorkorder({ getElementById: id =>
+    id === "mx47-tb" ? { value: "TMB BOIXERES" } : null }), "TMB BOIXERES");
+  assert.equal(clientFromWorkorder({ getElementById: () => null }), "");
 });
 
 function chromeHarness() {

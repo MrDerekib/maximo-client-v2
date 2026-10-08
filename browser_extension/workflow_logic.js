@@ -26,7 +26,11 @@
       .replace(/\s+/g, " ").trim().toUpperCase().includes("TMB BOIXERES");
   }
 
-  const logic = { pageKind, containsOt, canPrintStatus, isBoixeresClient };
+  function clientFromWorkorder(documentRoot) {
+    return String(documentRoot?.getElementById("mx47-tb")?.value || "").trim();
+  }
+
+  const logic = { pageKind, containsOt, canPrintStatus, isBoixeresClient, clientFromWorkorder };
   root.MaximoPartLogic = logic;
   if (typeof module !== "undefined" && module.exports) module.exports = logic;
 })(typeof globalThis !== "undefined" ? globalThis : this);
