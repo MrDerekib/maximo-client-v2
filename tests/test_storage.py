@@ -77,6 +77,7 @@ class StorageMigrationTests(unittest.TestCase):
                 credentials["value"] = (username, password)
 
             patches = (
+                patch.object(config, "_legacy_cleanup_attempted", False),
                 patch.object(config, "BASE_DIR", legacy_root),
                 patch.object(config, "LEGACY_CONFIG_PATH", legacy_config),
                 patch.object(config, "CONFIG_PATH", config_path),

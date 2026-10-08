@@ -1,11 +1,22 @@
 # Historial de cambios
 
-## Sin publicar — Limpieza del proyecto V1
+## 1.0.2 — Partes de reparación y revisión de OT
+
+- Para las OT de TMB BOIXERES, la impresión HTML genera dos copias consecutivas:
+  el parte habitual y una segunda copia sin nombre del técnico ni tiempo de reparación.
+  Se utiliza el parámetro original de Maximo, seleccionado mediante su lupa.
+- Nueva opción para cerrar las ventanas del visor y del parte después de la
+  impresión directa, también entre las dos copias de Boixeres. Con el diálogo
+  de impresión, las ventanas permanecen abiertas para revisar los ajustes o cancelar.
+- La revisión prioritaria de OT muestra en la barra de estado cuántas órdenes
+  se han revisado, el total pendiente y la OT en curso.
 
 - Retirados la interfaz, el instalador y las pruebas exclusivos de Tkinter.
 - Eliminadas las opciones de seguimiento manual y sus recursos obsoletos.
 - El entorno de desarrollo utiliza exclusivamente la `.venv` de este proyecto.
 - La build incluye solo los recursos ejecutables de la extensión, sin sus pruebas ni documentación.
+- Corregido el aislamiento de la prueba de migración para que su resultado
+  no dependa de otras pruebas ejecutadas antes.
 
 ## 1.0.1 — Ajustes para el primer lanzamiento
 
