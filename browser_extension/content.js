@@ -55,10 +55,26 @@
   }
 
   function repairInfoField() {
-    return [...document.querySelectorAll("input[aria-labelledby], textarea[aria-labelledby], select[aria-labelledby]")]
-      .find(element => visible(element) && element.getAttribute("aria-labelledby").split(/\s+/)
-        .some(id => /incluir nombre y tiempo reparaci[oó]n/i
-          .test(document.getElementById(id)?.textContent || "")));
+    const labelPattern = /incluir nombre y tiempo reparaci[oó]n/i;
+    const controls = [...document.querySelectorAll("input, textarea, select")].filter(visible);
+    return controls.find(element => {
+      const labelledBy = (element.getAttribute("aria-labelledby") || "").split(/\s+/);
+      if (labelledBy.some(id => labelPattern.test(document.getElementById(id)?.textContent || "")))
+        return true;
+
+      const matchingLabel = [...document.querySelectorAll("label[for]")]
+        .some(label => label.htmlFor === element.id && labelPattern.test(label.textContent || ""));
+      if (matchingLabel) return true;
+
+      // Maximo often renders the visible field caption in the same table row
+      // without exposing an aria-labelledby relationship.
+      const row = element.closest("tr, [role='row']");
+      if (row && labelPattern.test(row.innerText || row.textContent || "")) return true;
+
+      // Some Maximo versions use the conventional mxNNNN-tb / mxNNNN-lb pair.
+      const labelId = element.id?.replace(/-tb$/, "-lb");
+      return Boolean(labelId && labelPattern.test(document.getElementById(labelId)?.textContent || ""));
+    });
   }
 
   function repairClient() {

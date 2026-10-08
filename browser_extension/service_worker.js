@@ -208,10 +208,22 @@ async function handleMessage(message, sender) {
       args: [message.value],
       func: value => {
         const visible = element => Boolean(element?.getClientRects().length);
-        const field = [...document.querySelectorAll("input[aria-labelledby], textarea[aria-labelledby], select[aria-labelledby]")]
-          .find(element => visible(element) && element.getAttribute("aria-labelledby").split(/\s+/)
-            .some(id => /incluir nombre y tiempo reparaci[oó]n/i
-              .test(document.getElementById(id)?.textContent || "")));
+        const labelPattern = /incluir nombre y tiempo reparaci[oó]n/i;
+        const controls = [...document.querySelectorAll("input, textarea, select")].filter(visible);
+        const field = controls.find(element => {
+          const labelledBy = (element.getAttribute("aria-labelledby") || "").split(/\s+/);
+          if (labelledBy.some(id => labelPattern.test(document.getElementById(id)?.textContent || "")))
+            return true;
+
+          if ([...document.querySelectorAll("label[for]")].some(label =>
+            label.htmlFor === element.id && labelPattern.test(label.textContent || ""))) return true;
+
+          const row = element.closest("tr, [role='row']");
+          if (row && labelPattern.test(row.innerText || row.textContent || "")) return true;
+
+          const labelId = element.id?.replace(/-tb$/, "-lb");
+          return Boolean(labelId && labelPattern.test(document.getElementById(labelId)?.textContent || ""));
+        });
         if (!field) return { updated: false, reason: "field" };
         field.focus();
         field.select?.();
