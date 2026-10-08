@@ -90,7 +90,8 @@ def run_update(headless=True):
 
 
 def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
-                                minimum_age_hours=INACTIVE_RECONCILIATION_HOURS):
+                                minimum_age_hours=INACTIVE_RECONCILIATION_HOURS,
+                                progress_callback=None):
     """Contrasta en Maximo OT históricas con seguimiento que requiere revisión."""
     candidates = inactive_tracking_candidates(limit, minimum_age_hours)
     if not candidates:
@@ -105,7 +106,7 @@ def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
         driver = setup_driver(headless=True, profile_dir=profile_dir)
         login(driver, headless=True)
         open_workorders_app(driver, headless=True)
-        for ot, previous_status in candidates:
+        for position, (ot, previous_status) in enumerate(candidates, start=1):
             try:
                 status = read_workorder_status(driver, ot)
                 if apply_reconciled_status(ot, status):
@@ -127,6 +128,9 @@ def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
                         )
             except Exception as exc:
                 logging.warning("No se pudo conciliar la OT inactiva %s: %s", ot, exc)
+            finally:
+                if progress_callback is not None:
+                    progress_callback(position, len(candidates), str(ot))
     finally:
         try:
             if driver is not None:

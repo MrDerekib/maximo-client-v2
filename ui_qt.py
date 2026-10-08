@@ -286,17 +286,21 @@ def show_activity_dialog(message: str, parent=None, theme_preference=None):
 class TaskSignals(QObject):
     completed = Signal(object)
     failed = Signal(str)
+    progress = Signal(int, int, str)
 
 
 class BackgroundTask(QRunnable):
-    def __init__(self, function):
+    def __init__(self, function, with_progress=False):
         super().__init__()
         self.function = function
+        self.with_progress = with_progress
         self.signals = TaskSignals()
 
     def run(self):
         try:
-            self.signals.completed.emit(self.function())
+            result = (self.function(self.signals.progress.emit) if self.with_progress
+                      else self.function())
+            self.signals.completed.emit(result)
         except Exception as exc:  # El detalle completo queda en el log.
             logging.exception("Tarea de interfaz fallida")
             self.signals.failed.emit(str(exc))
@@ -1711,14 +1715,16 @@ class MaximoDesktopWindow(QMainWindow):
         if QMessageBox.question(self, "Eliminar registros", f"¿Eliminar todos los registros no activos?\n\nSe eliminarán de la base local.") == QMessageBox.Yes:
             deleted = delete_all_inactive_records(); self.refresh_table(); self._refresh_reconciliation_summary(); self.status.showMessage(f"{deleted} registros no activos eliminados.", 5000)
 
-    def _start_task(self, function, completed, failed=None):
+    def _start_task(self, function, completed, failed=None, progress=None):
         """Mantiene viva la señal de Qt hasta que la tarea responde.
 
         QThreadPool conserva el QRunnable nativo, pero no necesariamente el
         QObject de señales de Python. Retenerlo aquí evita perder la llamada de
         fin y dejar bloqueados los candados de Maximo.
         """
-        task = BackgroundTask(function)
+        task = BackgroundTask(function, with_progress=progress is not None)
+        if progress is not None:
+            task.signals.progress.connect(progress)
         self._running_tasks.add(task)
         self._tasks_idle.clear()
 
@@ -1938,6 +1944,9 @@ class MaximoDesktopWindow(QMainWindow):
             include_detail=self.cfg.detailed_descriptions_enabled,
             cancel_event=self.enrichment_cancel_event), done, failed)
 
+    def _show_priority_reconcile_progress(self, completed, total, ot):
+        self.status.showMessage(f"Revisión prioritaria: {completed}/{total} OT · {ot}")
+
     def start_priority_reconcile(self):
         if not self._credentials_ready(): return
         count = inactive_tracking_candidate_count(minimum_age_hours=None)
@@ -1946,7 +1955,7 @@ class MaximoDesktopWindow(QMainWindow):
         if not self.update_lock.acquire(False): QMessageBox.information(self, "Mantenimiento", "Hay otra tarea de Maximo en curso."); return
         if not self.reconcile_lock.acquire(False):
             self.update_lock.release(); QMessageBox.information(self, "Mantenimiento", "Ya hay una revisión en curso."); return
-        self.status.showMessage(f"Revisión prioritaria en curso: {count} OT…")
+        self.status.showMessage(f"Revisión prioritaria: iniciando sesión… 0/{count} OT")
         def done(changed):
             self.reconcile_lock.release(); self.update_lock.release(); self.refresh_table(); self._refresh_reconciliation_summary()
             self.status.showMessage(f"Revisión prioritaria completada: {changed} seguimientos actualizados.", 7000)
@@ -1957,7 +1966,12 @@ class MaximoDesktopWindow(QMainWindow):
             self.status.showMessage("La revisión prioritaria falló; consulta el detalle.", 7000)
             if not self._closing:
                 QMessageBox.critical(self, "Mantenimiento", error)
-        self._start_task(lambda: reconcile_inactive_tracking(limit=None, minimum_age_hours=None), done, failed)
+        self._start_task(
+            lambda report: reconcile_inactive_tracking(
+                limit=None, minimum_age_hours=None, progress_callback=report,
+            ),
+            done, failed, progress=self._show_priority_reconcile_progress,
+        )
 
     def open_table_cell(self, row, column):
         detail_column = self.columns.index("Avería" if self.cfg.fault_descriptions_enabled else "Descripción")
