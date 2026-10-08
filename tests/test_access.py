@@ -14,6 +14,12 @@ import updater
 
 
 class AccessTests(unittest.TestCase):
+    def test_close_after_direct_print_requires_visible_default_printer(self):
+        self.assertTrue(client._should_close_after_direct_print(True, False, "Office Printer"))
+        self.assertFalse(client._should_close_after_direct_print(True, False, ""))
+        self.assertFalse(client._should_close_after_direct_print(True, True, "Office Printer"))
+        self.assertFalse(client._should_close_after_direct_print(False, False, "Office Printer"))
+
     def test_repair_extension_print_mode_applies_only_to_visible_edge(self):
         with temporary_directory() as directory:
             root = Path(directory)
@@ -86,8 +92,26 @@ class AccessTests(unittest.TestCase):
         with patch.object(client, "wait_for", side_effect=wait):
             client.start_repair_report(driver, "4228010", "pdf")
         driver.execute_script.assert_called_once_with(
-            "arguments[0].dataset.maximoReportAction = arguments[1]; arguments[0].click();",
-            button, "pdf")
+            "arguments[0].dataset.maximoReportAction = arguments[1]; "
+            "arguments[0].dataset.maximoCloseReportTabs = arguments[2] ? 'true' : 'false'; "
+            "arguments[0].click();",
+            button, "pdf", False)
+
+    def test_desktop_direct_print_passes_close_tabs_policy_to_extension(self):
+        driver = Mock()
+        number = Mock()
+        number.get_attribute.return_value = "4228010"
+        status = Mock()
+        status.get_attribute.return_value = "ISSUE"
+        button = Mock()
+        button.is_displayed.return_value = True
+        button.is_enabled.return_value = True
+        driver.find_element.side_effect = lambda _, id: (
+            number if id == "mx45-tb" else status if id == "mx73-tb" else button
+        )
+        with patch.object(client, "wait_for", side_effect=lambda browser, condition, *_args, **_kwargs: condition(browser)):
+            client.start_repair_report(driver, "4228010", "print", close_after_direct_print=True)
+        self.assertTrue(driver.execute_script.call_args.args[3])
 
     def test_desktop_report_stops_before_extension_for_ineligible_status(self):
         driver = Mock()

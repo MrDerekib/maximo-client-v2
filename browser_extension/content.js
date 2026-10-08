@@ -207,8 +207,12 @@
       button.textContent = "Preparando parte…";
       try {
         const outputFormat = button.dataset.maximoReportAction === "pdf" ? "pdf" : "html";
+        const closeTabs = outputFormat === "html" &&
+          (button.dataset.maximoCloseReportTabs === "true" ||
+            document.documentElement.dataset.maximoCloseReportTabs === "true");
         delete button.dataset.maximoReportAction;
-        const job = await send("START", { ot, outputFormat, client: repairClient() });
+        delete button.dataset.maximoCloseReportTabs;
+        const job = await send("START", { ot, outputFormat, client: repairClient(), closeTabs });
         jobId = job.jobId;
         button.textContent = job.variantCount > 1 ? "Preparando parte 1/2…" : "Preparando parte…";
         await submitReportVariant(jobId, button, job.variantIndex, job.variantCount);
@@ -259,7 +263,7 @@
         `OT ${job.ot} en el parte HTML`, 45000);
       window.print();
       const result = await send("FINISH", { jobId: job.jobId });
-      if (result?.nextVariant) window.close();
+      if (result?.closeTabs) window.close();
     } catch (error) {
       if (job) await send("FAIL", { jobId: job.jobId, reason: error.message }).catch(() => {});
       console.error("Maximo Desktop - parte:", error);

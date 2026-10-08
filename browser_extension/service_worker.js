@@ -64,6 +64,12 @@ function isBoixeresClient(client) {
     .replace(/\s+/g, " ").trim().toUpperCase().includes("TMB BOIXERES");
 }
 
+async function closeViewerTab(job) {
+  if (!job.closeTabs || !job.viewerTabId) return;
+  try { await chrome.tabs.remove(job.viewerTabId); }
+  catch (_) { /* The user may already have closed the BIRT tab. */ }
+}
+
 async function handleMessage(message, sender) {
   const tab = sender.tab;
   if (!tab?.id) throw new Error("No se ha identificado la pestaña de Maximo.");
@@ -78,7 +84,8 @@ async function handleMessage(message, sender) {
       id: crypto.randomUUID(), ot, outputFormat, sourceTabId: tab.id,
       viewerTabId: null, outputTabId: null, startedAt: Date.now(),
       variantIndex: 0,
-      variantCount: outputFormat === "html" && isBoixeresClient(message.client) ? 2 : 1
+      variantCount: outputFormat === "html" && isBoixeresClient(message.client) ? 2 : 1,
+      closeTabs: outputFormat === "html" && message.closeTabs === true
     };
     await chrome.storage.session.set({ [JOB_KEY]: job });
     return { jobId: job.id, ot, variantIndex: job.variantIndex, variantCount: job.variantCount };
@@ -306,6 +313,7 @@ async function handleMessage(message, sender) {
       throw new Error("La vista de impresión no pertenece al parte solicitado.");
     }
     if (message.type === "FINISH" && job.variantCount === 2 && job.variantIndex === 0) {
+      await closeViewerTab(job);
       job.variantIndex = 1;
       job.viewerTabId = null;
       job.outputTabId = null;
@@ -321,13 +329,14 @@ async function handleMessage(message, sender) {
         await chrome.storage.session.remove(JOB_KEY);
         throw new Error("No se pudo iniciar la segunda variante del parte.");
       }
-      return { ok: true, nextVariant: true };
+      return { ok: true, nextVariant: true, closeTabs: job.closeTabs };
     }
+    if (message.type === "FINISH") await closeViewerTab(job);
     await chrome.storage.session.remove(JOB_KEY);
     await tellSource(job, message.type === "FINISH"
       ? "Parte preparado. Comprueba el diálogo o la cola de impresión."
       : `No se pudo preparar el parte: ${message.reason || "error desconocido"}`);
-    return { ok: true };
+    return { ok: true, closeTabs: message.type === "FINISH" && job.closeTabs };
   }
   throw new Error("Mensaje desconocido.");
 }

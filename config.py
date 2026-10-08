@@ -40,6 +40,7 @@ class AppConfig:
     theme: str = "system"
     repair_extension_enabled: bool = False
     repair_print_mode: str = "dialog"
+    repair_close_tabs_after_direct_print: bool = False
     filters: dict | None = None
     last_status: dict | None = None
     latest_release_tag: str = ""
@@ -73,6 +74,8 @@ class AppConfig:
             self.theme = "system"
         if self.repair_print_mode not in {"dialog", "direct"}:
             self.repair_print_mode = "dialog"
+        if not isinstance(self.repair_close_tabs_after_direct_print, bool):
+            self.repair_close_tabs_after_direct_print = False
         if self.filters is None:
             self.filters = {"mx38_tfrow_[C:26]_txt-tb": "=LAB-BAD"}
         if not isinstance(self.table_column_widths, dict):

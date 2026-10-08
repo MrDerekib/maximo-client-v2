@@ -99,6 +99,10 @@ def default_printer_name() -> str:
         return ""
 
 
+def _should_close_after_direct_print(requested: bool, headless: bool, printer_name: str) -> bool:
+    return bool(requested and not headless and printer_name)
+
+
 def setup_driver(headless=True, profile_dir=None, download_dir=None, force_repair_extension=False):
     cfg = load_config()
     logging.info("Inicializando Edge...")
@@ -433,7 +437,10 @@ def process_html_table(file_path):
     return df
 
 
-def open_ot(ot: str, headless: bool = False, report_action: str | None = None):
+def open_ot(
+    ot: str, headless: bool = False, report_action: str | None = None,
+    close_after_direct_print: bool = False,
+):
     """
     Abre Maximo, entra en la aplicación de OT favorita y busca una OT concreta.
 
@@ -451,6 +458,10 @@ def open_ot(ot: str, headless: bool = False, report_action: str | None = None):
     try:
         options = {"force_repair_extension": True} if report_action else {}
         driver = setup_driver(headless=headless, profile_dir=profile_dir, **options)
+        close_after_direct_print = _should_close_after_direct_print(
+            close_after_direct_print, headless,
+            default_printer_name() if close_after_direct_print and not headless else "",
+        )
         login(driver, headless=headless)
         logging.info("Login OK, abriendo aplicación de órdenes de trabajo favoritas...")
 
@@ -475,7 +486,23 @@ def open_ot(ot: str, headless: bool = False, report_action: str | None = None):
         logging.info(f"OT {ot} enviada a Maximo.")
 
         if report_action:
-            start_repair_report(driver, ot, report_action)
+            start_repair_report(
+                driver, ot, report_action,
+                close_after_direct_print=close_after_direct_print,
+            )
+        elif close_after_direct_print:
+            wait_for(
+                driver,
+                lambda browser: (
+                    element if str((element := browser.find_element(By.ID, "mx45-tb")).get_attribute("value") or "").strip()
+                    == str(ot).strip() else False
+                ),
+                f"carga de la OT {ot} para aplicar las preferencias de impresión",
+                timeout=45,
+            )
+            driver.execute_script(
+                "document.documentElement.dataset.maximoCloseReportTabs = 'true';"
+            )
 
         if headless:
             if driver is not None:
@@ -497,7 +524,9 @@ def open_ot(ot: str, headless: bool = False, report_action: str | None = None):
         raise
 
 
-def start_repair_report(driver, ot: str, action: str):
+def start_repair_report(
+    driver, ot: str, action: str, close_after_direct_print: bool = False,
+):
     """Inicia el flujo de la extensión solo cuando la ficha solicitada está lista."""
     if action not in ("print", "pdf"):
         raise ValueError("Acción de parte desconocida.")
@@ -523,6 +552,8 @@ def start_repair_report(driver, ot: str, action: str):
 
     button = wait_for(driver, ready, f"botón de parte para la OT {ot}", timeout=20)
     driver.execute_script(
-        "arguments[0].dataset.maximoReportAction = arguments[1]; arguments[0].click();",
-        button, action,
+        "arguments[0].dataset.maximoReportAction = arguments[1]; "
+        "arguments[0].dataset.maximoCloseReportTabs = arguments[2] ? 'true' : 'false'; "
+        "arguments[0].click();",
+        button, action, bool(close_after_direct_print and action == "print"),
     )

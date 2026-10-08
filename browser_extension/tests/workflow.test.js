@@ -51,6 +51,7 @@ function chromeHarness() {
   const sent = [];
   const executions = [];
   const downloads = [];
+  const removedTabs = [];
   let updatedListener;
   global.chrome = {
     storage: { session: {
@@ -60,6 +61,7 @@ function chromeHarness() {
     } },
     tabs: {
       async sendMessage(tabId, message) { sent.push({ tabId, message }); },
+      async remove(tabId) { removedTabs.push(tabId); },
       onUpdated: { addListener(listener) { updatedListener = listener; } }
     },
     downloads: { async download(options) { downloads.push(options); return 1; } },
@@ -71,7 +73,7 @@ function chromeHarness() {
   };
   delete require.cache[require.resolve("../service_worker.js")];
   return { ...require("../service_worker.js"), session, sent, executions,
-    downloads, updated: (...args) => updatedListener(...args) };
+    downloads, removedTabs, updated: (...args) => updatedListener(...args) };
 }
 
 test("Maximo's report menu is clicked in the page's JavaScript world", async () => {
@@ -233,7 +235,7 @@ test("the source, viewer and HTML output form one print job", async () => {
 });
 
 test("TMB BOIXERES HTML jobs advance from the standard part to the stripped variant", async () => {
-  const { handleMessage, session, sent, JOB_KEY } = chromeHarness();
+  const { handleMessage, session, sent, removedTabs, JOB_KEY } = chromeHarness();
   const source = { tab: { id: 1 } };
   const firstViewer = { tab: { id: 2, openerTabId: 1 } };
   const firstOutput = { tab: { id: 3, openerTabId: 2 } };
@@ -245,7 +247,7 @@ test("TMB BOIXERES HTML jobs advance from the standard part to the stripped vari
   assert.equal((await handleMessage({ type: "CLAIM_VIEWER" }, firstViewer)).variantIndex, 0);
   await handleMessage({ type: "CLAIM_OUTPUT" }, firstOutput);
   assert.deepEqual(await handleMessage({ type: "FINISH", jobId: started.jobId }, firstOutput),
-    { ok: true, nextVariant: true });
+    { ok: true, nextVariant: true, closeTabs: false });
   assert.equal(session.get(JOB_KEY).variantIndex, 1);
   assert.equal(session.get(JOB_KEY).viewerTabId, null);
   assert.equal(sent.at(-1).message.type, "NEXT_VARIANT");
@@ -254,6 +256,44 @@ test("TMB BOIXERES HTML jobs advance from the standard part to the stripped vari
   await handleMessage({ type: "FINISH", jobId: started.jobId }, secondOutput);
   assert.equal(session.has(JOB_KEY), false);
   assert.equal(sent.at(-1).message.type, "STATUS");
+  assert.deepEqual(removedTabs, [], "manual-dialog jobs leave both BIRT tabs open");
+});
+
+test("direct-print cleanup closes the BIRT tab only when enabled", async () => {
+  const { handleMessage, removedTabs, session, JOB_KEY } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const viewer = { tab: { id: 2, openerTabId: 1 } };
+  const output = { tab: { id: 3, openerTabId: 2 } };
+  const started = await handleMessage({ type: "START", ot: "4228010", outputFormat: "html",
+    closeTabs: true }, source);
+  await handleMessage({ type: "CLAIM_VIEWER" }, viewer);
+  await handleMessage({ type: "CLAIM_OUTPUT" }, output);
+  assert.deepEqual(await handleMessage({ type: "FINISH", jobId: started.jobId }, output),
+    { ok: true, closeTabs: true });
+  assert.deepEqual(removedTabs, [2]);
+  assert.equal(session.has(JOB_KEY), false);
+});
+
+test("direct Boixeres printing closes each BIRT tab between both variants", async () => {
+  const { handleMessage, removedTabs, session, JOB_KEY } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const firstViewer = { tab: { id: 2, openerTabId: 1 } };
+  const firstOutput = { tab: { id: 3, openerTabId: 2 } };
+  const secondViewer = { tab: { id: 4, openerTabId: 1 } };
+  const secondOutput = { tab: { id: 5, openerTabId: 4 } };
+  const started = await handleMessage({ type: "START", ot: "4228010", outputFormat: "html",
+    client: "TMB BOIXERES", closeTabs: true }, source);
+  await handleMessage({ type: "CLAIM_VIEWER" }, firstViewer);
+  await handleMessage({ type: "CLAIM_OUTPUT" }, firstOutput);
+  assert.deepEqual(await handleMessage({ type: "FINISH", jobId: started.jobId }, firstOutput),
+    { ok: true, nextVariant: true, closeTabs: true });
+  assert.deepEqual(removedTabs, [2]);
+  await handleMessage({ type: "CLAIM_VIEWER" }, secondViewer);
+  await handleMessage({ type: "CLAIM_OUTPUT" }, secondOutput);
+  assert.deepEqual(await handleMessage({ type: "FINISH", jobId: started.jobId }, secondOutput),
+    { ok: true, closeTabs: true });
+  assert.deepEqual(removedTabs, [2, 4]);
+  assert.equal(session.has(JOB_KEY), false);
 });
 
 test("PDF jobs stay single even for TMB BOIXERES", async () => {

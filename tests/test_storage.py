@@ -32,6 +32,11 @@ class CredentialStoreTests(unittest.TestCase):
         self.assertEqual(config.AppConfig().theme, "system")
         self.assertEqual(config.AppConfig(theme="dark").theme, "dark")
         self.assertEqual(config.AppConfig(theme="contraste").theme, "system")
+        self.assertFalse(config.AppConfig().repair_close_tabs_after_direct_print)
+        self.assertTrue(config.AppConfig(repair_close_tabs_after_direct_print=True)
+                        .repair_close_tabs_after_direct_print)
+        self.assertFalse(config.AppConfig(repair_close_tabs_after_direct_print="yes")
+                         .repair_close_tabs_after_direct_print)
 
 
 class StorageMigrationTests(unittest.TestCase):

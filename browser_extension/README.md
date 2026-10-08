@@ -29,6 +29,8 @@ guardarlo desde su visor.
 usa la impresora predeterminada de Windows y las preferencias de blanco y negro
 sin encabezados; si no hay impresora predeterminada al abrir Edge, se muestra
 el diálogo. El modo directo afecta a cualquier impresión de esa ventana Edge.
+La opción de Configuración para cerrar las ventanas del parte solo se aplica al
+modo directo; con diálogo manual, el visor y el HTML permanecen abiertos.
 
 Para informes HTML cuyo campo Cliente de la OT contiene `TMB BOIXERES`, la extensión
 prepara dos impresiones consecutivas usando el parámetro de Maximo «Incluir nombre y

@@ -1169,15 +1169,19 @@ class MaximoDesktopWindow(QMainWindow):
         self.repair_mode_combo = DecoratedComboBox()
         self.repair_mode_combo.addItem("Mostrar diálogo de impresión", "dialog")
         self.repair_mode_combo.addItem("Imprimir directamente", "direct")
+        self.repair_close_tabs_check = QCheckBox("Cerrar las ventanas del parte tras impresión directa")
         self.repair_hint = QLabel(
             "El modo directo usa la impresora predeterminada de Windows. "
             "Se aplica a todas las impresiones de esa ventana de Edge. "
+            "Las ventanas del parte solo se cierran en modo directo si activas esta opción. "
+            "Con el diálogo de impresión permanecen abiertas para que puedas revisarlas o cancelar. "
             "Los cambios afectan a las nuevas ventanas de OT."
         )
         self.repair_hint.setObjectName("filterHint")
         self.repair_hint.setWordWrap(True)
         repair_form.addRow("", self.repair_extension_check)
         repair_form.addRow("Al pulsar Imprimir parte", self.repair_mode_combo)
+        repair_form.addRow("", self.repair_close_tabs_check)
         repair_form.addRow("", self.repair_hint)
         self.repair_extension_check.toggled.connect(self.repair_mode_combo.setEnabled)
 
@@ -2012,19 +2016,33 @@ class MaximoDesktopWindow(QMainWindow):
     def open_ot_number(self, ot):
         if self._closing or not ot or not self._credentials_ready(): return
         self.status.showMessage(f"Abriendo OT {ot} en Maximo…")
+        close_after_direct_print = (
+            self.cfg.repair_print_mode == "direct"
+            and self.cfg.repair_close_tabs_after_direct_print
+        )
         def done(session):
             if session: self.ot_sessions.append(session)
             self.status.showMessage(f"OT {ot} abierta en Microsoft Edge.")
-        self._start_task(lambda: open_ot(ot, headless=False), done)
+        self._start_task(lambda: open_ot(
+            ot, headless=False, close_after_direct_print=close_after_direct_print,
+        ), done)
 
     def open_repair_report(self, ot, action):
         if self._closing or not ot or not self._credentials_ready(): return
         label = "impresión" if action == "print" else "PDF"
         self.status.showMessage(f"Abriendo OT {ot} y preparando parte para {label}…")
+        close_after_direct_print = (
+            action == "print"
+            and self.cfg.repair_print_mode == "direct"
+            and self.cfg.repair_close_tabs_after_direct_print
+        )
         def done(session):
             if session: self.ot_sessions.append(session)
             self.status.showMessage(f"OT {ot}: parte en preparación en Microsoft Edge.")
-        self._start_task(lambda: open_ot(ot, headless=False, report_action=action), done)
+        self._start_task(lambda: open_ot(
+            ot, headless=False, report_action=action,
+            close_after_direct_print=close_after_direct_print,
+        ), done)
 
     def export_current_list(self):
         if not any(not self.table.isRowHidden(row) for row in range(self.table.rowCount())):
@@ -2097,6 +2115,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.detailed_descriptions_check.setChecked(self.cfg.detailed_descriptions_enabled)
         self.repair_extension_check.setChecked(self.cfg.repair_extension_enabled)
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
+        self.repair_close_tabs_check.setChecked(self.cfg.repair_close_tabs_after_direct_print)
         self.repair_mode_combo.setEnabled(self.cfg.repair_extension_enabled)
         self.fault_batch_spin.setValue(self.cfg.fault_description_batch_size)
         theme_signals_blocked = self.theme_combo.blockSignals(True)
@@ -2146,6 +2165,7 @@ class MaximoDesktopWindow(QMainWindow):
             or self.detailed_descriptions_check.isChecked() != self.cfg.detailed_descriptions_enabled
             or self.repair_extension_check.isChecked() != self.cfg.repair_extension_enabled
             or self.repair_mode_combo.currentData() != self.cfg.repair_print_mode
+            or self.repair_close_tabs_check.isChecked() != self.cfg.repair_close_tabs_after_direct_print
             or self.fault_batch_spin.value() != self.cfg.fault_description_batch_size
             or self.priority_tmb_validity.currentData() != self.cfg.priority_tmb_validity
             or self.priority_l9_validity.currentData() != self.cfg.priority_l9_validity
@@ -2159,6 +2179,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.cfg.detailed_descriptions_enabled = self.detailed_descriptions_check.isChecked()
         self.cfg.repair_extension_enabled = self.repair_extension_check.isChecked()
         self.cfg.repair_print_mode = self.repair_mode_combo.currentData()
+        self.cfg.repair_close_tabs_after_direct_print = self.repair_close_tabs_check.isChecked()
         self.cfg.fault_description_batch_size = self.fault_batch_spin.value()
         self.cfg.priority_tmb_validity = self.priority_tmb_validity.currentData()
         self.cfg.priority_l9_validity = self.priority_l9_validity.currentData()
