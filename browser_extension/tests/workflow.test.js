@@ -67,7 +67,8 @@ function chromeHarness() {
     downloads: { async download(options) { downloads.push(options); return 1; } },
     scripting: { async executeScript(options) {
       executions.push(options);
-      return [{ result: { clicked: true, filled: true, buttonId: "mx654-pb", submitted: true } }];
+      return [{ result: { clicked: true, filled: true, buttonId: "mx654-pb", submitted: true,
+        updated: true, maximoChanged: true } }];
     } },
     runtime: { onMessage: { addListener() {} } }
   };
@@ -310,53 +311,56 @@ test("repair report variants set Maximo's include-technician parameter in the pa
     outputFormat: "html", client: "TMB BOIXERES" }, source);
   assert.equal(variantCount, 2);
   assert.deepEqual(await handleMessage({ type: "SET_REPAIR_INFO", jobId, value: "N" }, source),
-    { updated: true });
+    { updated: true, maximoChanged: true });
   assert.equal(executions[0].world, "MAIN");
   assert.deepEqual(executions[0].args, ["N"]);
 });
 
-test("repair parameter entry emits keyboard events and verifies Maximo accepted the edit", async () => {
+test("repair parameter uses Maximo's YORN lookup to choose N", async () => {
   const { handleMessage, executions } = chromeHarness();
   const source = { tab: { id: 1 } };
   const { jobId } = await handleMessage({ type: "START", ot: "4228010",
     outputFormat: "html", client: "TMB BOIXERES" }, source);
   await handleMessage({ type: "SET_REPAIR_INFO", jobId, value: "N" }, source);
 
-  const events = [];
+  let lookupOpened = false;
+  let selected = false;
   const field = {
-    id: "mx396-ta", value: "S", attributes: {},
+    id: "mx396-ta", value: "S", title: "S", attributes: { linkedimage: "mx396-img" },
     getClientRects: () => [1], getAttribute(name) { return this.attributes[name] || null; },
-    focus() {}, select() {}, blur() {}, closest() { return null; },
-    dispatchEvent(event) {
-      events.push(event.type);
-      if (event.type === "keydown") this.attributes.changed_by_user = "true";
+    closest() { return null; }
+  };
+  const option = {
+    textContent: "N", innerText: "N", getClientRects: () => [1],
+    closest: () => null, scrollIntoView() {}, click() {
+      selected = true;
+      field.value = "N";
+      field.title = "N";
+      field.attributes.changed_by_user = "true";
     }
   };
+  const popup = { contains: element => element === field ? false : true,
+    getClientRects: () => [1], querySelectorAll: () => [option] };
+  const lookup = { getClientRects: () => [1], click() { lookupOpened = true; } };
   const label = { htmlFor: "mx396-ta", textContent: "Incluir nombre y tiempo reparacion:" };
   const previousDocument = global.document;
-  const previousKeyboardEvent = global.KeyboardEvent;
-  const previousTextarea = global.HTMLTextAreaElement;
-  const previousEvent = global.Event;
-  global.KeyboardEvent = class { constructor(type) { this.type = type; } };
-  global.HTMLTextAreaElement = class {};
-  global.Event = class { constructor(type) { this.type = type; } };
   global.document = {
     querySelectorAll(selector) {
       if (selector === "input, textarea, select") return [field];
       if (selector === "label[for]") return [label];
+      if (selector.includes("role='dialog'")) return lookupOpened ? [popup] : [];
       return [];
     },
-    getElementById: () => null,
-    execCommand(command, _ui, value) { field.value = value; return true; }
+    getElementById(id) { return id === "mx396-img" ? lookup : null; }
   };
   try {
-    assert.deepEqual(executions[0].func("N"), { updated: true, maximoChanged: true });
-    assert.deepEqual(events, ["keydown", "keypress", "keyup", "change", "keydown", "keyup"]);
+    assert.deepEqual(await executions[0].func("N"), {
+      updated: true, maximoChanged: true, method: "lookup"
+    });
+    assert.equal(lookupOpened, true);
+    assert.equal(selected, true);
   } finally {
     global.document = previousDocument;
-    global.KeyboardEvent = previousKeyboardEvent;
-    global.HTMLTextAreaElement = previousTextarea;
-    global.Event = previousEvent;
   }
 });
 

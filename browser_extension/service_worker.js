@@ -206,7 +206,7 @@ async function handleMessage(message, sender) {
       target: { tabId: tab.id },
       world: "MAIN",
       args: [message.value],
-      func: value => {
+      func: async value => {
         const visible = element => Boolean(element?.getClientRects().length);
         const labelPattern = /incluir nombre y tiempo reparaci[oó]n/i;
         const controls = [...document.querySelectorAll("input, textarea, select")].filter(visible);
@@ -225,53 +225,64 @@ async function handleMessage(message, sender) {
           return Boolean(labelId && labelPattern.test(document.getElementById(labelId)?.textContent || ""));
         });
         if (!field) return { updated: false, reason: "field" };
-        field.focus();
-        field.select?.();
-        const keyCode = value.charCodeAt(0);
-        const keyOptions = {
-          bubbles: true, cancelable: true, key: value,
-          code: `Key${value.toUpperCase()}`, keyCode, which: keyCode
-        };
-        field.dispatchEvent(new KeyboardEvent("keydown", keyOptions));
-        field.dispatchEvent(new KeyboardEvent("keypress", { ...keyOptions, charCode: keyCode }));
-        let inserted = false;
-        try { inserted = document.execCommand?.("insertText", false, value) || false; }
-        catch (_) { /* Set the native control value below. */ }
-        if (!inserted || field.value !== value) {
-          const prototype = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
-            : field instanceof HTMLSelectElement ? HTMLSelectElement.prototype
-              : HTMLInputElement.prototype;
-          const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-          if (setter) setter.call(field, value);
-          else field.value = value;
-          field.dispatchEvent(new InputEvent("input", {
-            bubbles: true, data: value, inputType: "insertText"
-          }));
+        if (String(field.value || "").trim() === value) return { updated: true, alreadySet: true };
+
+        const lookupId = field.getAttribute("linkedimage");
+        const lookup = lookupId && document.getElementById(lookupId);
+        if (!lookup || !visible(lookup)) return { updated: false, reason: "lookup" };
+        lookup.click();
+
+        const normalize = text => String(text || "").replace(/\s+/g, " ").trim().toUpperCase();
+        const started = Date.now();
+        while (Date.now() - started < 10000) {
+          const popups = [...document.querySelectorAll(
+            "[role='dialog'], [id$='_dialog_inner'], [id$='-dialog_inner'], [id*='lookup'], .dijitDialog"
+          )].filter(element => visible(element) && !element.contains(field));
+          const choices = new Set();
+          for (const popup of popups) {
+            for (const option of popup.querySelectorAll(
+              "a, button, [role='option'], [role='menuitem'], td, span[id*='_ttxt-lb']"
+            )) {
+              const label = normalize(option.innerText || option.textContent || option.value ||
+                option.getAttribute("value") || option.getAttribute("title"));
+              if (label === value || (value === "N" && label === "NO")) {
+                choices.add(option.closest("a, button, [role='option'], [role='menuitem'], tr") || option);
+              }
+            }
+          }
+          if (choices.size === 1) {
+            const option = [...choices][0];
+            option.scrollIntoView?.({ block: "center" });
+            option.click();
+            const selectedAt = Date.now();
+            while (Date.now() - selectedAt < 5000) {
+              const maximoAccepted = field.getAttribute("changed") === "true" ||
+                field.getAttribute("changed_by_user") === "true" || field.title === value;
+              if (String(field.value || "").trim() === value && maximoAccepted) {
+                return { updated: true, maximoChanged: true, method: "lookup" };
+              }
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            return { updated: false, reason: "not-accepted" };
+          }
+          if (choices.size > 1) return { updated: false, reason: "ambiguous" };
+          await new Promise(resolve => setTimeout(resolve, 150));
         }
-        field.dispatchEvent(new KeyboardEvent("keyup", keyOptions));
-        field.dispatchEvent(new Event("change", { bubbles: true }));
-        // Maximo's async setvalue processing is commonly committed when the
-        // operator tabs out of the field. A textarea must not receive Enter,
-        // which would insert a newline into the parameter.
-        const tabOptions = {
-          bubbles: true, cancelable: true, key: "Tab", code: "Tab", keyCode: 9, which: 9
-        };
-        field.dispatchEvent(new KeyboardEvent("keydown", tabOptions));
-        field.dispatchEvent(new KeyboardEvent("keyup", tabOptions));
-        field.blur();
-        return {
-          updated: field.value === value,
-          maximoChanged: field.getAttribute("changed") === "true" ||
-            field.getAttribute("changed_by_user") === "true"
-        };
+        return { updated: false, reason: "option" };
       }
     });
-    if (execution?.result?.updated === false) {
-      throw new Error(execution.result.reason === "field"
-        ? "No se encontró el parámetro «Incluir nombre y tiempo reparación» del informe."
-        : "No se pudo aplicar el parámetro de la variante del parte.");
+    if (execution?.result?.updated !== true) {
+      const reasons = {
+        field: "No se encontró el parámetro «Incluir nombre y tiempo reparación» del informe.",
+        lookup: "No se encontró la lupa del parámetro del parte.",
+        option: "La lupa no mostró una opción «N» reconocible; no se envió el informe.",
+        ambiguous: "La lupa mostró varias opciones «N»; no se envió el informe.",
+        "not-accepted": "Maximo no confirmó el cambio a «N»; no se envió el informe."
+      };
+      throw new Error(reasons[execution?.result?.reason] ||
+        "Maximo no confirmó la selección «N» en la lupa; no se envió el informe.");
     }
-    return { updated: true };
+    return { updated: true, maximoChanged: execution?.result?.maximoChanged === true };
   }
 
   if (message.type === "CLICK_REPORT_SUBMIT") {
