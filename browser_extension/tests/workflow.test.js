@@ -323,8 +323,13 @@ test("repair parameter uses Maximo's YORN lookup to choose N", async () => {
     outputFormat: "html", client: "TMB BOIXERES" }, source);
   await handleMessage({ type: "SET_REPAIR_INFO", jobId, value: "N" }, source);
 
+  const previousMouseEvent = global.MouseEvent;
+  const previousPointerEvent = global.PointerEvent;
+  global.MouseEvent = class { constructor(type) { this.type = type; } };
+  global.PointerEvent = class { constructor(type) { this.type = type; } };
   let lookupOpened = false;
   let selected = false;
+  const optionEvents = [];
   const field = {
     id: "mx396-ta", value: "S", title: "S", attributes: { linkedimage: "mx396-img" },
     getClientRects: () => [1], getAttribute(name) { return this.attributes[name] || null; },
@@ -333,7 +338,9 @@ test("repair parameter uses Maximo's YORN lookup to choose N", async () => {
   const option = {
     id: "lookup_page3_tdrow_[C:1]_ttxt-lb[R:0]",
     textContent: "N", innerText: "N", getClientRects: () => [1],
-    focus() {}, scrollIntoView() {}, click() {
+    focus() {}, scrollIntoView() {}, dispatchEvent(event) {
+      optionEvents.push(event.type);
+    }, click() {
       selected = true;
       field.value = "N";
       field.title = "N";
@@ -360,8 +367,11 @@ test("repair parameter uses Maximo's YORN lookup to choose N", async () => {
     });
     assert.equal(lookupOpened, true);
     assert.equal(selected, true);
+    assert.deepEqual(optionEvents, ["pointerdown", "mousedown", "pointerup", "mouseup"]);
   } finally {
     global.document = previousDocument;
+    global.MouseEvent = previousMouseEvent;
+    global.PointerEvent = previousPointerEvent;
   }
 });
 

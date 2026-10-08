@@ -243,6 +243,21 @@ async function handleMessage(message, sender) {
             option.scrollIntoView?.({ block: "center" });
             option.focus?.();
             // The mxevent handler is attached to this label, not its table row.
+            // Maximo's other report actions need a complete mouse sequence for
+            // the delegated mxevent handler; HTMLElement.click() alone is not enough.
+            const eventOptions = { bubbles: true, cancelable: true, composed: true, button: 0 };
+            if (typeof PointerEvent === "function") {
+              option.dispatchEvent(new PointerEvent("pointerdown", {
+                ...eventOptions, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true
+              }));
+            }
+            option.dispatchEvent(new MouseEvent("mousedown", { ...eventOptions, buttons: 1 }));
+            if (typeof PointerEvent === "function") {
+              option.dispatchEvent(new PointerEvent("pointerup", {
+                ...eventOptions, buttons: 0, pointerId: 1, pointerType: "mouse", isPrimary: true
+              }));
+            }
+            option.dispatchEvent(new MouseEvent("mouseup", { ...eventOptions, buttons: 0 }));
             option.click();
             const selectedAt = Date.now();
             while (Date.now() - selectedAt < 5000) {
