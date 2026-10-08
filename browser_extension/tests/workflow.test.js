@@ -33,10 +33,17 @@ test("Boixeres client recognition ignores case, accents, and repeated spaces", (
   assert.equal(isBoixeresClient("TMB"), false);
 });
 
-test("the client is read from Maximo's mx47-tb work-order field", () => {
+test("the exact mx47-tb field takes priority, with a Cliente row fallback", () => {
   assert.equal(clientFromWorkorder({ getElementById: id =>
     id === "mx47-tb" ? { value: "TMB BOIXERES" } : null }), "TMB BOIXERES");
   assert.equal(clientFromWorkorder({ getElementById: () => null }), "");
+  const label = {
+    innerText: "Cliente:",
+    getClientRects: () => [1],
+    closest: () => ({ innerText: "Cliente: TMB BOIXERES" })
+  };
+  assert.equal(clientFromWorkorder({ getElementById: () => null,
+    querySelectorAll: () => [label] }), "Cliente: TMB BOIXERES");
 });
 
 function chromeHarness() {

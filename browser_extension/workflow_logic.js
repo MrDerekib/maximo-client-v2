@@ -27,7 +27,18 @@
   }
 
   function clientFromWorkorder(documentRoot) {
-    return String(documentRoot?.getElementById("mx47-tb")?.value || "").trim();
+    const fieldValue = String(documentRoot?.getElementById("mx47-tb")?.value || "").trim();
+    if (fieldValue) return fieldValue;
+
+    const labels = [...(documentRoot?.querySelectorAll?.("td, span, label, div") || [])]
+      .filter(element => (!element.getClientRects || element.getClientRects().length) &&
+        /^cliente\s*:?$/i.test((element.innerText || element.textContent || "")
+          .replace(/\s+/g, " ").trim()));
+    for (const label of labels) {
+      const row = label.closest?.("tr");
+      if (row) return String(row.innerText || row.textContent || "").trim();
+    }
+    return "";
   }
 
   const logic = { pageKind, containsOt, canPrintStatus, isBoixeresClient, clientFromWorkorder };
