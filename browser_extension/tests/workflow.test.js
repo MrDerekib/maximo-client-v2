@@ -331,8 +331,9 @@ test("repair parameter uses Maximo's YORN lookup to choose N", async () => {
     closest() { return null; }
   };
   const option = {
+    id: "lookup_page3_tdrow_[C:1]_ttxt-lb[R:0]",
     textContent: "N", innerText: "N", getClientRects: () => [1],
-    closest: () => null, scrollIntoView() {}, click() {
+    focus() {}, scrollIntoView() {}, click() {
       selected = true;
       field.value = "N";
       field.title = "N";
@@ -348,7 +349,7 @@ test("repair parameter uses Maximo's YORN lookup to choose N", async () => {
     querySelectorAll(selector) {
       if (selector === "input, textarea, select") return [field];
       if (selector === "label[for]") return [label];
-      if (selector.includes("role='dialog'")) return lookupOpened ? [popup] : [];
+      if (selector.startsWith("span[id^='lookup_page']")) return lookupOpened ? [option] : [];
       return [];
     },
     getElementById(id) { return id === "mx396-img" ? lookup : null; }

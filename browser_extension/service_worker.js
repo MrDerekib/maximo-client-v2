@@ -235,24 +235,14 @@ async function handleMessage(message, sender) {
         const normalize = text => String(text || "").replace(/\s+/g, " ").trim().toUpperCase();
         const started = Date.now();
         while (Date.now() - started < 10000) {
-          const popups = [...document.querySelectorAll(
-            "[role='dialog'], [id$='_dialog_inner'], [id$='-dialog_inner'], [id*='lookup'], .dijitDialog"
-          )].filter(element => visible(element) && !element.contains(field));
-          const choices = new Set();
-          for (const popup of popups) {
-            for (const option of popup.querySelectorAll(
-              "a, button, [role='option'], [role='menuitem'], td, span[id*='_ttxt-lb']"
-            )) {
-              const label = normalize(option.innerText || option.textContent || option.value ||
-                option.getAttribute("value") || option.getAttribute("title"));
-              if (label === value || (value === "N" && label === "NO")) {
-                choices.add(option.closest("a, button, [role='option'], [role='menuitem'], tr") || option);
-              }
-            }
-          }
-          if (choices.size === 1) {
-            const option = [...choices][0];
+          const choices = [...document.querySelectorAll(
+            "span[id^='lookup_page'][id*='_tdrow_'][id*='_ttxt-lb']"
+          )].filter(option => visible(option) && normalize(option.textContent) === value);
+          if (choices.length === 1) {
+            const option = choices[0];
             option.scrollIntoView?.({ block: "center" });
+            option.focus?.();
+            // The mxevent handler is attached to this label, not its table row.
             option.click();
             const selectedAt = Date.now();
             while (Date.now() - selectedAt < 5000) {
@@ -265,7 +255,7 @@ async function handleMessage(message, sender) {
             }
             return { updated: false, reason: "not-accepted" };
           }
-          if (choices.size > 1) return { updated: false, reason: "ambiguous" };
+          if (choices.length > 1) return { updated: false, reason: "ambiguous" };
           await new Promise(resolve => setTimeout(resolve, 150));
         }
         return { updated: false, reason: "option" };
