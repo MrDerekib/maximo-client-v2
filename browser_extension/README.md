@@ -35,6 +35,8 @@ modo directo; con diálogo manual, el visor y el HTML permanecen abiertos.
 Para informes HTML cuyo campo Cliente de la OT contiene `TMB BOIXERES`, la extensión
 prepara dos impresiones consecutivas usando el parámetro de Maximo «Incluir nombre y
 tiempo reparación»: primero `S` (parte habitual) y después `N` (sin técnico ni tiempo).
+La selección de `N` la completa Maximo Desktop con un click WebDriver real; por tanto,
+esta variante requiere Edge iniciado y controlado por Maximo Desktop.
 En otras OT el flujo sigue generando una sola impresión. La opción de guardar PDF
 continúa generando un único PDF.
 

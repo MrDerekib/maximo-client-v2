@@ -323,13 +323,7 @@ test("repair parameter uses Maximo's YORN lookup to choose N", async () => {
     outputFormat: "html", client: "TMB BOIXERES" }, source);
   await handleMessage({ type: "SET_REPAIR_INFO", jobId, value: "N" }, source);
 
-  const previousMouseEvent = global.MouseEvent;
-  const previousPointerEvent = global.PointerEvent;
-  global.MouseEvent = class { constructor(type) { this.type = type; } };
-  global.PointerEvent = class { constructor(type) { this.type = type; } };
   let lookupOpened = false;
-  let selected = false;
-  const optionEvents = [];
   const field = {
     id: "mx396-ta", value: "S", title: "S", attributes: { linkedimage: "mx396-img" },
     getClientRects: () => [1], getAttribute(name) { return this.attributes[name] || null; },
@@ -338,14 +332,7 @@ test("repair parameter uses Maximo's YORN lookup to choose N", async () => {
   const option = {
     id: "lookup_page3_tdrow_[C:1]_ttxt-lb[R:0]",
     textContent: "N", innerText: "N", getClientRects: () => [1],
-    focus() {}, scrollIntoView() {}, dispatchEvent(event) {
-      optionEvents.push(event.type);
-    }, click() {
-      selected = true;
-      field.value = "N";
-      field.title = "N";
-      field.attributes.changed_by_user = "true";
-    }
+    focus() {}, scrollIntoView() {}, click() {}
   };
   const popup = { contains: element => element === field ? false : true,
     getClientRects: () => [1], querySelectorAll: () => [option] };
@@ -359,19 +346,17 @@ test("repair parameter uses Maximo's YORN lookup to choose N", async () => {
       if (selector.startsWith("span[id^='lookup_page']")) return lookupOpened ? [option] : [];
       return [];
     },
-    getElementById(id) { return id === "mx396-img" ? lookup : null; }
+    getElementById(id) { return id === "mx396-img" ? lookup : null; },
+    documentElement: { dataset: {} }
   };
   try {
     assert.deepEqual(await executions[0].func("N"), {
-      updated: true, maximoChanged: true, method: "lookup"
+      updated: true, pendingNativeClick: true, method: "lookup"
     });
     assert.equal(lookupOpened, true);
-    assert.equal(selected, true);
-    assert.deepEqual(optionEvents, ["pointerdown", "mousedown", "pointerup", "mouseup"]);
+    assert.equal(global.document.documentElement.dataset.maximoNativeLookupClick, option.id);
   } finally {
     global.document = previousDocument;
-    global.MouseEvent = previousMouseEvent;
-    global.PointerEvent = previousPointerEvent;
   }
 });
 

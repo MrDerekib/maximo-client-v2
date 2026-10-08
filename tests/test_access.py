@@ -14,6 +14,30 @@ import updater
 
 
 class AccessTests(unittest.TestCase):
+    def test_pending_repair_lookup_is_clicked_by_webdriver(self):
+        option_id = "lookup_page3_tdrow_[C:1]_ttxt-lb[R:0]"
+        option = Mock()
+        option.is_displayed.return_value = True
+        driver = Mock()
+        driver.execute_script.side_effect = [option_id, None]
+        driver.find_elements.return_value = [option]
+
+        self.assertTrue(client._click_pending_repair_lookup(driver))
+
+        driver.find_elements.assert_called_once_with(client.By.ID, option_id)
+        option.click.assert_called_once_with()
+        self.assertIn("maximoNativeLookupClick", driver.execute_script.call_args.args[0])
+
+    def test_pending_lookup_click_rejects_unexpected_ids(self):
+        driver = Mock()
+        driver.execute_script.return_value = "mx45-tb"
+
+        self.assertFalse(client._click_pending_repair_lookup(driver))
+
+        driver.find_elements.assert_not_called()
+        self.assertIn("delete document.documentElement.dataset.maximoNativeLookupClick",
+                      driver.execute_script.call_args.args[0])
+
     def test_close_after_direct_print_requires_visible_default_printer(self):
         self.assertTrue(client._should_close_after_direct_print(True, False, "Office Printer"))
         self.assertFalse(client._should_close_after_direct_print(True, False, ""))

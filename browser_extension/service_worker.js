@@ -240,35 +240,10 @@ async function handleMessage(message, sender) {
           )].filter(option => visible(option) && normalize(option.textContent) === value);
           if (choices.length === 1) {
             const option = choices[0];
-            option.scrollIntoView?.({ block: "center" });
-            option.focus?.();
-            // The mxevent handler is attached to this label, not its table row.
-            // Maximo's other report actions need a complete mouse sequence for
-            // the delegated mxevent handler; HTMLElement.click() alone is not enough.
-            const eventOptions = { bubbles: true, cancelable: true, composed: true, button: 0 };
-            if (typeof PointerEvent === "function") {
-              option.dispatchEvent(new PointerEvent("pointerdown", {
-                ...eventOptions, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true
-              }));
-            }
-            option.dispatchEvent(new MouseEvent("mousedown", { ...eventOptions, buttons: 1 }));
-            if (typeof PointerEvent === "function") {
-              option.dispatchEvent(new PointerEvent("pointerup", {
-                ...eventOptions, buttons: 0, pointerId: 1, pointerType: "mouse", isPrimary: true
-              }));
-            }
-            option.dispatchEvent(new MouseEvent("mouseup", { ...eventOptions, buttons: 0 }));
-            option.click();
-            const selectedAt = Date.now();
-            while (Date.now() - selectedAt < 5000) {
-              const maximoAccepted = field.getAttribute("changed") === "true" ||
-                field.getAttribute("changed_by_user") === "true" || field.title === value;
-              if (String(field.value || "").trim() === value && maximoAccepted) {
-                return { updated: true, maximoChanged: true, method: "lookup" };
-              }
-              await new Promise(resolve => setTimeout(resolve, 100));
-            }
-            return { updated: false, reason: "not-accepted" };
+            // Mark the exact Maximo link for Selenium. WebDriver can produce a
+            // trusted browser click; synthetic DOM events are ignored here.
+            document.documentElement.dataset.maximoNativeLookupClick = option.id;
+            return { updated: true, pendingNativeClick: true, method: "lookup" };
           }
           if (choices.length > 1) return { updated: false, reason: "ambiguous" };
           await new Promise(resolve => setTimeout(resolve, 150));
@@ -282,7 +257,6 @@ async function handleMessage(message, sender) {
         lookup: "No se encontró la lupa del parámetro del parte.",
         option: "La lupa no mostró una opción «N» reconocible; no se envió el informe.",
         ambiguous: "La lupa mostró varias opciones «N»; no se envió el informe.",
-        "not-accepted": "Maximo no confirmó el cambio a «N»; no se envió el informe."
       };
       throw new Error(reasons[execution?.result?.reason] ||
         "Maximo no confirmó la selección «N» en la lupa; no se envió el informe.");

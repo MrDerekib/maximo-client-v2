@@ -115,7 +115,7 @@
         await send("SET_REPAIR_INFO", { jobId, value: includeTechnicianAndTime });
         await waitFor(() => repairInfoField()?.value === includeTechnicianAndTime
           ? repairInfoField() : null,
-        `confirmación de la selección ${includeTechnicianAndTime} en la lupa`, 8000);
+        `confirmación de la selección ${includeTechnicianAndTime} en la lupa`, 20000);
       }
     }
     await new Promise(resolve => setTimeout(resolve, 1500));

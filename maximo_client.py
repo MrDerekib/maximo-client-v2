@@ -3,6 +3,7 @@ import os
 import json
 import time
 import shutil
+import threading
 import pandas as pd
 import logging
 from pathlib import Path
@@ -17,6 +18,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import WebDriverException
 
 PAGE_TIMEOUT = 60
 DOWNLOAD_TIMEOUT = 180
@@ -76,6 +78,58 @@ def wait_for(driver, condition, description, timeout=PAGE_TIMEOUT, cancel_event=
         ) from exc
     finally:
         logging.info("Espera %s: %.2fs", description, time.monotonic() - started)
+
+
+def _click_pending_repair_lookup(driver) -> bool:
+    """Complete a Maximo YORN lookup with a trusted Selenium click when requested."""
+    option_id = driver.execute_script(
+        "return document.documentElement?.dataset.maximoNativeLookupClick || '';"
+    )
+    if not option_id:
+        return False
+    if not (option_id.startswith("lookup_page") and "_tdrow_" in option_id and
+            option_id.endswith("_ttxt-lb[R:0]")):
+        driver.execute_script("delete document.documentElement.dataset.maximoNativeLookupClick;")
+        logging.warning("Maximo solicitó un click nativo con un identificador no permitido: %s", option_id)
+        return False
+
+    options = driver.find_elements(By.ID, option_id)
+    if not options or not options[0].is_displayed():
+        return False
+    options[0].click()
+    driver.execute_script(
+        "if (document.documentElement.dataset.maximoNativeLookupClick === arguments[0]) "
+        "delete document.documentElement.dataset.maximoNativeLookupClick;",
+        option_id,
+    )
+    logging.info("Selección de lookup Maximo confirmada con click WebDriver: %s", option_id)
+    return True
+
+
+def _start_repair_lookup_clicker(driver) -> None:
+    """Watch for a lookup request from the extension and click it through WebDriver."""
+    if getattr(driver, "_maximo_repair_lookup_clicker", False):
+        return
+    driver._maximo_repair_lookup_clicker = True
+
+    def watch():
+        while True:
+            time.sleep(0.5)
+            try:
+                _click_pending_repair_lookup(driver)
+            except WebDriverException:
+                # A closed Edge session ends the watcher; a transient stale element
+                # is retried on the next pass while the lookup remains open.
+                service = getattr(driver, "service", None)
+                if not getattr(driver, "session_id", None) or (
+                    service is not None and not service.is_connectable()
+                ):
+                    return
+                logging.debug("Click nativo del lookup Maximo pendiente de reintento", exc_info=True)
+            except Exception:
+                logging.debug("No se pudo atender el lookup Maximo", exc_info=True)
+
+    threading.Thread(target=watch, name="maximo-repair-lookup", daemon=True).start()
 
 
 def visible_ot_print_preferences():
@@ -451,6 +505,10 @@ def open_ot(
     """
     if report_action not in (None, "print", "pdf") or (report_action and headless):
         raise ValueError("La acción del parte requiere una ventana visible y un formato válido.")
+    cfg = load_config()
+    repair_extension_loaded = not headless and (
+        report_action is not None or getattr(cfg, "repair_extension_enabled", False)
+    )
     profile_dir = create_edge_profile("maximo-ot-")
     logging.info(f"OT {ot}: usando perfil temporal {profile_dir}")
 
@@ -485,6 +543,16 @@ def open_ot(
         search_box.send_keys(Keys.RETURN)
         logging.info(f"OT {ot} enviada a Maximo.")
 
+        if repair_extension_loaded:
+            wait_for(
+                driver,
+                lambda browser: (
+                    element if str((element := browser.find_element(By.ID, "mx45-tb")).get_attribute("value") or "").strip()
+                    == str(ot).strip() else False
+                ),
+                f"carga de la OT {ot} para activar la selección nativa del lookup",
+                timeout=45,
+            )
         if report_action:
             start_repair_report(
                 driver, ot, report_action,
@@ -503,6 +571,9 @@ def open_ot(
             driver.execute_script(
                 "document.documentElement.dataset.maximoCloseReportTabs = 'true';"
             )
+
+        if repair_extension_loaded:
+            _start_repair_lookup_clicker(driver)
 
         if headless:
             if driver is not None:
