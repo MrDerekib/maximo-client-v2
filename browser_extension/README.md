@@ -30,6 +30,12 @@ usa la impresora predeterminada de Windows y las preferencias de blanco y negro
 sin encabezados; si no hay impresora predeterminada al abrir Edge, se muestra
 el diálogo. El modo directo afecta a cualquier impresión de esa ventana Edge.
 
+Para informes HTML cuyo campo Cliente de la OT contiene `TMB BOIXERES`, la extensión
+prepara dos impresiones consecutivas usando el parámetro de Maximo «Incluir nombre y
+tiempo reparación»: primero `S` (parte habitual) y después `N` (sin técnico ni tiempo).
+En otras OT el flujo sigue generando una sola impresión. La opción de guardar PDF
+continúa generando un único PDF.
+
 La extensión no modifica la OT. En modo diálogo, requiere confirmar la impresión en Edge. Solo
 funciona en `https://eam.indraweb.net/maximo/*`. No almacena credenciales ni URLs
 de informes; conserva durante tres minutos el número de OT en memoria de la

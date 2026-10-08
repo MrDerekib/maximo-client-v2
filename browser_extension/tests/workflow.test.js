@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { pageKind, containsOt, canPrintStatus } = require("../workflow_logic.js");
+const { pageKind, containsOt, canPrintStatus, isBoixeresClient } = require("../workflow_logic.js");
 
 test("only the Maximo WO page and the repair report windows are handled", () => {
   assert.equal(pageKind("https://eam.indraweb.net/maximo/ui/?event=loadapp"), "workorder");
@@ -24,6 +24,12 @@ test("a repair report remains available after warehouse closes the OT", () => {
   assert.equal(canPrintStatus(" close "), true);
   assert.equal(canPrintStatus("APPR"), false);
   assert.equal(canPrintStatus(""), false);
+});
+
+test("Boixeres client recognition ignores case, accents, and repeated spaces", () => {
+  assert.equal(isBoixeresClient("TMB BOIXERES"), true);
+  assert.equal(isBoixeresClient("  tmb   boixerès  "), true);
+  assert.equal(isBoixeresClient("TMB"), false);
 });
 
 function chromeHarness() {
@@ -210,6 +216,49 @@ test("the source, viewer and HTML output form one print job", async () => {
   assert.equal(session.has(JOB_KEY), false);
   assert.equal(sent.at(-1).tabId, 1);
   assert.match(sent.at(-1).message.text, /Parte preparado/);
+});
+
+test("TMB BOIXERES HTML jobs advance from the standard part to the stripped variant", async () => {
+  const { handleMessage, session, sent, JOB_KEY } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const firstViewer = { tab: { id: 2, openerTabId: 1 } };
+  const firstOutput = { tab: { id: 3, openerTabId: 2 } };
+  const secondViewer = { tab: { id: 4, openerTabId: 1 } };
+  const secondOutput = { tab: { id: 5, openerTabId: 4 } };
+  const started = await handleMessage({ type: "START", ot: "4228010", outputFormat: "html",
+    client: "TMB BOIXERES" }, source);
+  assert.equal(started.variantCount, 2);
+  assert.equal((await handleMessage({ type: "CLAIM_VIEWER" }, firstViewer)).variantIndex, 0);
+  await handleMessage({ type: "CLAIM_OUTPUT" }, firstOutput);
+  assert.deepEqual(await handleMessage({ type: "FINISH", jobId: started.jobId }, firstOutput),
+    { ok: true, nextVariant: true });
+  assert.equal(session.get(JOB_KEY).variantIndex, 1);
+  assert.equal(session.get(JOB_KEY).viewerTabId, null);
+  assert.equal(sent.at(-1).message.type, "NEXT_VARIANT");
+  assert.equal((await handleMessage({ type: "CLAIM_VIEWER" }, secondViewer)).variantIndex, 1);
+  await handleMessage({ type: "CLAIM_OUTPUT" }, secondOutput);
+  await handleMessage({ type: "FINISH", jobId: started.jobId }, secondOutput);
+  assert.equal(session.has(JOB_KEY), false);
+  assert.equal(sent.at(-1).message.type, "STATUS");
+});
+
+test("PDF jobs stay single even for TMB BOIXERES", async () => {
+  const { handleMessage } = chromeHarness();
+  const job = await handleMessage({ type: "START", ot: "4228010", outputFormat: "pdf",
+    client: "TMB BOIXERES" }, { tab: { id: 1 } });
+  assert.equal(job.variantCount, 1);
+});
+
+test("repair report variants set Maximo's include-technician parameter in the page context", async () => {
+  const { handleMessage, executions } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const { jobId, variantCount } = await handleMessage({ type: "START", ot: "4228010",
+    outputFormat: "html", client: "TMB BOIXERES" }, source);
+  assert.equal(variantCount, 2);
+  assert.deepEqual(await handleMessage({ type: "SET_REPAIR_INFO", jobId, value: "N" }, source),
+    { updated: true });
+  assert.equal(executions[0].world, "MAIN");
+  assert.deepEqual(executions[0].args, ["N"]);
 });
 
 test("PDF output requests Save As for BIRT's native PDF from the correct viewer", async () => {

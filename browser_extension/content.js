@@ -54,6 +54,75 @@
         /work order number/i.test(document.getElementById(id)?.textContent || "")));
   }
 
+  function repairInfoField() {
+    return [...document.querySelectorAll("input[aria-labelledby], textarea[aria-labelledby], select[aria-labelledby]")]
+      .find(element => visible(element) && element.getAttribute("aria-labelledby").split(/\s+/)
+        .some(id => /incluir nombre y tiempo reparaci[oó]n/i
+          .test(document.getElementById(id)?.textContent || "")));
+  }
+
+  function repairClient() {
+    const labels = [...document.querySelectorAll("td, span, label, div")]
+      .filter(element => visible(element) && /^cliente\s*:?$/i.test(
+        (element.innerText || element.textContent || "").replace(/\s+/g, " ").trim()));
+    for (const label of labels) {
+      const row = label.closest("tr");
+      const text = row?.innerText || "";
+      if (logic.isBoixeresClient(text)) return text;
+    }
+    return "";
+  }
+
+  async function submitReportVariant(jobId, targetButton, variantIndex, variantCount) {
+    await waitFor(() => [...document.querySelectorAll("a[eventtype='RUNREPORTS']")]
+      .find(visible), "menú Ejecutar informes");
+    targetButton.textContent = "Abriendo informes…";
+    await send("CLICK_REPORT_MENU", { jobId });
+    try {
+      await waitFor(() => {
+        const element = document.getElementById("reportFilesWO_TR-dialog_inner");
+        return visible(element) ? element : null;
+      }, "ventana Informes y programaciones", 15000);
+    } catch (_) {
+      throw new Error("Maximo no abrió «Informes y programaciones» al pulsar «Ejecutar informes».");
+    }
+    targetButton.textContent = "Seleccionando parte…";
+    await send("CLICK_REPAIR_REPORT", { jobId });
+    const requestField = await waitFor(requestWorkOrderField, "campo Work order number", 15000);
+    const initialButtonId = requestField.getAttribute("db");
+    targetButton.textContent = "Introduciendo OT…";
+    await send("FILL_REPORT_OT", { jobId });
+    await waitFor(() => {
+      const field = requestWorkOrderField();
+      return field && [field.value, field.getAttribute("originalvalue"),
+        field.getAttribute("prekeyvalue")].includes(inputValue("mx45-tb")) ? field : null;
+    }, "confirmación del número de OT", 5000);
+    if (variantCount > 1) {
+      const includeTechnicianAndTime = variantIndex === 0 ? "S" : "N";
+      targetButton.textContent = variantIndex === 0
+        ? "Configurando parte 1/2…" : "Configurando parte 2/2…";
+      await send("SET_REPAIR_INFO", { jobId, value: includeTechnicianAndTime });
+      await waitFor(() => repairInfoField()?.value === includeTechnicianAndTime
+        ? repairInfoField() : null,
+      `confirmación del parámetro ${includeTechnicianAndTime}`, 5000);
+    }
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    await waitFor(() => {
+      const currentField = requestWorkOrderField();
+      const id = currentField?.getAttribute("db") || initialButtonId;
+      const linked = id && document.getElementById(id);
+      if (visible(linked) && linked.textContent.trim() === "Enviar") return linked;
+      return [...document.querySelectorAll("button")]
+        .find(element => visible(element) && element.textContent.trim() === "Enviar");
+    }, "botón Enviar del informe", 15000);
+    targetButton.textContent = "Enviando solicitud…";
+    await send("CLICK_REPORT_SUBMIT", {
+      jobId, buttonId: requestWorkOrderField()?.getAttribute("db") || initialButtonId
+    });
+    targetButton.textContent = variantCount > 1
+      ? `Esperando visor ${variantIndex + 1}/2…` : "Esperando el visor BIRT…";
+  }
+
   async function workorderPage() {
     await waitFor(() => document.getElementById("mx45-tb") &&
       document.getElementById("mx73-tb"), "ficha de OT", 45000);
@@ -72,6 +141,29 @@
     let running = false;
     let reportTimeout;
     let reportErrorWatcher;
+
+    function armReportWait(jobId) {
+      clearTimeout(reportTimeout);
+      clearInterval(reportErrorWatcher);
+      reportErrorWatcher = setInterval(async () => {
+        if (!running) return clearInterval(reportErrorWatcher);
+        if (!/BMXAA3556E/.test(document.body?.innerText || "")) return;
+        clearInterval(reportErrorWatcher);
+        clearTimeout(reportTimeout);
+        const reason = "Maximo rechazó la OT del informe: el campo figura como vacío.";
+        await send("FAIL", { jobId, reason }).catch(() => {});
+        button.textContent = reason;
+        running = false;
+        setTimeout(() => { button.textContent = "Imprimir parte"; refresh(); }, 8000);
+      }, 500);
+      reportTimeout = setTimeout(async () => {
+        const reason = "Maximo no abrió el visor BIRT tras enviar el informe.";
+        await send("FAIL", { jobId, reason }).catch(() => {});
+        button.textContent = reason;
+        running = false;
+        setTimeout(() => { button.textContent = "Imprimir parte"; refresh(); }, 8000);
+      }, 60000);
+    }
     function refresh() {
       if (running) return;
       const ot = inputValue("mx45-tb");
@@ -86,6 +178,24 @@
     refresh();
     setInterval(refresh, 800);
     chrome.runtime.onMessage.addListener(message => {
+      if (message.type === "PROGRESS") {
+        clearTimeout(reportTimeout);
+        clearInterval(reportErrorWatcher);
+        button.textContent = message.text;
+        button.title = message.text;
+      }
+      if (message.type === "NEXT_VARIANT" && running) {
+        clearTimeout(reportTimeout);
+        clearInterval(reportErrorWatcher);
+        button.textContent = message.text;
+        submitReportVariant(message.jobId, button, message.variantIndex,
+          message.variantCount).then(() => armReportWait(message.jobId)).catch(async error => {
+          await send("FAIL", { jobId: message.jobId, reason: error.message }).catch(() => {});
+          button.textContent = `No se pudo preparar: ${error.message}`;
+          running = false;
+          setTimeout(() => { button.textContent = "Imprimir parte"; refresh(); }, 8000);
+        });
+      }
       if (message.type === "STATUS") {
         clearTimeout(reportTimeout);
         clearInterval(reportErrorWatcher);
@@ -106,62 +216,11 @@
       try {
         const outputFormat = button.dataset.maximoReportAction === "pdf" ? "pdf" : "html";
         delete button.dataset.maximoReportAction;
-        ({ jobId } = await send("START", { ot, outputFormat }));
-        await waitFor(() => [...document.querySelectorAll("a[eventtype='RUNREPORTS']")]
-          .find(visible), "menú Ejecutar informes");
-        button.textContent = "Abriendo informes…";
-        await send("CLICK_REPORT_MENU", { jobId });
-        try {
-          await waitFor(() => {
-            const element = document.getElementById("reportFilesWO_TR-dialog_inner");
-            return visible(element) ? element : null;
-          }, "ventana Informes y programaciones", 15000);
-        } catch (_) {
-          throw new Error("Maximo no abrió «Informes y programaciones» al pulsar «Ejecutar informes».");
-        }
-        button.textContent = "Seleccionando parte…";
-        await send("CLICK_REPAIR_REPORT", { jobId });
-        const requestField = await waitFor(requestWorkOrderField, "campo Work order number", 15000);
-        const initialButtonId = requestField.getAttribute("db");
-        button.textContent = "Introduciendo OT…";
-        await send("FILL_REPORT_OT", { jobId });
-        await waitFor(() => {
-          const field = requestWorkOrderField();
-          return field && [field.value, field.getAttribute("originalvalue"),
-            field.getAttribute("prekeyvalue")].includes(ot) ? field : null;
-        }, "confirmación del número de OT", 5000);
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await waitFor(() => {
-          const currentField = requestWorkOrderField();
-          const id = currentField?.getAttribute("db") || initialButtonId;
-          const linked = id && document.getElementById(id);
-          if (visible(linked) && linked.textContent.trim() === "Enviar") return linked;
-          return [...document.querySelectorAll("button")]
-            .find(element => visible(element) && element.textContent.trim() === "Enviar");
-        }, "botón Enviar del informe", 15000);
-        button.textContent = "Enviando solicitud…";
-        await send("CLICK_REPORT_SUBMIT", {
-          jobId, buttonId: requestWorkOrderField()?.getAttribute("db") || initialButtonId
-        });
-        button.textContent = "Esperando el visor BIRT…";
-        reportErrorWatcher = setInterval(async () => {
-          if (!running) return clearInterval(reportErrorWatcher);
-          if (!/BMXAA3556E/.test(document.body?.innerText || "")) return;
-          clearInterval(reportErrorWatcher);
-          clearTimeout(reportTimeout);
-          const reason = "Maximo rechazó la OT del informe: el campo figura como vacío.";
-          await send("FAIL", { jobId, reason }).catch(() => {});
-          button.textContent = reason;
-          running = false;
-          setTimeout(() => { button.textContent = "Imprimir parte"; refresh(); }, 8000);
-        }, 500);
-        reportTimeout = setTimeout(async () => {
-          const reason = "Maximo no abrió el visor BIRT tras enviar el informe.";
-          await send("FAIL", { jobId, reason }).catch(() => {});
-          button.textContent = reason;
-          running = false;
-          setTimeout(() => { button.textContent = "Imprimir parte"; refresh(); }, 8000);
-        }, 60000);
+        const job = await send("START", { ot, outputFormat, client: repairClient() });
+        jobId = job.jobId;
+        button.textContent = job.variantCount > 1 ? "Preparando parte 1/2…" : "Preparando parte…";
+        await submitReportVariant(jobId, button, job.variantIndex, job.variantCount);
+        armReportWait(jobId);
       } catch (error) {
         clearTimeout(reportTimeout);
         clearInterval(reportErrorWatcher);
@@ -206,8 +265,9 @@
       job = await send("CLAIM_OUTPUT");
       await waitFor(() => logic.containsOt(textInFrames(document), job.ot),
         `OT ${job.ot} en el parte HTML`, 45000);
-      await send("FINISH", { jobId: job.jobId });
       window.print();
+      const result = await send("FINISH", { jobId: job.jobId });
+      if (result?.nextVariant) window.close();
     } catch (error) {
       if (job) await send("FAIL", { jobId: job.jobId, reason: error.message }).catch(() => {});
       console.error("Maximo Desktop - parte:", error);

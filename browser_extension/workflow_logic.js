@@ -21,7 +21,12 @@
     return ["ISSUE", "CLOSE"].includes(String(status || "").trim().toUpperCase());
   }
 
-  const logic = { pageKind, containsOt, canPrintStatus };
+  function isBoixeresClient(client) {
+    return String(client || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ").trim().toUpperCase().includes("TMB BOIXERES");
+  }
+
+  const logic = { pageKind, containsOt, canPrintStatus, isBoixeresClient };
   root.MaximoPartLogic = logic;
   if (typeof module !== "undefined" && module.exports) module.exports = logic;
 })(typeof globalThis !== "undefined" ? globalThis : this);

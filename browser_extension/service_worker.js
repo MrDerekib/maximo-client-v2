@@ -50,13 +50,18 @@ async function readJob() {
   return null;
 }
 
-async function tellSource(job, text) {
+async function tellSource(job, text, type = "STATUS") {
   if (!job) return;
   try {
-    await chrome.tabs.sendMessage(job.sourceTabId, { type: "STATUS", text });
+    await chrome.tabs.sendMessage(job.sourceTabId, { type, text });
   } catch (_) {
     // The source tab may have been closed after submitting the report.
   }
+}
+
+function isBoixeresClient(client) {
+  return String(client || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ").trim().toUpperCase().includes("TMB BOIXERES");
 }
 
 async function handleMessage(message, sender) {
@@ -71,10 +76,12 @@ async function handleMessage(message, sender) {
     if (!["html", "pdf"].includes(outputFormat)) throw new Error("Formato de parte no válido.");
     const job = {
       id: crypto.randomUUID(), ot, outputFormat, sourceTabId: tab.id,
-      viewerTabId: null, outputTabId: null, startedAt: Date.now()
+      viewerTabId: null, outputTabId: null, startedAt: Date.now(),
+      variantIndex: 0,
+      variantCount: outputFormat === "html" && isBoixeresClient(message.client) ? 2 : 1
     };
     await chrome.storage.session.set({ [JOB_KEY]: job });
-    return { jobId: job.id, ot };
+    return { jobId: job.id, ot, variantIndex: job.variantIndex, variantCount: job.variantCount };
   }
 
   const job = await readJob();
@@ -183,6 +190,52 @@ async function handleMessage(message, sender) {
     return { filled: true };
   }
 
+  if (message.type === "SET_REPAIR_INFO") {
+    if (message.jobId !== job.id || tab.id !== job.sourceTabId || job.variantCount !== 2 ||
+        !["S", "N"].includes(message.value)) {
+      throw new Error("El parámetro de la variante no pertenece a este parte.");
+    }
+    const [execution] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: "MAIN",
+      args: [message.value],
+      func: value => {
+        const visible = element => Boolean(element?.getClientRects().length);
+        const field = [...document.querySelectorAll("input[aria-labelledby], textarea[aria-labelledby], select[aria-labelledby]")]
+          .find(element => visible(element) && element.getAttribute("aria-labelledby").split(/\s+/)
+            .some(id => /incluir nombre y tiempo reparaci[oó]n/i
+              .test(document.getElementById(id)?.textContent || "")));
+        if (!field) return { updated: false, reason: "field" };
+        field.focus();
+        field.select?.();
+        let inserted = false;
+        try { inserted = document.execCommand?.("insertText", false, value) || false; }
+        catch (_) { /* Set the native control value below. */ }
+        if (!inserted || field.value !== value) {
+          const prototype = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
+            : field instanceof HTMLSelectElement ? HTMLSelectElement.prototype
+              : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+          if (setter) setter.call(field, value);
+          else field.value = value;
+          field.dispatchEvent(new InputEvent("input", {
+            bubbles: true, data: value, inputType: "insertText"
+          }));
+        }
+        field.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: value }));
+        field.dispatchEvent(new Event("change", { bubbles: true }));
+        field.blur();
+        return { updated: field.value === value };
+      }
+    });
+    if (execution?.result?.updated === false) {
+      throw new Error(execution.result.reason === "field"
+        ? "No se encontró el parámetro «Incluir nombre y tiempo reparación» del informe."
+        : "No se pudo aplicar el parámetro de la variante del parte.");
+    }
+    return { updated: true };
+  }
+
   if (message.type === "CLICK_REPORT_SUBMIT") {
     if (message.jobId !== job.id || tab.id !== job.sourceTabId) {
       throw new Error("El botón Enviar no pertenece a la OT solicitada.");
@@ -228,8 +281,12 @@ async function handleMessage(message, sender) {
     job.viewerTabId = tab.id;
     await chrome.storage.session.set({ [JOB_KEY]: job });
     await tellSource(job, job.outputFormat === "pdf"
-      ? "Parte generado; preparando PDF…" : "Parte generado; preparando impresión…");
-    return { ot: job.ot, jobId: job.id, outputFormat: job.outputFormat };
+      ? "Parte generado; preparando PDF…"
+      : job.variantCount > 1
+        ? `Parte ${job.variantIndex + 1}/2 generado; preparando impresión…`
+        : "Parte generado; preparando impresión…", "PROGRESS");
+    return { ot: job.ot, jobId: job.id, outputFormat: job.outputFormat,
+      variantIndex: job.variantIndex, variantCount: job.variantCount };
   }
 
   if (message.type === "CLAIM_OUTPUT") {
@@ -247,6 +304,24 @@ async function handleMessage(message, sender) {
     if (message.jobId && message.jobId !== job.id) throw new Error("Operación caducada.");
     if (message.type === "FINISH" && tab.id !== job.outputTabId) {
       throw new Error("La vista de impresión no pertenece al parte solicitado.");
+    }
+    if (message.type === "FINISH" && job.variantCount === 2 && job.variantIndex === 0) {
+      job.variantIndex = 1;
+      job.viewerTabId = null;
+      job.outputTabId = null;
+      job.startedAt = Date.now();
+      await chrome.storage.session.set({ [JOB_KEY]: job });
+      try {
+        await chrome.tabs.sendMessage(job.sourceTabId, {
+          type: "NEXT_VARIANT", jobId: job.id, variantIndex: 1,
+          variantCount: job.variantCount,
+          text: "Primera copia lista; preparando la variante sin técnico ni tiempo…"
+        });
+      } catch (_) {
+        await chrome.storage.session.remove(JOB_KEY);
+        throw new Error("No se pudo iniciar la segunda variante del parte.");
+      }
+      return { ok: true, nextVariant: true };
     }
     await chrome.storage.session.remove(JOB_KEY);
     await tellSource(job, message.type === "FINISH"
