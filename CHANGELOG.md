@@ -1,5 +1,12 @@
 # Historial de cambios
 
+## Pendiente de publicación
+
+- La preparación de cada parte recupera el foco de la ficha de OT antes de
+  introducir su número. Esto permite validar el campo también en la segunda
+  copia de Boixeres cuando las ventanas del primer parte permanecen abiertas.
+  Se respeta la opción de cerrar o conservar las ventanas.
+
 ## 1.0.2 — Partes de reparación y revisión de OT
 
 - Para las OT de TMB BOIXERES, la impresión HTML genera dos copias consecutivas:

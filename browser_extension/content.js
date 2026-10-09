@@ -82,6 +82,8 @@
   }
 
   async function submitReportVariant(jobId, targetButton, variantIndex, variantCount) {
+    await send("ACTIVATE_SOURCE", { jobId });
+    await waitFor(() => document.hasFocus(), "activación de la ficha de OT", 5000);
     await waitFor(() => [...document.querySelectorAll("a[eventtype='RUNREPORTS']")]
       .find(visible), "menú Ejecutar informes");
     targetButton.textContent = "Abriendo informes…";

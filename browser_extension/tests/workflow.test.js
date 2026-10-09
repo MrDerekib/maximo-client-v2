@@ -52,6 +52,8 @@ function chromeHarness() {
   const executions = [];
   const downloads = [];
   const removedTabs = [];
+  const activatedTabs = [];
+  const focusedWindows = [];
   let updatedListener;
   global.chrome = {
     storage: { session: {
@@ -60,10 +62,15 @@ function chromeHarness() {
       async remove(key) { session.delete(key); }
     } },
     tabs: {
+      async update(tabId, properties) {
+        activatedTabs.push({ tabId, properties });
+        return { id: tabId, windowId: 10 };
+      },
       async sendMessage(tabId, message) { sent.push({ tabId, message }); },
       async remove(tabId) { removedTabs.push(tabId); },
       onUpdated: { addListener(listener) { updatedListener = listener; } }
     },
+    windows: { async update(windowId, properties) { focusedWindows.push({ windowId, properties }); } },
     downloads: { async download(options) { downloads.push(options); return 1; } },
     scripting: { async executeScript(options) {
       executions.push(options);
@@ -74,8 +81,36 @@ function chromeHarness() {
   };
   delete require.cache[require.resolve("../service_worker.js")];
   return { ...require("../service_worker.js"), session, sent, executions,
-    downloads, removedTabs, updated: (...args) => updatedListener(...args) };
+    downloads, removedTabs, activatedTabs, focusedWindows,
+    updated: (...args) => updatedListener(...args) };
 }
+
+test("the source is activated for both Boixeres variants with either cleanup setting", async () => {
+  for (const closeTabs of [false, true]) {
+    const { handleMessage, activatedTabs, focusedWindows, removedTabs } = chromeHarness();
+    const source = { tab: { id: 1 } };
+    const viewer = { tab: { id: 2, openerTabId: 1 } };
+    const output = { tab: { id: 3, openerTabId: 2 } };
+    const { jobId } = await handleMessage({ type: "START", ot: "4228010",
+      client: "TMB BOIXERES", closeTabs }, source);
+    await handleMessage({ type: "ACTIVATE_SOURCE", jobId }, source);
+    await handleMessage({ type: "CLAIM_VIEWER" }, viewer);
+    await handleMessage({ type: "CLAIM_OUTPUT" }, output);
+    await handleMessage({ type: "FINISH", jobId }, output);
+    await handleMessage({ type: "ACTIVATE_SOURCE", jobId }, source);
+    assert.deepEqual(activatedTabs, [
+      { tabId: 1, properties: { active: true } },
+      { tabId: 1, properties: { active: true } }
+    ]);
+    assert.deepEqual(focusedWindows, [
+      { windowId: 10, properties: { focused: true } },
+      { windowId: 10, properties: { focused: true } }
+    ]);
+    assert.deepEqual(removedTabs, closeTabs ? [2] : []);
+    await assert.rejects(handleMessage({ type: "ACTIVATE_SOURCE", jobId }, output), /no pertenece/);
+    await assert.rejects(handleMessage({ type: "ACTIVATE_SOURCE", jobId: "stale" }, source), /no pertenece/);
+  }
+});
 
 test("Maximo's report menu is clicked in the page's JavaScript world", async () => {
   const { handleMessage, executions } = chromeHarness();
@@ -177,6 +212,7 @@ test("the request fills the OT and clicks Enviar in separate page-script calls",
   global.PointerEvent = class { constructor(type) { this.type = type; } };
   global.KeyboardEvent = class { constructor(type) { this.type = type; } };
   global.document = {
+    hasFocus: () => true,
     execCommand: (command, _showUi, value) => {
       assert.equal(command, "insertText");
       field.value = value;
@@ -200,6 +236,23 @@ test("the request fills the OT and clicks Enviar in separate page-script calls",
     global.MouseEvent = previousMouseEvent;
     global.PointerEvent = previousPointerEvent;
     global.KeyboardEvent = previousKeyboardEvent;
+  }
+});
+
+test("an inactive source cannot report a visible OT as successfully filled", async () => {
+  const { handleMessage, executions } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const { jobId } = await handleMessage({ type: "START", ot: "4228010" }, source);
+  await handleMessage({ type: "FILL_REPORT_OT", jobId }, source);
+  const previousDocument = global.document;
+  global.document = { hasFocus: () => false };
+  try {
+    const result = executions[0].func("4228010");
+    assert.deepEqual(result, { filled: false, reason: "focus" });
+    chrome.scripting.executeScript = async () => [{ result }];
+    await assert.rejects(handleMessage({ type: "FILL_REPORT_OT", jobId }, source), /no tiene el foco/);
+  } finally {
+    global.document = previousDocument;
   }
 });
 

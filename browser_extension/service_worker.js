@@ -94,6 +94,15 @@ async function handleMessage(message, sender) {
   const job = await readJob();
   if (!job) throw new Error("No hay un parte solicitado o ha caducado la espera.");
 
+  if (message.type === "ACTIVATE_SOURCE") {
+    if (message.jobId !== job.id || tab.id !== job.sourceTabId) {
+      throw new Error("La ficha no pertenece a la OT solicitada.");
+    }
+    const source = await chrome.tabs.update(job.sourceTabId, { active: true });
+    await chrome.windows.update(source.windowId, { focused: true });
+    return { activated: true };
+  }
+
   if (message.type === "CLICK_REPORT_MENU") {
     if (message.jobId !== job.id || tab.id !== job.sourceTabId) {
       throw new Error("El menú no pertenece a la OT solicitada.");
@@ -162,6 +171,9 @@ async function handleMessage(message, sender) {
       world: "MAIN",
       args: [job.ot],
       func: ot => {
+        // An inactive document can show the inserted value without dispatching
+        // blur, leaving Maximo's server-side parameter empty.
+        if (!document.hasFocus()) return { filled: false, reason: "focus" };
         const visible = element => Boolean(element?.getClientRects().length);
         const field = [...document.querySelectorAll("input[aria-labelledby]")].find(input =>
           visible(input) && input.getAttribute("aria-labelledby").split(/\s+/).some(id =>
@@ -191,7 +203,9 @@ async function handleMessage(message, sender) {
       }
     });
     if (execution?.result?.filled === false)
-      throw new Error("No se encontró el campo «Work order number».");
+      throw new Error(execution.result.reason === "focus"
+        ? "La ficha de OT no tiene el foco; no se introdujo el número del parte."
+        : "No se encontró el campo «Work order number».");
     // Maximo may redraw the form during blur and drop the injected function's
     // return value; the content script verifies the field after this call.
     return { filled: true };
