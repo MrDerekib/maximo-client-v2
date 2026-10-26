@@ -1,0 +1,284 @@
+"""Inicio explícito de OT con el flujo RFN-70, mediante controles de Maximo."""
+import logging
+import time
+import unicodedata
+from urllib.parse import urlsplit
+
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+
+
+def normalized(text):
+    text = unicodedata.normalize("NFKD", str(text or ""))
+    return " ".join("".join(c for c in text if not unicodedata.combining(c)).split()).strip(" *:").casefold()
+
+
+class WorkorderStarter:
+    def __init__(self, driver, ot, progress=None, timeout=30):
+        self.driver = driver
+        self.ot = str(ot).strip()
+        self.progress = progress or (lambda message: None)
+        self.timeout = timeout
+
+    def wait(self, condition, description):
+        try:
+            return WebDriverWait(self.driver, self.timeout, poll_frequency=0.25,
+                                 ignored_exceptions=(StaleElementReferenceException,)).until(condition)
+        except TimeoutException as exc:
+            raise RuntimeError(f"Tiempo agotado: {description}. No se continuará el inicio de la OT.") from exc
+
+    def idle(self):
+        self.wait(lambda d: d.execute_script("""
+            return document.readyState === 'complete' &&
+              ![...document.querySelectorAll('.bx--loading-overlay, #wait')].some(e =>
+                e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' &&
+                getComputedStyle(e).opacity !== '0');
+        """), "respuesta de Maximo")
+
+    def field(self, caption):
+        for label in self.driver.find_elements(By.CSS_SELECTOR, "label[for]"):
+            if label.is_displayed() and normalized(label.text) == normalized(caption):
+                controls = self.driver.find_elements(By.ID, label.get_attribute("for"))
+                if controls and controls[0].is_displayed():
+                    return controls[0]
+        return None
+
+    def value(self, caption):
+        field = self.field(caption)
+        return (field.get_attribute("value") or "").strip() if field else None
+
+    def check_ot(self):
+        if self.value("Orden de trabajo") != self.ot:
+            raise RuntimeError(f"La ficha ya no corresponde a la OT {self.ot}; se detuvo el inicio.")
+
+    def dialogs(self):
+        return [e for e in self.driver.find_elements(By.CSS_SELECTOR, "[role=dialog]") if e.is_displayed()]
+
+    def lookup(self):
+        return next((e for e in self.dialogs() if e.get_attribute("id").startswith("lookup_")), None)
+
+    def lookup_filters(self):
+        dialog = self.lookup()
+        return [e for e in dialog.find_elements(By.CSS_SELECTOR, "input[id*='_tfrow_'][id*='[C:0]']")
+                if e.is_displayed()] if dialog else []
+
+    def tab(self, title):
+        self.idle()
+        self.check_ot()
+        self.wait(lambda d: next((e for e in d.find_elements(By.CSS_SELECTOR, "a[role=tab]")
+                                 if e.is_displayed() and normalized(e.text) == normalized(title)), None),
+                  f"pestaña {title}").click()
+        self.idle()
+        self.wait(lambda d: self.field("Estado"), f"ficha en {title}")
+        self.check_ot()
+
+    def button(self, dialog, text):
+        matches = [e for e in dialog.find_elements(By.CSS_SELECTOR, "button")
+                   if e.is_displayed() and normalized(e.text) == normalized(text)]
+        if len(matches) != 1:
+            raise RuntimeError(f"No se encontró un único botón «{text}» en el diálogo de Maximo.")
+        matches[0].click()
+
+    def option(self, dialog, code):
+        if dialog is None:
+            return None
+        matches = [e for e in dialog.find_elements(By.CSS_SELECTOR, "span[id*='_tdrow_'][mxevent=click]")
+                   if e.is_displayed() and (e.text or "").strip() == code]
+        if len(matches) > 1:
+            raise RuntimeError(f"La lupa contiene varias opciones «{code}»; revisa la selección.")
+        return matches[0] if matches else None
+
+    def select(self, caption, code):
+        self.idle()
+        self.check_ot()
+        field = self.wait(lambda d: self.field(caption), f"campo {caption}")
+        if (field.get_attribute("value") or "").strip() == code:
+            return
+        self.progress(f"OT {self.ot}: seleccionando {caption.lower()} {code}…")
+        lookup_id = field.get_attribute("li")
+        if not lookup_id:
+            raise RuntimeError(f"El campo {caption} no tiene una lupa disponible.")
+        self.driver.find_element(By.ID, lookup_id).click()
+        dialog = self.wait(lambda d: self.lookup(), f"lupa de {caption}")
+        self.idle()
+        option = self.option(dialog, code)
+        if option is None:
+            filters = self.lookup_filters()
+            if not filters:
+                toggles = [e for e in dialog.find_elements(By.CSS_SELECTOR, "span[mxevent=click]")
+                           if e.is_displayed() and normalized(e.text) == "filtro"]
+                if len(toggles) != 1:
+                    raise RuntimeError(f"No aparece «{code}» ni se puede filtrar su lupa.")
+                toggles[0].click()
+                filters = self.wait(lambda d: self.lookup_filters(), "filtro de código")
+            filters[0].clear()
+            filters[0].send_keys("=" + code, Keys.TAB)
+            self.idle()
+            filters = self.wait(lambda d: self.lookup_filters(), "filtro de código")
+            filters[0].send_keys(Keys.ENTER)
+            option = self.wait(lambda d: self.option(self.lookup(), code), f"opción {code}")
+        option.click()
+        self.wait(lambda d: not self.dialogs() and self.value(caption) == code,
+                  f"confirmación de {caption} {code}")
+        self.idle()
+
+    def route(self):
+        """Solo continúa avisos conocidos; se detiene al confirmar INPRG."""
+        deadline = time.monotonic() + 120
+        routes = 0
+        initiated = False
+        handled = 0
+        while time.monotonic() < deadline and handled < 10:
+            self.idle()
+            self.check_ot()
+            status = self.value("Estado")
+            if status == "INPRG":
+                return
+            if status != "APPR":
+                raise RuntimeError(f"La OT {self.ot} cambió al estado {status}; no se seguirá enrutando.")
+            dialogs = self.dialogs()
+            if dialogs:
+                dialog = dialogs[-1]
+                dialog_id = dialog.get_attribute("id")
+                if dialog_id == "alreadyreported-dialog_inner":
+                    self.progress(f"OT {self.ot}: continuando el aviso de problema ya informado…")
+                    self.button(dialog, "Continuar")
+                elif dialog_id == "inputwf-dialog_inner" and not initiated:
+                    labels = [e for e in dialog.find_elements(By.CSS_SELECTOR, "label[for]")
+                              if normalized(e.text) == "iniciar orden"]
+                    if len(labels) != 1:
+                        raise RuntimeError("Maximo no ofrece una única opción «Iniciar orden».")
+                    choice = self.driver.find_element(By.ID, labels[0].get_attribute("for"))
+                    if not choice.is_selected():
+                        choice.click()
+                    self.progress(f"OT {self.ot}: iniciando orden…")
+                    self.button(dialog, "Aceptar")
+                    initiated = True
+                    self.wait(lambda d: self.value("Estado") != "APPR" or not any(
+                        e.get_attribute("id") == "inputwf-dialog_inner" for e in self.dialogs()),
+                        "respuesta a Iniciar orden")
+                else:
+                    raise RuntimeError(f"Maximo requiere revisión antes de iniciar la OT: {dialog.text[:700]}")
+                handled += 1
+            elif initiated:
+                self.wait(lambda d: self.value("Estado") != "APPR" or self.dialogs(), "estado tras Iniciar orden")
+            else:
+                if routes >= 3:
+                    raise RuntimeError("Maximo no ofreció «Iniciar orden» tras tres intentos de enrutar.")
+                self.progress(f"OT {self.ot}: enrutando flujo de trabajo…")
+                self.driver.find_element(By.ID, "ROUTEWF_WO-MAIN_-tbb_image").click()
+                routes += 1
+                self.wait(lambda d: self.dialogs() or self.value("Estado") != "APPR", "diálogo del flujo de trabajo")
+        raise RuntimeError("Maximo no confirmó el inicio de la OT dentro del límite de espera.")
+
+    def check_location(self):
+        url = urlsplit(self.driver.current_url)
+        if url.scheme != "https" or url.hostname != "eam.indraweb.net" or not url.path.startswith("/maximo/ui"):
+            raise RuntimeError("El inicio de OT solo está disponible en la ficha de Maximo.")
+
+    def run(self):
+        self.check_location()
+        self.wait(lambda d: self.value("Orden de trabajo") == self.ot and self.value("Estado"), "carga de la OT")
+        self.check_ot()
+        status = self.value("Estado")
+        if status == "INPRG":
+            return {"ot": self.ot, "status": "INPRG", "already_started": True}
+        if status != "APPR":
+            raise RuntimeError(f"No se puede iniciar la OT {self.ot} en estado {status}. Debe estar en APPR.")
+        if self.dialogs():
+            raise RuntimeError("Cierra el diálogo abierto en Maximo antes de iniciar la OT.")
+        self.tab("Informes de anomalías")
+        self.select("Clase de anomalía", "RFN-70")
+        self.tab("Soluciones")
+        for caption, code in (("Síntoma", "OTROS-01"), ("Causa", "OTROS-02"), ("Resolucion", "OTROS-03")):
+            self.select(caption, code)
+        self.route()
+        # Reload confirms the server persisted the codes and status, not just
+        # the visible values of Maximo's asynchronous controls.
+        self.driver.refresh()
+        self.wait(lambda d: self.value("Orden de trabajo") == self.ot and self.value("Estado") == "INPRG",
+                  "confirmación del inicio guardado")
+        for caption, code in (("Síntoma", "OTROS-01"), ("Causa", "OTROS-02"), ("Resolucion", "OTROS-03")):
+            if self.value(caption) != code:
+                raise RuntimeError(f"La OT está iniciada, pero Maximo no conservó {caption} {code}. Revisa la ficha.")
+        self.tab("Informes de anomalías")
+        if self.value("Clase de anomalía") != "RFN-70":
+            raise RuntimeError("La OT está iniciada, pero Maximo no conservó RFN-70. Revisa la ficha.")
+        self.tab("Soluciones")
+        logging.info("OT %s iniciada y verificada: RFN-70 / OTROS-01 / OTROS-02 / OTROS-03", self.ot)
+        return {"ot": self.ot, "status": "INPRG", "already_started": False}
+
+
+def start_workorder(driver, ot, progress=None):
+    return WorkorderStarter(driver, ot, progress).run()
+
+
+def poll_browser_start(driver):
+    """Expose an explicit action in MD's Edge session and consume one click."""
+    button_script = """
+        if (location.origin !== 'https://eam.indraweb.net' || !location.pathname.startsWith('/maximo/ui')) return '';
+        const field = caption => {
+          const label = [...document.querySelectorAll('label[for]')].find(e =>
+            e.getClientRects().length && e.textContent.trim().replace(/:$/, '') === caption);
+          return label && document.getElementById(label.htmlFor)?.value;
+        };
+        const ot = field('Orden de trabajo'), status = field('Estado');
+        let button = document.getElementById('maximo-desktop-start-ot');
+        if (!button && ot) {
+          button = document.createElement('button');
+          button.id = 'maximo-desktop-start-ot'; button.type = 'button';
+          button.textContent = 'Iniciar OT';
+          Object.assign(button.style, {position:'fixed',right:'20px',bottom:'65px',zIndex:'2147483647',
+            padding:'9px 14px',border:'1px solid #1155a0',borderRadius:'6px',background:'#1769c2',
+            color:'#fff',font:'600 13px Arial,sans-serif',boxShadow:'0 3px 12px #0004',cursor:'pointer'});
+          button.addEventListener('click', () => {
+            if (button.disabled) return;
+            button.disabled = true; button.dataset.busy = 'true'; button.textContent = 'Iniciando OT…';
+            document.documentElement.dataset.maximoStartOt = field('Orden de trabajo');
+          });
+          document.body.appendChild(button);
+        }
+        if (button) {
+          button.hidden = !/^\\d{1,20}$/.test(ot || '');
+          if (button.dataset.busy !== 'true') {
+            button.disabled = status !== 'APPR' || [...document.querySelectorAll('[role=dialog]')].some(e =>
+              e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+            button.style.opacity = button.disabled ? '0.6' : '1';
+            button.title = 'Establecer RFN-70, OTROS-01/02/03 e iniciar una OT en APPR';
+          }
+        }
+        const request = document.documentElement.dataset.maximoStartOt || '';
+        delete document.documentElement.dataset.maximoStartOt;
+        return request;
+    """
+    request = driver.execute_script(button_script)
+    if not request:
+        return None
+
+    def report(message):
+        driver.execute_script("""
+            const button = document.getElementById('maximo-desktop-start-ot');
+            if (button) { button.textContent = arguments[0]; button.title = arguments[0]; }
+        """, message)
+
+    try:
+        result = start_workorder(driver, request, report)
+        # The verification reload removes injected controls; restore the
+        # button before displaying the completion message.
+        driver.execute_script(button_script)
+        report(f"OT {request} ya iniciada" if result["already_started"] else f"OT {request} iniciada")
+        return result
+    except Exception as exc:
+        logging.exception("No se pudo iniciar la OT %s desde el navegador", request)
+        report(f"No se pudo iniciar: {exc}")
+        return None
+    finally:
+        driver.execute_script("""
+            const button = document.getElementById('maximo-desktop-start-ot');
+            if (button) {
+              button.dataset.busy = 'false';
+              setTimeout(() => { if (button.dataset.busy !== 'true') button.textContent = 'Iniciar OT'; }, 8000);
+            }
+        """)

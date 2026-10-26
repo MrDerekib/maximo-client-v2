@@ -39,6 +39,7 @@ class AppConfig:
     priority_renfe_validity: str = "weekly"
     theme: str = "system"
     repair_extension_enabled: bool = False
+    workorder_start_enabled: bool = False
     repair_print_mode: str = "dialog"
     repair_close_tabs_after_direct_print: bool = False
     filters: dict | None = None
@@ -74,6 +75,8 @@ class AppConfig:
             self.theme = "system"
         if self.repair_print_mode not in {"dialog", "direct"}:
             self.repair_print_mode = "dialog"
+        if not isinstance(self.workorder_start_enabled, bool):
+            self.workorder_start_enabled = False
         if not isinstance(self.repair_close_tabs_after_direct_print, bool):
             self.repair_close_tabs_after_direct_print = False
         if self.filters is None:

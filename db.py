@@ -444,6 +444,18 @@ def delete_all_inactive_records() -> int:
 INACTIVE_RECONCILIATION_TRACKING = ("PDTE CONFIRMAR", "EN TALLER", "APPR", "INPRG")
 
 
+def apply_started_workorder(ot: str) -> bool:
+    """Reflect a confirmed start without overwriting a later local lifecycle state."""
+    with closing(get_connection()) as connection:
+        placeholders = ", ".join("?" for _ in INACTIVE_RECONCILIATION_TRACKING)
+        cursor = connection.execute(
+            f"UPDATE maximo SET Seguimiento = ? WHERE OT = ? AND Seguimiento IN ({placeholders})",
+            ("INPRG", ot, *INACTIVE_RECONCILIATION_TRACKING),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+
+
 def inactive_tracking_candidates(limit: int | None = 5,
                                 minimum_age_hours: int | None = 24) -> List[Tuple[str, str]]:
     """Devuelve OT históricas con seguimientos que deben contrastarse en Maximo."""

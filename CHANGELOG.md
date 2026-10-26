@@ -2,6 +2,15 @@
 
 ## Pendiente de publicación
 
+- Nuevo inicio opcional de OT con el flujo RFN-70. Configuración permite habilitar
+  «Iniciar OT» en el menú contextual de MD y en las ventanas de Maximo abiertas
+  desde la aplicación. Establece RFN-70 aunque falte o haya otra clase, selecciona
+  OTROS-01/02/03 mediante las lupas e inicia la orden. Desde MD se ejecuta en
+  segundo plano con progreso. «Abrir OT» sigue abriendo únicamente la ficha.
+- El inicio comprueba el estado real: solo actúa sobre APPR, no vuelve a enrutar
+  una OT ya iniciada y se detiene ante avisos desconocidos. Verifica el resultado
+  guardado antes de actualizar el seguimiento local.
+
 - La preparación de cada parte recupera el foco de la ficha de OT antes de
   introducir su número. Esto permite validar el campo también en la segunda
   copia de Boixeres cuando las ventanas del primer parte permanecen abiertas.

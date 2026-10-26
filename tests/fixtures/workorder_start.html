@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="es"><meta charset="utf-8"><title>Maximo workflow fixture</title>
+<body><nav>
+<a role="tab" href="#" onclick="render('anomaly');return false">Informes de anomalías</a>
+<a role="tab" href="#" onclick="render('solutions');return false">Soluciones</a>
+</nav><main id="form"></main><div id="dialogs"></div>
+<div id="wait" style="display:none;position:fixed;inset:0;background:#ddd8">Cargando</div>
+<script>
+let state, tab, generation = 0;
+const save = () => sessionStorage.setItem('workflow-fixture', JSON.stringify(state));
+function resetState(overrides = {}) {
+  state = {ot:'4314531',status:'APPR',faultclass:'OTHER',problem:'OLD-01',cause:'OLD-02',
+    remedy:'OLD-03',events:[],routes:0,...overrides};
+  tab = 'solutions'; save(); render(tab);
+}
+function asyncRender(action) {
+  document.getElementById('wait').style.display = 'block';
+  setTimeout(() => {
+    action(); save(); render(tab);
+    document.getElementById('wait').style.display = 'none';
+  }, 100);
+}
+function control(caption, key, readonly = false) {
+  const id = `mx${++generation}-tb`, image = id.replace('-tb', '-img');
+  return `<p><label for="${id}">${caption}:</label>
+    <input ctype="textbox" id="${id}" li="${image}" ${readonly?'readonly':''} value="${state[key]}">
+    ${['faultclass','problem','cause','remedy'].includes(key)
+      ? `<img id="${image}" alt="Seleccionar valor" width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onclick="lookup('${key}')">` : ''}</p>`;
+}
+function render(nextTab) {
+  tab = nextTab;
+  sessionStorage.setItem('workflow-fixture-tab', tab);
+  document.getElementById('form').innerHTML = control('Orden de trabajo','ot',true)+control('Estado','status',true)+
+    (tab === 'anomaly' ? control('Clase de anomalía','faultclass') :
+      control('Síntoma','problem')+control('Causa','cause',true)+control('Resolucion','remedy',true))+
+    '<img id="ROUTEWF_WO-MAIN_-tbb_image" alt="Enrutar flujo de trabajo" width="30" height="30" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onclick="route()">';
+  document.getElementById('dialogs').innerHTML = '';
+}
+function lookup(key, query = '') {
+  let codes;
+  if (key === 'faultclass') codes = query === '=RFN-70' ? ['RFN-70'] : ['OTHER'];
+  else if (state.faultclass !== 'RFN-70') codes = [];
+  else if (key === 'problem') codes = ['OTROS-01'];
+  else if (key === 'cause') codes = state.problem === 'OTROS-01' ? ['OTROS-02'] : [];
+  else codes = state.cause === 'OTROS-02' ? ['OTROS-05','OTROS-03'] : [];
+  const prefix = 'lookup_page'+(++generation);
+  document.getElementById('dialogs').innerHTML = `<section role="dialog" id="lookup_PROBLEMCODE-dialog_inner">
+    Seleccionar valor
+    <span mxevent="click" onclick="this.nextElementSibling.hidden=false">Filtro</span>
+    <input hidden id="${prefix}_tfrow_[C:0]_txt-tb" onkeydown="if(event.key==='Enter')lookup('${key}',this.value)">
+    ${codes.map((code,i)=>`<p><span id="${prefix}_tdrow_[C:0]_ttxt-lb[R:${i}]" mxevent="click"
+      onclick="selectCode('${key}','${code}')">${code}</span></p>`).join('')}
+    </section>`;
+}
+function selectCode(key, code) {
+  state.events.push(['select',key,code]);
+  asyncRender(() => {
+    state[key] = code;
+    if (key === 'faultclass') state.problem = state.cause = state.remedy = '';
+  });
+}
+function route() {
+  state.routes++; state.events.push(['route']); save();
+  if (state.unexpected) {
+    document.getElementById('dialogs').innerHTML = '<section role="dialog" id="unknown-dialog_inner">Error inesperado <button onclick="state.events.push([\'unsafe-accept\']);save()">Aceptar</button></section>';
+  } else if (state.routes === 1) {
+    document.getElementById('dialogs').innerHTML = '<section role="dialog" id="alreadyreported-dialog_inner">El problema ya ha sido informado <button onclick="state.events.push([\'continue\']);save();render(tab)">Continuar</button><button>Cancelar</button></section>';
+  } else {
+    document.getElementById('dialogs').innerHTML = `<section role="dialog" id="inputwf-dialog_inner">Entrada manual
+      <label for="choice-cancel">Cancelar orden</label><input id="choice-cancel" name="choice" type="radio" checked>
+      <label for="choice-start">Iniciar orden</label><input id="choice-start" name="choice" type="radio">
+      <button onclick="confirmStart()">Aceptar</button><button>Cancelar</button></section>`;
+  }
+}
+function confirmStart() {
+  if (!document.getElementById('choice-start').checked) throw Error('Wrong workflow choice');
+  asyncRender(() => { state.status='INPRG'; state.events.push(['start']); });
+}
+if (sessionStorage.getItem('workflow-fixture')) {
+  state=JSON.parse(sessionStorage.getItem('workflow-fixture'));
+  render(sessionStorage.getItem('workflow-fixture-tab') || 'solutions');
+} else resetState();
+</script></body></html>

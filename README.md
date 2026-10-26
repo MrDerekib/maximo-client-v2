@@ -104,9 +104,38 @@ excluidos del control de versiones.
 
 ## Comprobaciones
 
+### Inicio opcional de OT
+
+En **Configuración → Inicio de órdenes de trabajo**, activa **Habilitar «Iniciar
+OT» con el flujo RFN-70** y guarda los cambios. Está desactivado por defecto.
+«Abrir OT» y los enlaces del listado siguen abriendo la ficha sin iniciarla.
+
+Al habilitarlo aparecen la acción **Iniciar OT** en el menú contextual del listado
+y un botón en las nuevas ventanas de Maximo abiertas desde MD. Desde el listado
+se ejecuta en segundo plano; la barra de estado indica el paso actual. En el
+navegador se utiliza la sesión abierta y se muestra el progreso en el botón.
+
+El flujo solo inicia OT en `APPR`: selecciona la clase `RFN-70` en Informes de
+anomalías (también si está vacía o tiene otro código), y `OTROS-01`, `OTROS-02` y
+`OTROS-03` en Soluciones. Usa las lupas y comprueba sus respuestas, continúa el
+aviso conocido de problema ya informado y acepta **Iniciar orden**. Se detiene al
+confirmar `INPRG`; una OT ya iniciada no vuelve a enrutarse. Un diálogo desconocido
+detiene la operación y muestra su mensaje para revisión.
+
+### Pruebas
+
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 node --test browser_extension/tests/workflow.test.js
+```
+
+Las pruebas de navegador son opcionales y utilizan exclusivamente la página HTML
+local de `tests/fixtures`, sin autenticarse ni modificar Maximo:
+
+```powershell
+$env:MAXIMO_BROWSER_TESTS = "1"
+.\.venv\Scripts\python.exe -m unittest tests.test_workorder_start -v
+Remove-Item Env:MAXIMO_BROWSER_TESTS
 ```
 
 Las pruebas de Qt se ejecutan sin mostrar ventanas y con almacenamiento aislado.
