@@ -232,7 +232,8 @@ class WorkorderStarter:
             raise RuntimeError(f"La lupa contiene varias opciones «{code}»; revisa la selección.")
         return matches[0] if matches else None
 
-    def select(self, caption, code):
+    def select_failure_class(self):
+        caption, code = "Clase de anomalía", "RFN-70"
         self.idle()
         self.check_ot()
         field = self.wait(lambda d: self.field(caption), f"campo {caption}")
@@ -270,6 +271,100 @@ class WorkorderStarter:
         self.wait(confirmed, f"confirmación de {caption} {code}")
         self.idle()
         return True
+
+    def failure_selector_state(self):
+        return self.driver.execute_script(VISIBLE_DIALOGS_SCRIPT + """
+            const dialog = visibleDialogs.find(e => e.id === 'wolistfailurecodes-dialog_inner');
+            if (!dialog) return null;
+            const rows = [...dialog.querySelectorAll("span[id*='_tdrow_'][id*='[C:0]'][mxevent=click]")]
+              .filter(e => e.getClientRects().length).map(link => {
+                const cell = link.closest('tr')?.querySelector("td[id*='[C:1]']");
+                const type = cell?.querySelector('input')?.value || cell?.textContent || '';
+                return {id:link.id, code:link.textContent.trim(), type:type.trim().toUpperCase()};
+              });
+            return {rows};
+        """)
+
+    def select_failure_codes(self, existing):
+        """Click each native hierarchy link; Maximo advances and closes itself."""
+        dialog_id = 'wolistfailurecodes-dialog_inner'
+        hierarchy = (("PROBLEM", "OTROS-01"), ("CAUSE", "OTROS-02"), ("REMEDY", "OTROS-03"))
+        levels = {kind: index for index, (kind, _) in enumerate(hierarchy)}
+        self.idle()
+        self.check_ot()
+        self.reject_dialogs()
+        self.progress(f"OT {self.ot}: abriendo Seleccionar códigos de anomalía…")
+
+        def opener():
+            buttons = [e for e in self.driver.find_elements(By.CSS_SELECTOR, 'button')
+                       if e.is_displayed() and normalized(e.text) == 'seleccionar codigos de anomalia']
+            if len(buttons) > 1:
+                raise RuntimeError("Hay varios botones «Seleccionar códigos de anomalía».")
+            return buttons[0] if buttons else None
+
+        self.click_fresh(opener, 'Seleccionar códigos de anomalía',
+                         completed=lambda: self.failure_selector_state() is not None)
+
+        def loaded(d):
+            self.reject_dialogs((dialog_id,))
+            state = self.failure_selector_state()
+            return state if state and state['rows'] else False
+
+        state = self.wait(loaded, 'primer nivel de códigos de anomalía')
+        confirmed = dict(existing)
+        previous = -1
+        for _ in range(3):
+            types = {row['type'] for row in state['rows']}
+            if len(types) != 1 or not types <= levels.keys():
+                raise RuntimeError("El selector de anomalías no muestra un único nivel PROBLEM, CAUSE o REMEDY.")
+            kind = next(iter(types))
+            index = levels[kind]
+            if index <= previous:
+                raise RuntimeError("El selector de anomalías no avanzó al siguiente nivel.")
+            for ancestor, expected in hierarchy[:index]:
+                if confirmed.get(ancestor) != expected:
+                    raise RuntimeError(f"El selector avanzó a {kind} sin confirmar {expected}.")
+            code = hierarchy[index][1]
+            self.progress(f"OT {self.ot}: seleccionando {code} ({index + 1}/3)…")
+
+            def find():
+                current = self.failure_selector_state()
+                rows = [row for row in (current or {}).get('rows', [])
+                        if row['type'] == kind and row['code'] == code]
+                if len(rows) != 1:
+                    raise RuntimeError(f"No aparece una única opción {code} de tipo {kind}.")
+                return self.driver.find_element(By.ID, rows[0]['id'])
+
+            def advanced():
+                self.idle()
+                self.reject_dialogs((dialog_id,))
+                current = self.failure_selector_state()
+                if current is None:
+                    return True
+                current_types = {row['type'] for row in current['rows']}
+                return bool(current_types) and all(levels.get(t, -1) > index for t in current_types)
+
+            self.click_fresh(find, f'código {code}', completed=advanced)
+            self.wait(lambda d: advanced(), f'avance tras {code}')
+            confirmed[kind] = code
+            previous = index
+            state = self.failure_selector_state()
+            if state is None:
+                return
+            state = self.wait(loaded, 'siguiente nivel de códigos de anomalía')
+        raise RuntimeError("El selector no se cerró después de OTROS-03.")
+
+    def solution_codes(self):
+        self.wait(lambda d: all(self.field(caption) is not None for caption in
+                               ("Síntoma", "Causa", "Resolucion")), "campos de Soluciones")
+        return {kind: self.value(caption) for kind, caption in
+                (("PROBLEM", "Síntoma"), ("CAUSE", "Causa"), ("REMEDY", "Resolucion"))}
+
+    def verify_solution_codes(self):
+        codes = self.solution_codes()
+        for kind, expected in (("PROBLEM", "OTROS-01"), ("CAUSE", "OTROS-02"), ("REMEDY", "OTROS-03")):
+            if codes[kind] != expected:
+                raise RuntimeError(f"Maximo no confirmó el código {expected} ({kind}); no se iniciará la OT.")
 
     def route(self):
         """Solo continúa avisos conocidos; se detiene al confirmar INPRG."""
@@ -351,12 +446,16 @@ class WorkorderStarter:
             raise RuntimeError("Cierra el diálogo abierto en Maximo antes de iniciar la OT.")
         self.save()
         self.tab("Informes de anomalías")
-        if self.select("Clase de anomalía", "RFN-70"):
+        if self.select_failure_class():
             self.save()
         self.tab("Soluciones")
-        for caption, code in (("Síntoma", "OTROS-01"), ("Causa", "OTROS-02"), ("Resolucion", "OTROS-03")):
-            if self.select(caption, code):
-                self.save()
+        codes = self.solution_codes()
+        if codes != {"PROBLEM": "OTROS-01", "CAUSE": "OTROS-02", "REMEDY": "OTROS-03"}:
+            self.tab("Informes de anomalías")
+            self.select_failure_codes(codes)
+            self.save()
+            self.tab("Soluciones")
+        self.verify_solution_codes()
         self.route()
         # Reload confirms the server persisted the codes and status, not just
         # the visible values of Maximo's asynchronous controls.

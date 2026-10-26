@@ -15,17 +15,18 @@
   cargando ni después de iniciar la orden. Los errores técnicos completos se
   conservan en el log; el botón muestra un mensaje breve.
 
-- El inicio de OT guarda los cambios antes de seleccionar los códigos y después
-  de cambiar cada nivel de la jerarquía. Evita reutilizar códigos que Maximo
-  mantiene pendientes de eliminación al cambiar la clase de anomalía
-  (`BMXAA4523E`). Los mensajes del sistema se comunican sin esperar al timeout.
+- El inicio de OT usa «Seleccionar códigos de anomalía» en Informes de anomalías:
+  pulsa OTROS-01, OTROS-02 y OTROS-03, esperando el avance y el cierre automático
+  del diálogo. Soluciones se utiliza para verificar los valores, sin modificar
+  sus tres campos mediante lupas. Los cambios se guardan tras configurar la
+  clase y después de completar el selector; los errores se comunican sin timeout.
 - La opción «Iniciar orden» también se identifica cuando Maximo relaciona el
   botón de selección con su texto mediante ARIA o la fila contenedora.
 
 - Nuevo inicio opcional de OT con el flujo RFN-70. Configuración permite habilitar
   «Iniciar OT» en el menú contextual de MD y en las ventanas de Maximo abiertas
   desde la aplicación. Establece RFN-70 aunque falte o haya otra clase, selecciona
-  OTROS-01/02/03 mediante las lupas e inicia la orden. Desde MD se ejecuta en
+  OTROS-01/02/03 mediante el selector nativo e inicia la orden. Desde MD se ejecuta en
   segundo plano con progreso. «Abrir OT» sigue abriendo únicamente la ficha.
 - El inicio comprueba el estado real: solo actúa sobre APPR, no vuelve a enrutar
   una OT ya iniciada y se detiene ante avisos desconocidos. Verifica el resultado

@@ -117,15 +117,19 @@ navegador se utiliza la sesión abierta y se muestra el progreso en el botón.
 
 El flujo solo inicia OT en `APPR`: selecciona la clase `RFN-70` en Informes de
 anomalías (también si está vacía o tiene otro código), y `OTROS-01`, `OTROS-02` y
-`OTROS-03` en Soluciones. Usa las lupas y comprueba sus respuestas, continúa el
-aviso conocido de problema ya informado y acepta **Iniciar orden**. Se detiene al
+`OTROS-03` mediante **Seleccionar códigos de anomalía**, en esa misma pestaña.
+Cada clic en un código avanza al siguiente nivel y el último cierra el diálogo;
+no se pulsan los botones Seleccionar ni Seleccionar y regresar. Después se
+comprueban los tres valores en Soluciones. Si ya eran correctos, no se vuelven
+a seleccionar. El flujo continúa el aviso conocido de problema ya informado y
+acepta **Iniciar orden**. Se detiene al
 confirmar `INPRG`; una OT ya iniciada no vuelve a enrutarse. Un diálogo desconocido
 detiene la operación y muestra su mensaje para revisión.
 
-Antes de empezar y después de cambiar cada nivel se guardan los cambios pendientes.
-Así Maximo confirma la eliminación de la jerarquía anterior antes de reutilizar
-sus códigos. El guardado espera la respuesta del servidor y su confirmación;
-también contempla el aviso de problema ya informado en ese paso.
+Antes de empezar, después de cambiar la clase y tras completar el selector se
+guardan los cambios pendientes. La automatización no modifica los campos de
+Soluciones mediante sus lupas. El guardado espera la respuesta del servidor y su
+confirmación; también contempla el aviso de problema ya informado en ese paso.
 
 Si la primera pulsación de Enrutar no abre el diálogo, se comprueba de nuevo
 el estado y se reintenta, con un máximo de tres pulsaciones. Los controles que

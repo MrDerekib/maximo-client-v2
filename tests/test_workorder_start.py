@@ -182,30 +182,82 @@ class BrowserStartTests(TestCase):
                 ])
                 self.assertEqual(state['events'].count(['start']), 1)
                 self.assertFalse(state['pendingDeletion'])
-                self.assertEqual(state['events'].count(['save']), 4)
+                self.assertEqual(state['events'].count(['save']), 2)
+                self.assertEqual(state['events'].count(['native-open']), 1)
+                self.assertFalse(any(e[0]=='unexpected-selector-button' for e in state['events']))
+                self.assertFalse(any(e[0]=='lookup' and e[1]!='faultclass' for e in state['events']))
 
     def test_pending_deletions_are_saved_before_selecting_children(self):
         self.run_fixture(faultclass='RFN-70', pendingDeletion=True, saveWarning=True)
         state = self.browser.execute_script('return state')
-        self.assertEqual(state['events'][0], ['save'])
+        self.assertEqual(next(e for e in state['events'] if e[0] in {'save','native-open'}), ['save'])
         self.assertFalse(state['pendingDeletion'])
         self.assertTrue(state['saveWarningShown'])
         self.assertEqual(state['status'], 'INPRG')
 
-    def test_parent_code_changes_are_saved_before_replacing_their_children(self):
-        self.run_fixture(faultclass='RFN-70')
+    def test_native_hierarchy_avoids_the_problematic_solution_inputs(self):
+        self.run_fixture(faultclass='RFN-70', forceHierarchyError=True)
         events = self.browser.execute_script('return state.events')
-        for key in ('problem','cause'):
-            selected = next(i for i,e in enumerate(events) if e[:2]==['select',key])
-            self.assertEqual(events[selected+1], ['save'])
+        self.assertEqual([e for e in events if e[0]=='native-click'], [
+            ['native-click','PROBLEM','OTROS-01'],['native-click','CAUSE','OTROS-02'],
+            ['native-click','REMEDY','OTROS-03'],
+        ])
+        self.assertFalse(any(e[0]=='lookup' for e in events))
+        self.assertEqual(events.count(['save']), 1)
 
     def test_bmxaa4523e_is_reported_immediately_without_accepting_or_routing(self):
         with self.assertRaisesRegex(RuntimeError, 'BMXAA4523E'):
-            self.run_fixture(faultclass='RFN-70', forceHierarchyError=True)
+            self.run_fixture(faultclass='RFN-70', forceNativeError=True)
         state = self.browser.execute_script('return state')
         self.assertEqual(state['routes'], 0)
         self.assertEqual(len(self.browser.find_elements(By.ID, 'warndiv')), 1)
         self.assertEqual(FixtureStarter(self.browser, '4314531').dialog_snapshot()[-1]['id'], 'warndiv')
+
+    def test_missing_or_wrong_native_code_stops_before_routing(self):
+        for state in ({'nativeMissingCode':'OTROS-03'}, {'nativeWrongType':'UNKNOWN'}):
+            with self.subTest(state=state), self.assertRaisesRegex(RuntimeError, 'opción|nivel'):
+                self.run_fixture(**state)
+            self.assertEqual(self.browser.execute_script('return state.routes'), 0)
+
+    def test_early_native_close_is_verified_in_solutions_before_routing(self):
+        with self.assertRaisesRegex(RuntimeError, 'OTROS-02'):
+            self.run_fixture(nativeCloseEarly=True)
+        self.assertEqual(self.browser.execute_script('return state.routes'), 0)
+
+    def test_native_selector_can_start_at_a_confirmed_partial_hierarchy(self):
+        self.run_fixture(faultclass='RFN-70', problem='OTROS-01', cause='', remedy='', nativeInitialStage=1)
+        clicks = self.browser.execute_script("return state.events.filter(e=>e[0]==='native-click')")
+        self.assertEqual(clicks,[['native-click','CAUSE','OTROS-02'],['native-click','REMEDY','OTROS-03']])
+
+    def test_native_selector_does_not_skip_an_unconfirmed_parent(self):
+        with self.assertRaisesRegex(RuntimeError, 'sin confirmar OTROS-01'):
+            self.run_fixture(faultclass='RFN-70', problem='', nativeInitialStage=1)
+        self.assertEqual(self.browser.execute_script('return state.routes'), 0)
+
+    def test_solution_verification_waits_for_the_fields_to_be_rendered(self):
+        self.browser.execute_script("""
+            const fields=[...document.querySelectorAll('label[for]')]
+              .filter(label=>['Síntoma:','Causa:','Resolucion:'].includes(label.textContent.trim()))
+              .map(label=>document.getElementById(label.htmlFor));
+            const parents=fields.map(field=>field.parentElement);
+            fields.forEach(field=>field.remove());
+            setTimeout(()=>fields.forEach((field,index)=>parents[index].appendChild(field)),200);
+        """)
+        starter = FixtureStarter(self.browser, '4314531', timeout=5)
+        self.assertEqual(starter.solution_codes(),{'PROBLEM':'OLD-01','CAUSE':'OLD-02','REMEDY':'OLD-03'})
+
+    def test_native_rows_are_relocated_if_the_dialog_is_replaced_before_the_click(self):
+        original_click = WebElement.click
+        redraws = []
+        def redraw_then_click(element):
+            if not redraws and element.tag_name == 'span' and element.text == 'OTROS-02':
+                self.browser.execute_script("const d=arguments[0].closest('[role=dialog]');d.replaceWith(d.cloneNode(true));", element)
+                redraws.append(True)
+            return original_click(element)
+        with patch.object(WebElement, 'click', redraw_then_click):
+            self.run_fixture(nativeDelayMs=200)
+        self.assertEqual(len(redraws),1)
+        self.assertEqual(self.browser.execute_script("return state.events.filter(e=>e[0]==='native-click').length"),3)
 
     def test_closed_warning_shell_does_not_block_start(self):
         starter = FixtureStarter(self.browser, '4314531', timeout=5)
@@ -343,6 +395,7 @@ class BrowserStartTests(TestCase):
         self.run_fixture(faultclass='RFN-70', problem='OTROS-01', cause='OTROS-02', remedy='OTROS-03')
         events = self.browser.execute_script('return state.events')
         self.assertFalse(any(event[0]=='select' for event in events))
+        self.assertNotIn(['native-open'],events)
         self.assertEqual(events.count(['start']), 1)
 
     def test_navigating_to_another_ot_stops_before_editing_any_codes(self):

@@ -51,12 +51,14 @@ function render(nextTab) {
   sessionStorage.setItem('workflow-fixture-tab', tab);
   document.getElementById('toolactions_SAVE-tbb_anchor').setAttribute('aria-disabled', state.dirty?'false':'true');
   document.getElementById('form').innerHTML = control('Orden de trabajo','ot',true)+control('Estado','status',true)+
-    (tab === 'anomaly' ? control('Clase de anomalía','faultclass') :
+    (tab === 'anomaly' ? control('Clase de anomalía','faultclass')+
+      '<button id="mx_bg_button_listfailurecodes-pb" onclick="openFailureCodes()">Seleccionar códigos de anomalía</button>' :
       control('Síntoma','problem')+control('Causa','cause',true)+control('Resolucion','remedy',true))+
     '<img id="ROUTEWF_WO-MAIN_-tbb_image" alt="Enrutar flujo de trabajo" width="30" height="30" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onclick="route()">';
   document.getElementById('dialogs').innerHTML = '';
 }
 function lookup(key, query = '') {
+  state.events.push(['lookup',key]);
   let codes;
   if (key === 'faultclass') codes = query === '=RFN-70' ? ['RFN-70'] : ['OTHER'];
   else if (state.faultclass !== 'RFN-70') codes = [];
@@ -92,6 +94,46 @@ function selectCode(key, code) {
     }
     state[key] = code;
   });
+}
+const hierarchy = [
+  {type:'PROBLEM',key:'problem',code:'OTROS-01'},
+  {type:'CAUSE',key:'cause',code:'OTROS-02'},
+  {type:'REMEDY',key:'remedy',code:'OTROS-03'}
+];
+function openFailureCodes() {
+  state.events.push(['native-open']); save();
+  showFailureCodes(state.nativeInitialStage || 0);
+}
+function showFailureCodes(index) {
+  const level = hierarchy[index], prefix = 'mx'+(++generation);
+  let codes = index === 2 ? ['OTROS-05','OTROS-03','OTROS-04'] : [level.code];
+  if (state.nativeMissingCode === level.code) codes = codes.filter(code=>code!==level.code).concat('UNEXPECTED');
+  const type = state.nativeWrongType || level.type;
+  document.getElementById('dialogs').innerHTML = `<section role="dialog" id="wolistfailurecodes-dialog_inner">
+    Seleccionar códigos de anomalía<table><tbody>
+    ${codes.map((code,row)=>`<tr><td id="${prefix}_tdrow_[C:0]-c[R:${row}]"><span mxevent="click"
+      id="${prefix}_tdrow_[C:0]_ttxt-lb[R:${row}]" onclick="selectFailureCode(${index},'${code}')">${code}</span></td>
+      <td id="${prefix}_tdrow_[C:1]-c[R:${row}]"><span>${type}</span></td><td>Descripción</td></tr>`).join('')}
+    </tbody></table>
+    <button onclick="state.events.push(['unexpected-selector-button']);save()">Seleccionar</button>
+    <button onclick="state.events.push(['unexpected-selector-button']);save()">Seleccionar y regresar</button>
+    <button onclick="state.events.push(['unexpected-selector-button']);save()">Cerrar</button></section>`;
+}
+function selectFailureCode(index, code) {
+  if (state.forceNativeError) {
+    showWarning('BMXAA4523E - Error del selector nativo'); return;
+  }
+  document.getElementById('wait').style.display='block';
+  setTimeout(() => {
+    const level=hierarchy[index];
+    state.events.push(['native-click',level.type,code],['select',level.key,code]);
+    if (index===0) state.cause=state.remedy='';
+    if (index===1) state.remedy='';
+    state[level.key]=code; state.dirty=true; state.pendingDeletion=false;
+    save(); render(tab);
+    if (index<2 && !state.nativeCloseEarly) showFailureCodes(index+1);
+    document.getElementById('wait').style.display='none';
+  }, state.nativeDelayMs || 100);
 }
 function saveRecord() {
   if (!state.dirty) return;

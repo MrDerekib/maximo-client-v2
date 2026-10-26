@@ -1172,7 +1172,8 @@ class MaximoDesktopWindow(QMainWindow):
         self.workorder_start_check = QCheckBox("Habilitar «Iniciar OT» con el flujo RFN-70")
         start_hint = QLabel(
             "Añade «Iniciar OT» al menú contextual del listado y un botón en las nuevas ventanas de Maximo. "
-            "Establece la clase RFN-70, selecciona OTROS-01, OTROS-02 y OTROS-03 mediante las lupas "
+            "Establece la clase RFN-70 y selecciona OTROS-01, OTROS-02 y OTROS-03 "
+            "en «Seleccionar códigos de anomalía» "
             "e inicia la orden. Desde MD se ejecuta en segundo plano. Solo se aplica a OT en APPR. "
             "«Abrir OT» sigue abriendo únicamente la ficha."
         )
