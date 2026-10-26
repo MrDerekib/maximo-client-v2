@@ -1,7 +1,9 @@
 """Tests of explicit start semantics and the Maximo asynchronous workflow."""
 import os
 import sqlite3
+import threading
 from contextlib import closing
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import TestCase, skipUnless
@@ -98,6 +100,10 @@ FIXTURE = (Path(__file__).parent / 'fixtures' / 'workorder_start.html').resolve(
 
 
 class FixtureStarter(workflow.WorkorderStarter):
+    def response_sequence(self):
+        # The offline fixture models server replies without making HTTP calls.
+        return self.driver.execute_script('return state.responses')
+
     def check_location(self):
         # This suite only drives the committed local HTML fixture, never Maximo.
         if self.driver.current_url != FIXTURE:
@@ -137,6 +143,62 @@ class BrowserStartTests(TestCase):
                     ['select','cause','OTROS-02'],['select','remedy','OTROS-03'],
                 ])
                 self.assertEqual(state['events'].count(['start']), 1)
+                self.assertFalse(state['pendingDeletion'])
+                self.assertEqual(state['events'].count(['save']), 4)
+
+    def test_pending_deletions_are_saved_before_selecting_children(self):
+        self.run_fixture(faultclass='RFN-70', pendingDeletion=True, saveWarning=True)
+        state = self.browser.execute_script('return state')
+        self.assertEqual(state['events'][0], ['save'])
+        self.assertFalse(state['pendingDeletion'])
+        self.assertTrue(state['saveWarningShown'])
+        self.assertEqual(state['status'], 'INPRG')
+
+    def test_parent_code_changes_are_saved_before_replacing_their_children(self):
+        self.run_fixture(faultclass='RFN-70')
+        events = self.browser.execute_script('return state.events')
+        for key in ('problem','cause'):
+            selected = next(i for i,e in enumerate(events) if e[:2]==['select',key])
+            self.assertEqual(events[selected+1], ['save'])
+
+    def test_bmxaa4523e_is_reported_immediately_without_accepting_or_routing(self):
+        with self.assertRaisesRegex(RuntimeError, 'BMXAA4523E'):
+            self.run_fixture(faultclass='RFN-70', forceHierarchyError=True)
+        state = self.browser.execute_script('return state')
+        self.assertEqual(state['routes'], 0)
+        self.assertEqual(len(self.browser.find_elements(By.ID, 'warndiv')), 1)
+
+    def test_manual_start_choice_supports_aria_and_single_radio_containers(self):
+        for markup in ('aria','container'):
+            with self.subTest(markup=markup):
+                self.run_fixture(radioMarkup=markup)
+                self.assertEqual(self.browser.execute_script('return state.events').count(['start']), 1)
+
+    def test_save_response_observer_sees_real_local_ajax_completion(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(b'<!doctype html><title>Local response test</title>')
+            def log_message(self, *args):
+                pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            self.browser.get(f'http://127.0.0.1:{server.server_port}/')
+            starter = workflow.WorkorderStarter(self.browser, '4314531', timeout=5)
+            baseline = starter.response_sequence()
+            self.browser.execute_async_script("""
+                const done = arguments[0];
+                fetch('/maximo/ui/maximo.jsp').then(r => r.text()).then(() => done(true));
+            """)
+            self.assertTrue(starter.wait(lambda d: starter.response_sequence() > baseline, 'respuesta local'))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
     def test_an_in_progress_workorder_is_not_edited_or_routed_again(self):
         result = self.run_fixture(status='INPRG')

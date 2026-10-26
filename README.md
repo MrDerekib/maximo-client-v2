@@ -122,6 +122,11 @@ aviso conocido de problema ya informado y acepta **Iniciar orden**. Se detiene a
 confirmar `INPRG`; una OT ya iniciada no vuelve a enrutarse. Un diálogo desconocido
 detiene la operación y muestra su mensaje para revisión.
 
+Antes de empezar y después de cambiar cada nivel se guardan los cambios pendientes.
+Así Maximo confirma la eliminación de la jerarquía anterior antes de reutilizar
+sus códigos. El guardado espera la respuesta del servidor y su confirmación;
+también contempla el aviso de problema ya informado en ese paso.
+
 ### Pruebas
 
 ```powershell

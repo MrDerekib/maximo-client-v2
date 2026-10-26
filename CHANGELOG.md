@@ -2,6 +2,13 @@
 
 ## Pendiente de publicación
 
+- El inicio de OT guarda los cambios antes de seleccionar los códigos y después
+  de cambiar cada nivel de la jerarquía. Evita reutilizar códigos que Maximo
+  mantiene pendientes de eliminación al cambiar la clase de anomalía
+  (`BMXAA4523E`). Los mensajes del sistema se comunican sin esperar al timeout.
+- La opción «Iniciar orden» también se identifica cuando Maximo relaciona el
+  botón de selección con su texto mediante ARIA o la fila contenedora.
+
 - Nuevo inicio opcional de OT con el flujo RFN-70. Configuración permite habilitar
   «Iniciar OT» en el menú contextual de MD y en las ventanas de Maximo abiertas
   desde la aplicación. Establece RFN-70 aunque falte o haya otra clase, selecciona

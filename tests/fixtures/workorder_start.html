@@ -3,14 +3,18 @@
 <body><nav>
 <a role="tab" href="#" onclick="render('anomaly');return false">Informes de anomalías</a>
 <a role="tab" href="#" onclick="render('solutions');return false">Soluciones</a>
-</nav><main id="form"></main><div id="dialogs"></div>
+</nav><a id="toolactions_SAVE-tbb_anchor" href="#" onclick="saveRecord();return false">
+<img id="toolactions_SAVE-tbb_image" alt="Guardar orden de trabajo" width="25" height="25" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="></a>
+<div role="alert" id="saved-notice"></div><main id="form"></main><div id="dialogs"></div>
 <div id="wait" style="display:none;position:fixed;inset:0;background:#ddd8">Cargando</div>
 <script>
 let state, tab, generation = 0;
 const save = () => sessionStorage.setItem('workflow-fixture', JSON.stringify(state));
 function resetState(overrides = {}) {
   state = {ot:'4314531',status:'APPR',faultclass:'OTHER',problem:'OLD-01',cause:'OLD-02',
-    remedy:'OLD-03',events:[],routes:0,...overrides};
+    remedy:'OLD-03',events:[],routes:0,dirty:false,pendingDeletion:false,responses:0,...overrides};
+  state.dirty = state.dirty || state.pendingDeletion;
+  document.getElementById('saved-notice').textContent = '';
   tab = 'solutions'; save(); render(tab);
 }
 function asyncRender(action) {
@@ -30,6 +34,7 @@ function control(caption, key, readonly = false) {
 function render(nextTab) {
   tab = nextTab;
   sessionStorage.setItem('workflow-fixture-tab', tab);
+  document.getElementById('toolactions_SAVE-tbb_anchor').setAttribute('aria-disabled', state.dirty?'false':'true');
   document.getElementById('form').innerHTML = control('Orden de trabajo','ot',true)+control('Estado','status',true)+
     (tab === 'anomaly' ? control('Clase de anomalía','faultclass') :
       control('Síntoma','problem')+control('Causa','cause',true)+control('Resolucion','remedy',true))+
@@ -53,10 +58,39 @@ function lookup(key, query = '') {
     </section>`;
 }
 function selectCode(key, code) {
+  if (key !== 'faultclass' && (state.pendingDeletion || state.forceHierarchyError)) {
+    document.getElementById('dialogs').insertAdjacentHTML('beforeend', '<section role="alert" id="warndiv">Mensaje del sistema BMXAA4523E - El código de anomalía no se puede cambiar del estado de supresión porque es un nivel inferior de un código de anomalía marcado para supresión.<button onclick="this.parentElement.remove()">Aceptar</button></section>');
+    return;
+  }
   state.events.push(['select',key,code]);
   asyncRender(() => {
+    state.dirty = true;
+    if (key === 'faultclass') {
+      state.pendingDeletion = Boolean(state.problem || state.cause || state.remedy);
+      state.problem = state.cause = state.remedy = '';
+    } else if (key === 'problem') {
+      state.pendingDeletion = Boolean(state.cause || state.remedy);
+      state.cause = state.remedy = '';
+    } else if (key === 'cause') {
+      state.pendingDeletion = Boolean(state.remedy);
+      state.remedy = '';
+    }
     state[key] = code;
-    if (key === 'faultclass') state.problem = state.cause = state.remedy = '';
+  });
+}
+function saveRecord() {
+  if (!state.dirty) return;
+  state.events.push(['save']);
+  if (state.saveWarning && !state.saveWarningShown) {
+    state.saveWarningShown = true;
+    state.responses++; save();
+    document.getElementById('dialogs').innerHTML = '<section role="dialog" id="alreadyreported-dialog_inner">El problema ya ha sido informado <button onclick="commitSave()">Continuar</button><button>Cancelar</button></section>';
+  } else commitSave();
+}
+function commitSave() {
+  asyncRender(() => {
+    state.dirty = false; state.pendingDeletion = false; state.responses++;
+    document.getElementById('saved-notice').textContent = 'BMXAA4205I - El registro ha sido guardado.';
   });
 }
 function route() {
@@ -66,9 +100,13 @@ function route() {
   } else if (state.routes === 1) {
     document.getElementById('dialogs').innerHTML = '<section role="dialog" id="alreadyreported-dialog_inner">El problema ya ha sido informado <button onclick="state.events.push([\'continue\']);save();render(tab)">Continuar</button><button>Cancelar</button></section>';
   } else {
+    const radioMarkup = state.radioMarkup === 'aria' ?
+      '<div><span id="label-cancel">Cancelar orden</span><input id="choice-cancel" name="choice" type="radio" checked aria-labelledby="label-cancel"></div><div><span id="label-start">Iniciar orden</span><input id="choice-start" name="choice" type="radio" aria-labelledby="label-start"></div>' :
+      state.radioMarkup === 'container' ?
+      '<div>Cancelar orden<input id="choice-cancel" name="choice" type="radio" checked></div><div>Iniciar orden<input id="choice-start" name="choice" type="radio"></div>' :
+      '<label for="choice-cancel">Cancelar orden</label><input id="choice-cancel" name="choice" type="radio" checked><label for="choice-start">Iniciar orden</label><input id="choice-start" name="choice" type="radio">';
     document.getElementById('dialogs').innerHTML = `<section role="dialog" id="inputwf-dialog_inner">Entrada manual
-      <label for="choice-cancel">Cancelar orden</label><input id="choice-cancel" name="choice" type="radio" checked>
-      <label for="choice-start">Iniciar orden</label><input id="choice-start" name="choice" type="radio">
+      ${radioMarkup}
       <button onclick="confirmStart()">Aceptar</button><button>Cancelar</button></section>`;
   }
 }

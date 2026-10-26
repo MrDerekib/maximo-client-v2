@@ -54,7 +54,91 @@ class WorkorderStarter:
             raise RuntimeError(f"La ficha ya no corresponde a la OT {self.ot}; se detuvo el inicio.")
 
     def dialogs(self):
-        return [e for e in self.driver.find_elements(By.CSS_SELECTOR, "[role=dialog]") if e.is_displayed()]
+        return [e for e in self.driver.find_elements(By.CSS_SELECTOR, "[role=dialog], #warndiv") if e.is_displayed()]
+
+    def reject_dialogs(self, allowed=()):
+        for dialog in self.dialogs():
+            if dialog.get_attribute("id") not in allowed:
+                raise RuntimeError(f"Maximo requiere revisión: {dialog.text[:900]}")
+
+    def response_sequence(self):
+        """Observe completed UI requests without intercepting Maximo's HTTP APIs."""
+        return self.driver.execute_script("""
+            if (!window.__maximoDesktopResponses) {
+              const state = { sequence: 0 };
+              state.observer = new PerformanceObserver(list => {
+                for (const entry of list.getEntries()) {
+                  const url = new URL(entry.name);
+                  if (['xmlhttprequest', 'fetch'].includes(entry.initiatorType) &&
+                      url.origin === location.origin && url.pathname.startsWith('/maximo/ui'))
+                    state.sequence++;
+                }
+              });
+              state.observer.observe({ entryTypes: ['resource'] });
+              window.__maximoDesktopResponses = state;
+            }
+            return window.__maximoDesktopResponses.sequence;
+        """)
+
+    def save(self):
+        """Commit pending hierarchy deletions before reusing a child failure code."""
+        self.idle()
+        self.check_ot()
+        self.reject_dialogs()
+        action = self.driver.find_element(By.ID, "toolactions_SAVE-tbb_anchor")
+        aria_disabled = action.get_attribute("aria-disabled")
+        if aria_disabled == "true" or (aria_disabled is None and action.get_attribute("disabled") in {"true", "disabled"}):
+            return False
+        self.progress(f"OT {self.ot}: guardando los códigos de anomalía…")
+        marker = self.response_sequence()
+        action.click()
+        for _ in range(4):
+            self.wait(lambda d: self.response_sequence() > marker or self.dialogs(), "respuesta al guardar la OT")
+            self.idle()
+            self.check_ot()
+            dialogs = self.dialogs()
+            if dialogs:
+                dialog = dialogs[-1]
+                if dialog.get_attribute("id") != "alreadyreported-dialog_inner":
+                    self.reject_dialogs()
+                marker = self.response_sequence()
+                self.progress(f"OT {self.ot}: continuando el aviso de problema ya informado…")
+                self.button(dialog, "Continuar")
+                continue
+            saved = self.driver.execute_script("""
+                return [...document.querySelectorAll('[role=alert]')].some(e =>
+                  e.getClientRects().length && /BMXAA4205I/.test(e.textContent));
+            """)
+            if not saved:
+                raise RuntimeError("Maximo respondió, pero no confirmó que la OT se haya guardado.")
+            return True
+        raise RuntimeError("Maximo repitió el aviso de guardado; se detuvo el inicio de la OT.")
+
+    def start_choice(self, dialog):
+        """Match radio captions through labels, ARIA or a single-radio container."""
+        choices = []
+        labels = dialog.find_elements(By.CSS_SELECTOR, "label")
+        for choice in dialog.find_elements(By.CSS_SELECTOR, "input[type=radio]"):
+            if not choice.is_displayed():
+                continue
+            choice_id = choice.get_attribute("id")
+            captions = [choice.get_attribute("aria-label")]
+            for label in labels:
+                if label.get_attribute("for") == choice_id:
+                    captions.append(label.text)
+            for label_id in (choice.get_attribute("aria-labelledby") or "").split():
+                captions.extend(e.text for e in self.driver.find_elements(By.ID, label_id))
+            parent = choice
+            for _ in range(3):
+                parent = parent.find_element(By.XPATH, "..")
+                if len(parent.find_elements(By.CSS_SELECTOR, "input[type=radio]")) != 1:
+                    break
+                captions.append(parent.text)
+            if any(normalized(caption) == "iniciar orden" for caption in captions):
+                choices.append(choice)
+        if len(choices) != 1:
+            raise RuntimeError("Maximo no ofrece una única opción «Iniciar orden».")
+        return choices[0]
 
     def lookup(self):
         return next((e for e in self.dialogs() if e.get_attribute("id").startswith("lookup_")), None)
@@ -95,13 +179,14 @@ class WorkorderStarter:
         self.check_ot()
         field = self.wait(lambda d: self.field(caption), f"campo {caption}")
         if (field.get_attribute("value") or "").strip() == code:
-            return
+            return False
         self.progress(f"OT {self.ot}: seleccionando {caption.lower()} {code}…")
         lookup_id = field.get_attribute("li")
         if not lookup_id:
             raise RuntimeError(f"El campo {caption} no tiene una lupa disponible.")
         self.driver.find_element(By.ID, lookup_id).click()
         dialog = self.wait(lambda d: self.lookup(), f"lupa de {caption}")
+        lookup_dialog_id = dialog.get_attribute("id")
         self.idle()
         option = self.option(dialog, code)
         if option is None:
@@ -120,9 +205,12 @@ class WorkorderStarter:
             filters[0].send_keys(Keys.ENTER)
             option = self.wait(lambda d: self.option(self.lookup(), code), f"opción {code}")
         option.click()
-        self.wait(lambda d: not self.dialogs() and self.value(caption) == code,
-                  f"confirmación de {caption} {code}")
+        def confirmed(d):
+            self.reject_dialogs((lookup_dialog_id,))
+            return not self.dialogs() and self.value(caption) == code
+        self.wait(confirmed, f"confirmación de {caption} {code}")
         self.idle()
+        return True
 
     def route(self):
         """Solo continúa avisos conocidos; se detiene al confirmar INPRG."""
@@ -146,11 +234,7 @@ class WorkorderStarter:
                     self.progress(f"OT {self.ot}: continuando el aviso de problema ya informado…")
                     self.button(dialog, "Continuar")
                 elif dialog_id == "inputwf-dialog_inner" and not initiated:
-                    labels = [e for e in dialog.find_elements(By.CSS_SELECTOR, "label[for]")
-                              if normalized(e.text) == "iniciar orden"]
-                    if len(labels) != 1:
-                        raise RuntimeError("Maximo no ofrece una única opción «Iniciar orden».")
-                    choice = self.driver.find_element(By.ID, labels[0].get_attribute("for"))
+                    choice = self.start_choice(dialog)
                     if not choice.is_selected():
                         choice.click()
                     self.progress(f"OT {self.ot}: iniciando orden…")
@@ -189,11 +273,14 @@ class WorkorderStarter:
             raise RuntimeError(f"No se puede iniciar la OT {self.ot} en estado {status}. Debe estar en APPR.")
         if self.dialogs():
             raise RuntimeError("Cierra el diálogo abierto en Maximo antes de iniciar la OT.")
+        self.save()
         self.tab("Informes de anomalías")
-        self.select("Clase de anomalía", "RFN-70")
+        if self.select("Clase de anomalía", "RFN-70"):
+            self.save()
         self.tab("Soluciones")
         for caption, code in (("Síntoma", "OTROS-01"), ("Causa", "OTROS-02"), ("Resolucion", "OTROS-03")):
-            self.select(caption, code)
+            if self.select(caption, code):
+                self.save()
         self.route()
         # Reload confirms the server persisted the codes and status, not just
         # the visible values of Maximo's asynchronous controls.
