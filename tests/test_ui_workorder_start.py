@@ -11,9 +11,10 @@ from PySide6.QtWidgets import QMainWindow
 def window(enabled=True):
     return SimpleNamespace(
         _closing=False, cfg=AppConfig(workorder_start_enabled=enabled),
-        _credentials_ready=Mock(return_value=True), _starting_ots=set(),
+        _credentials_ready=Mock(return_value=True),
         status=Mock(), _start_task=Mock(), _workorder_started=Mock(),
         workorder_started=SimpleNamespace(emit=Mock()), ot_sessions=[],
+        workorder_closed=SimpleNamespace(emit=Mock()),
     )
 
 
@@ -34,12 +35,15 @@ class WorkorderStartUiTests(TestCase):
         ui = SettingsWindow()
         try:
             self.assertFalse(ui.workorder_start_check.isChecked())
+            self.assertFalse(ui.workorder_close_check.isChecked())
             self.assertFalse(ui.settings_dirty())
             ui.workorder_start_check.setChecked(True)
+            ui.workorder_close_check.setChecked(True)
             self.assertTrue(ui.settings_dirty())
             with patch('ui_qt.save_config') as save:
                 ui.save_settings(show_feedback=False)
             self.assertTrue(save.call_args.args[0].workorder_start_enabled)
+            self.assertTrue(save.call_args.args[0].workorder_close_enabled)
             self.assertFalse(ui.settings_dirty())
         finally:
             ui.deleteLater()
@@ -47,40 +51,24 @@ class WorkorderStartUiTests(TestCase):
 
     def test_open_only_keeps_its_visible_browser_without_starting(self):
         ui = window()
-        with patch('ui_qt.open_ot') as open_ot, patch('ui_qt.start_ot') as start:
+        with patch('ui_qt.open_ot') as open_ot:
             MaximoDesktopWindow.open_ot_number(ui, '4314531')
             ui._start_task.call_args.args[0]()
         self.assertFalse(open_ot.call_args.kwargs['headless'])
         self.assertNotIn('start_workflow', open_ot.call_args.kwargs)
-        start.assert_not_called()
 
-    def test_disabled_start_never_enqueues_a_task(self):
-        ui = window(enabled=False)
-        MaximoDesktopWindow.start_ot_number(ui, '4314531')
-        ui._start_task.assert_not_called()
-
-    def test_headless_start_is_explicit_reports_progress_and_deduplicates(self):
-        ui, report = window(), Mock()
-        result = {'ot':'4314531','status':'INPRG','already_started':False}
-        with patch('ui_qt.start_ot', return_value=result) as start:
-            MaximoDesktopWindow.start_ot_number(ui, '4314531')
-            task = ui._start_task.call_args
-            MaximoDesktopWindow.start_ot_number(ui, '4314531')
-            ui._start_task.assert_called_once()
-            self.assertEqual(task.args[0](report), result)
-            start.assert_called_once_with('4314531', progress_callback=report)
-            task.kwargs['progress']('Configurando RFN-70')
-            ui.status.showMessage.assert_called_with('Configurando RFN-70')
-            task.args[1](result)
-        self.assertEqual(ui._starting_ots, set())
-        ui._workorder_started.assert_called_once_with(result)
-
-    def test_failed_start_releases_its_guard_without_reporting_success(self):
+    def test_desktop_context_menu_only_opens_workorders_and_does_not_start_them(self):
         ui = window()
-        MaximoDesktopWindow.start_ot_number(ui, '4314531')
-        failed = ui._start_task.call_args.args[2]
-        with patch('ui_qt.QMessageBox.critical') as error:
-            failed('Aviso desconocido')
-        self.assertEqual(ui._starting_ots, set())
-        ui._workorder_started.assert_not_called()
-        error.assert_called_once_with(ui, 'Iniciar OT 4314531', 'Aviso desconocido')
+        ui.table = Mock()
+        ui.table.indexAt.return_value.row.return_value = 0
+        ui.table.indexAt.return_value.column.return_value = 1
+        ui.table.item.side_effect = lambda row,col: SimpleNamespace(text=lambda: 'APPR' if col==7 else 'Activo')
+        ui.selected_ot = Mock(return_value='4314531')
+        menu = Mock()
+        with patch('ui_qt.QMenu',return_value=menu):
+            MaximoDesktopWindow.show_context_menu(ui, Mock())
+        labels = [call.args[0] for call in menu.addAction.call_args_list]
+        self.assertIn('Abrir OT en Maximo',labels)
+        self.assertNotIn('Iniciar OT',labels)
+        self.assertNotIn('Cerrar OT',labels)
+        self.assertFalse(hasattr(MaximoDesktopWindow,'start_ot_number'))

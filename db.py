@@ -456,6 +456,18 @@ def apply_started_workorder(ot: str) -> bool:
         return cursor.rowcount == 1
 
 
+def apply_closed_repair(ot: str) -> bool:
+    """Reflect a confirmed repair release; never overwrite a later warehouse CLOSE."""
+    with closing(get_connection()) as connection:
+        placeholders = ", ".join("?" for _ in INACTIVE_RECONCILIATION_TRACKING)
+        cursor = connection.execute(
+            f"UPDATE maximo SET Seguimiento = ? WHERE OT = ? AND Seguimiento IN ({placeholders})",
+            ("ISSUE", ot, *INACTIVE_RECONCILIATION_TRACKING),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+
+
 def inactive_tracking_candidates(limit: int | None = 5,
                                 minimum_age_hours: int | None = 24) -> List[Tuple[str, str]]:
     """Devuelve OT históricas con seguimientos que deben contrastarse en Maximo."""

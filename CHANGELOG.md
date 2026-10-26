@@ -2,6 +2,17 @@
 
 ## Pendiente de publicación
 
+- Las acciones «Iniciar OT» y «Cerrar OT» se habilitan por separado en
+  Configuración y se ejecutan únicamente desde las ventanas de Edge abiertas
+  por MD. Retirado el inicio de OT del menú contextual y su ejecución en segundo
+  plano desde la aplicación. «Abrir OT» sigue abriendo únicamente la ficha.
+- Nuevo cierre de reparación desde Edge: revisa las horas en Consumos Actuales,
+  pregunta el inicio real y calcula la finalización, sin superar la hora actual.
+  Solo acepta duraciones en tramos de 0,25 h (15 minutos). La revisión exige confirmación explícita;
+  cancelar no modifica los datos. Tras guardar y verificar duración y fechas,
+  enruta hasta ISSUE, pendiente de salida del almacén, sin continuar a CLOSE.
+  Ante un resultado incierto no repite la aceptación final del cierre.
+
 - Corregido el falso aviso de diálogo abierto al iniciar una OT: Maximo conserva
   el contenedor `warndiv` aunque su panel esté oculto. El botón y la automatización
   comprueban ahora la visibilidad del panel real, sin bloquear por contenedores
@@ -23,11 +34,9 @@
 - La opción «Iniciar orden» también se identifica cuando Maximo relaciona el
   botón de selección con su texto mediante ARIA o la fila contenedora.
 
-- Nuevo inicio opcional de OT con el flujo RFN-70. Configuración permite habilitar
-  «Iniciar OT» en el menú contextual de MD y en las ventanas de Maximo abiertas
-  desde la aplicación. Establece RFN-70 aunque falte o haya otra clase, selecciona
-  OTROS-01/02/03 mediante el selector nativo e inicia la orden. Desde MD se ejecuta en
-  segundo plano con progreso. «Abrir OT» sigue abriendo únicamente la ficha.
+- Nuevo inicio opcional de OT con el flujo RFN-70 en Edge. Establece RFN-70
+  aunque falte o haya otra clase, selecciona OTROS-01/02/03 mediante el selector
+  nativo e inicia la orden. El progreso se muestra en el botón del navegador.
 - El inicio comprueba el estado real: solo actúa sobre APPR, no vuelve a enrutar
   una OT ya iniciada y se detiene ante avisos desconocidos. Verifica el resultado
   guardado antes de actualizar el seguimiento local.

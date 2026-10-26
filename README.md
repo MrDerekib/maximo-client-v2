@@ -106,14 +106,14 @@ excluidos del control de versiones.
 
 ### Inicio opcional de OT
 
-En **Configuración → Inicio de órdenes de trabajo**, activa **Habilitar «Iniciar
-OT» con el flujo RFN-70** y guarda los cambios. Está desactivado por defecto.
+En **Configuración → Acciones de OT en Edge**, activa **Mostrar «Iniciar OT»
+en Edge (flujo RFN-70)** y guarda los cambios. Está desactivado por defecto.
 «Abrir OT» y los enlaces del listado siguen abriendo la ficha sin iniciarla.
 
-Al habilitarlo aparecen la acción **Iniciar OT** en el menú contextual del listado
-y un botón en las nuevas ventanas de Maximo abiertas desde MD. Desde el listado
-se ejecuta en segundo plano; la barra de estado indica el paso actual. En el
-navegador se utiliza la sesión abierta y se muestra el progreso en el botón.
+Al habilitarlo aparece un botón en las nuevas ventanas de Maximo abiertas desde
+MD. Utiliza la sesión abierta y muestra el progreso en el botón. El inicio está
+disponible únicamente en Edge; se ha retirado la acción del menú contextual y
+la ejecución del inicio en segundo plano desde MD.
 
 El flujo solo inicia OT en `APPR`: selecciona la clase `RFN-70` en Informes de
 anomalías (también si está vacía o tiene otro código), y `OTROS-01`, `OTROS-02` y
@@ -138,6 +138,34 @@ el proceso completo. Si la acción ya tuvo efecto, no se vuelve a enviar.
 Los contenedores de avisos y diálogos que Maximo conserva ocultos no bloquean el
 inicio: se comprueba la visibilidad de sus paneles, tanto en el botón como en la
 automatización. Un aviso visible sigue requiriendo revisión.
+
+### Cierre de una reparación desde Edge
+
+En **Configuración → Acciones de OT en Edge**, activa **Mostrar «Cerrar OT» en
+Edge**. Solo está disponible en una OT en `INPRG`. No hay una acción de cierre
+en el menú contextual de MD ni se cierra una OT al abrir su ficha.
+
+El botón consulta **Horas totales de reparación** en Consumos Actuales y las
+fechas **Inicio real** y **Finalización real** en Orden de trabajo. Abre una
+revisión que pide el inicio real, mostrando el que figura en Maximo como
+referencia, y permite introducir o corregir la duración. La duración
+admite únicamente múltiplos positivos de `0,25 h` (15 minutos); `0,75` son 45
+minutos y `1,25` son 75 minutos. No se redondean valores no válidos.
+La finalización se calcula a partir del inicio y de la duración, y no puede ser
+posterior a la hora actual. Esta condición se comprueba también antes de guardar.
+
+Cancelar esta revisión no cambia los datos. **Confirmar cierre** guarda la
+duración mediante teclado y Tab, y las fechas mediante el calendario nativo de
+Maximo. Antes de enrutar se recarga la ficha y se comprueba que se han guardado
+los tres valores. Si los datos cambiaron desde la revisión, la confirmación ha
+caducado o Maximo muestra un error, se detiene sin intentar el cierre.
+
+La operación termina en `ISSUE`, pendiente de salida del almacén. Nunca se sigue
+enrutando una OT que ya está en ISSUE ni se busca el estado CLOSE. El botón de
+enrutar tiene hasta tres intentos si no aparece ningún diálogo. La aceptación
+final de «Cerrar OT» se envía una sola vez; si su resultado no se puede confirmar,
+se pide revisar el estado en Maximo. El cierre es irreversible y debe probarse
+con una OT preparada expresamente para ello.
 
 ### Pruebas
 

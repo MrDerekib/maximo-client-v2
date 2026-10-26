@@ -48,6 +48,8 @@ function control(caption, key, readonly = false) {
 }
 function render(nextTab) {
   tab = nextTab;
+  document.querySelectorAll('a[role=tab]').forEach(a=>a.setAttribute('aria-expanded',
+    ((tab==='anomaly'&&a.textContent.includes('anomal'))||(tab==='solutions'&&a.textContent==='Soluciones'))?'true':'false'));
   sessionStorage.setItem('workflow-fixture-tab', tab);
   document.getElementById('toolactions_SAVE-tbb_anchor').setAttribute('aria-disabled', state.dirty?'false':'true');
   document.getElementById('form').innerHTML = control('Orden de trabajo','ot',true)+control('Estado','status',true)+

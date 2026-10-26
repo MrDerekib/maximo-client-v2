@@ -26,14 +26,14 @@ from PySide6.QtWidgets import (
 from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DEVELOPMENT_MODE, DOWNLOAD_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR, PROFILES_PATH, UPDATE_CACHE_DIR
 from config import AppConfig, credentials_configured, load_config, save_config
 from db import (
-    apply_started_workorder,
+    apply_started_workorder, apply_closed_repair,
     clear_current_priority_snapshot, current_priority_ots, current_priority_snapshots,
     delete_all_inactive_records, delete_inactive_record, fetch_data, filter_choices,
     fault_description_candidate_count, detailed_description_candidate_count,
     enrichment_candidate_count, get_detailed_description, inactive_tracking_candidate_count, init_db,
     replace_priority_snapshot, update_priority_expiration,
 )
-from maximo_client import REPAIR_REPORT_STATUSES, cleanup_edge_profile, open_ot, start_ot, verify_credentials
+from maximo_client import REPAIR_REPORT_STATUSES, cleanup_edge_profile, open_ot, verify_credentials
 from updater import enrich_fault_descriptions, reconcile_inactive_tracking, run_update
 from search_filters import load_profiles, save_profiles
 from update_checker import UpdateDownloadCancelled, download_release_asset, fetch_latest_release, format_version_tag, is_newer
@@ -717,6 +717,7 @@ class MaximoDesktopWindow(QMainWindow):
     app_download_progress = Signal(int, int)
     app_download_status = Signal(str)
     workorder_started = Signal(object)
+    workorder_closed = Signal(object)
 
     def __init__(self):
         super().__init__()
@@ -737,7 +738,6 @@ class MaximoDesktopWindow(QMainWindow):
         self._ready_update = None
         self._prompted_release_tags = set()
         self.ot_sessions = []
-        self._starting_ots = set()
         self.profiles = {}
         self.profiles_error = None
         self.advanced_state = {"equipment": "", "date_from": "", "date_to": "", "clients": [], "types": [], "tracking": []}
@@ -757,6 +757,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.app_download_progress.connect(self._set_app_download_progress)
         self.app_download_status.connect(self._set_app_download_status)
         self.workorder_started.connect(self._workorder_started)
+        self.workorder_closed.connect(self._workorder_closed)
         self.setWindowTitle(f"Maximo Desktop · v{version.APP_VERSION}")
         self.setMinimumSize(1150, 700)
         self.resize(1500, 900)
@@ -1167,20 +1168,31 @@ class MaximoDesktopWindow(QMainWindow):
         appearance_form.addRow("Tema", self.theme_combo)
         appearance_form.addRow("", theme_hint)
 
-        self.workorder_start_card = QGroupBox("Inicio de órdenes de trabajo")
+        self.workorder_start_card = QGroupBox("Acciones de OT en Edge")
         start_form = QFormLayout(self.workorder_start_card)
-        self.workorder_start_check = QCheckBox("Habilitar «Iniciar OT» con el flujo RFN-70")
+        self.workorder_start_check = QCheckBox("Mostrar «Iniciar OT» en Edge (flujo RFN-70)")
+        self.workorder_close_check = QCheckBox("Mostrar «Cerrar OT» en Edge")
         start_hint = QLabel(
-            "Añade «Iniciar OT» al menú contextual del listado y un botón en las nuevas ventanas de Maximo. "
+            "Añade un botón «Iniciar OT» en las nuevas ventanas de Maximo abiertas desde MD. "
             "Establece la clase RFN-70 y selecciona OTROS-01, OTROS-02 y OTROS-03 "
             "en «Seleccionar códigos de anomalía» "
-            "e inicia la orden. Desde MD se ejecuta en segundo plano. Solo se aplica a OT en APPR. "
+            "e inicia la orden. Solo se aplica a OT en APPR. "
             "«Abrir OT» sigue abriendo únicamente la ficha."
         )
         start_hint.setObjectName("filterHint")
         start_hint.setWordWrap(True)
         start_form.addRow("", self.workorder_start_check)
         start_form.addRow("", start_hint)
+        start_form.addRow("", self.workorder_close_check)
+        close_hint = QLabel(
+            "Añade «Cerrar OT» en las nuevas ventanas de Maximo abiertas desde MD. "
+            "Pide el inicio real y revisa la duración en tramos de 15 minutos. Calcula la finalización, "
+            "sin superar la hora actual, y pide confirmar antes de ejecutar el flujo hacia ISSUE. "
+            "Estas acciones solo se ejecutan desde Edge; no se ofrecen en el menú del listado."
+        )
+        close_hint.setObjectName('filterHint')
+        close_hint.setWordWrap(True)
+        start_form.addRow('', close_hint)
 
         self.repair_card = QGroupBox("Partes de reparación")
         repair_form = QFormLayout(self.repair_card)
@@ -1716,10 +1728,6 @@ class MaximoDesktopWindow(QMainWindow):
             menu.addAction("Ver descripción detallada", lambda: self.show_detailed_description(ot))
         menu.addAction("Abrir OT en Maximo", lambda: self.open_ot_for_row(row))
         tracking = self.table.item(row, 7).text().strip().upper()
-        if self.cfg.workorder_start_enabled:
-            start_action = menu.addAction("Iniciar OT", lambda: self.start_ot_number(ot))
-            start_action.setEnabled(tracking in {"APPR", "PDTE CONFIRMAR"} and ot not in self._starting_ots)
-            start_action.setToolTip("RFN-70 · OTROS-01/02/03 · Iniciar orden en segundo plano")
         report_enabled = tracking in REPAIR_REPORT_STATUSES
         print_action = menu.addAction("Imprimir parte…", lambda: self.open_repair_report(ot, "print"))
         pdf_action = menu.addAction("Guardar parte en PDF…", lambda: self.open_repair_report(ot, "pdf"))
@@ -2049,6 +2057,7 @@ class MaximoDesktopWindow(QMainWindow):
         self._start_task(lambda: open_ot(
             ot, headless=False, close_after_direct_print=close_after_direct_print,
             on_workorder_started=self.workorder_started.emit,
+            on_workorder_closed=self.workorder_closed.emit,
         ), done)
 
     def _workorder_started(self, result):
@@ -2064,29 +2073,17 @@ class MaximoDesktopWindow(QMainWindow):
         suffix = "ya estaba iniciada" if result["already_started"] else "iniciada correctamente"
         self.status.showMessage(f"OT {ot}: {suffix} (INPRG).", 10000)
 
-    def start_ot_number(self, ot):
-        if self._closing or not ot or not self.cfg.workorder_start_enabled or not self._credentials_ready():
+    def _workorder_closed(self, result):
+        if self._closing:
             return
-        if ot in self._starting_ots:
-            self.status.showMessage(f"El inicio de la OT {ot} ya está en curso.", 5000)
-            return
-        self._starting_ots.add(ot)
-        self.status.showMessage(f"Iniciando OT {ot} en segundo plano…")
-
-        def done(result):
-            self._starting_ots.discard(ot)
-            self._workorder_started(result)
-
-        def failed(error):
-            self._starting_ots.discard(ot)
-            self.status.showMessage(f"No se pudo confirmar el inicio de la OT {ot}.", 10000)
-            if not self._closing:
-                QMessageBox.critical(self, f"Iniciar OT {ot}", error)
-
-        self._start_task(
-            lambda report: start_ot(ot, progress_callback=report), done, failed,
-            progress=lambda message: self.status.showMessage(message),
-        )
+        ot = result['ot']
+        try:
+            apply_closed_repair(ot)
+            self.refresh_choices()
+            self.refresh_table()
+        except Exception:
+            logging.exception('OT %s en ISSUE, pero no se pudo refrescar su seguimiento local', ot)
+        self.status.showMessage(f'OT {ot}: pendiente dar salida del almacén (ISSUE).', 10000)
 
     def open_repair_report(self, ot, action):
         if self._closing or not ot or not self._credentials_ready(): return
@@ -2104,6 +2101,7 @@ class MaximoDesktopWindow(QMainWindow):
             ot, headless=False, report_action=action,
             close_after_direct_print=close_after_direct_print,
             on_workorder_started=self.workorder_started.emit,
+            on_workorder_closed=self.workorder_closed.emit,
         ), done)
 
     def export_current_list(self):
@@ -2177,6 +2175,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.detailed_descriptions_check.setChecked(self.cfg.detailed_descriptions_enabled)
         self.repair_extension_check.setChecked(self.cfg.repair_extension_enabled)
         self.workorder_start_check.setChecked(self.cfg.workorder_start_enabled)
+        self.workorder_close_check.setChecked(self.cfg.workorder_close_enabled)
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
         self.repair_close_tabs_check.setChecked(self.cfg.repair_close_tabs_after_direct_print)
         self.repair_mode_combo.setEnabled(self.cfg.repair_extension_enabled)
@@ -2228,6 +2227,7 @@ class MaximoDesktopWindow(QMainWindow):
             or self.detailed_descriptions_check.isChecked() != self.cfg.detailed_descriptions_enabled
             or self.repair_extension_check.isChecked() != self.cfg.repair_extension_enabled
             or self.workorder_start_check.isChecked() != self.cfg.workorder_start_enabled
+            or self.workorder_close_check.isChecked() != self.cfg.workorder_close_enabled
             or self.repair_mode_combo.currentData() != self.cfg.repair_print_mode
             or self.repair_close_tabs_check.isChecked() != self.cfg.repair_close_tabs_after_direct_print
             or self.fault_batch_spin.value() != self.cfg.fault_description_batch_size
@@ -2243,6 +2243,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.cfg.detailed_descriptions_enabled = self.detailed_descriptions_check.isChecked()
         self.cfg.repair_extension_enabled = self.repair_extension_check.isChecked()
         self.cfg.workorder_start_enabled = self.workorder_start_check.isChecked()
+        self.cfg.workorder_close_enabled = self.workorder_close_check.isChecked()
         self.cfg.repair_print_mode = self.repair_mode_combo.currentData()
         self.cfg.repair_close_tabs_after_direct_print = self.repair_close_tabs_check.isChecked()
         self.cfg.fault_description_batch_size = self.fault_batch_spin.value()
@@ -2252,6 +2253,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.cfg.theme = self.theme_combo.currentData()
         save_config(self.cfg)
         logging.info("Inicio de OT RFN-70 habilitado: %s", self.cfg.workorder_start_enabled)
+        logging.info("Cierre de OT en Edge habilitado: %s", self.cfg.workorder_close_enabled)
         self.schedule_auto_update()
         self._refresh_auto_update_summary()
         self._refresh_reconciliation_summary()

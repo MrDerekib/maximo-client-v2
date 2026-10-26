@@ -1,0 +1,85 @@
+<!doctype html><html lang="es"><meta charset="utf-8"><title>Offline close workflow</title><body>
+<nav><a role="tab" href="#" onclick="render('main');return false">Orden de trabajo</a>
+<a role="tab" href="#" onclick="render('actuals');return false">Consumos Actuales</a></nav>
+<a id="toolactions_SAVE-tbb_anchor" href="#" onclick="saveRecord();return false">Guardar</a>
+<div id="notice" role="alert"></div><main></main><div id="dialogs"></div>
+<div id="wait" style="display:none;position:fixed;inset:0;background:#ddd8">Cargando</div>
+<script>
+let state,tab,generation=0,widget;
+const persist=()=>sessionStorage.setItem('close-fixture',JSON.stringify(state));
+function resetState(overrides={}){
+  state={ot:'4378677',status:'INPRG',duration:'',start:'2026-10-26T10:00:00',end:'',dirty:false,
+    routes:0,responses:0,events:[],...overrides};
+  tab='main';persist();render(tab);
+}
+function later(action){
+  document.getElementById('wait').style.display='block';
+  setTimeout(()=>{action();persist();render(tab);document.getElementById('wait').style.display='none';},100);
+}
+function dateText(iso){
+  if(!iso)return '';
+  const p=iso.split(/[-T:]/);return `${p[2]}/${p[1]}/${p[0].slice(-2)} ${p[3]}:${p[4]}:${p[5]||'00'}`;
+}
+function control(caption,key){
+  const id='mx'+(++generation)+'-tb',image=id.replace('-tb','-img'),date=['start','end'].includes(key);
+  const value=date?dateText(state[key]):state[key];
+  return `<p><label for="${id}">${caption}:</label><input id="${id}" ctype="textbox" li="${image}"
+    ${key==='duration'&&!state.durationReadonly?'':'readonly'}
+    value="${date&&state.titleOnly?'':value}" title="${value}"
+    onblur="if('${key}'==='duration'&&this.value!==state.duration)later(()=>{state.duration=this.value;state.dirty=true;state.events.push(['duration',this.value])})">
+    ${date?`<img id="${image}" alt="Seleccionar fecha y hora" width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onclick="openDate('${key}','${id}')">`:''}</p>`;
+}
+function render(next){
+  tab=next;sessionStorage.setItem('close-tab',tab);
+  document.querySelectorAll('[role=tab]').forEach(e=>e.setAttribute('aria-expanded',
+    (tab==='main'?e.textContent==='Orden de trabajo':e.textContent==='Consumos Actuales')?'true':'false'));
+  document.getElementById('toolactions_SAVE-tbb_anchor').setAttribute('aria-disabled',state.dirty?'false':'true');
+  document.querySelector('main').innerHTML=control('Orden de trabajo','ot')+control('Estado','status')+
+    (tab==='actuals'?control('Horas totales de reparación','duration'):
+      control('Inicio real','start')+control('Finalización real','end'))+
+    '<button id="ROUTEWF_WO-MAIN_-tbb_image" onclick="route()">Enrutar</button>';
+  document.getElementById('dialogs').innerHTML='';
+}
+function saveRecord(){
+  if(!state.dirty)return;
+  later(()=>{state.dirty=false;state.responses++;state.events.push(['save']);
+    document.getElementById('notice').textContent='BMXAA4205I - El registro ha sido guardado.';});
+}
+window.dijit={byId:id=>widget?.id===id?widget:null};
+function openDate(key,id){
+  const popup=id+'_popup';
+  document.getElementById('dialogs').innerHTML=`<section id="${popup}"><button id="date-ok" onclick="commitDate('${key}')">Aceptar</button><button onclick="render(tab)">Cancelar</button></section>`;
+  widget={id:popup,declaredClass:'ibm.tivoli.mbs.dijit.DateTimeCalendar',value:new Date(state[key]||'2026-10-26T00:00:00'),
+    set(name,value){if(name==='value')this.value=value;},get(name){return this.value;},
+    okButtonNode:document.getElementById('date-ok')};
+}
+function commitDate(key){
+  const d=widget.value,pad=n=>String(n).padStart(2,'0');
+  const iso=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  later(()=>{state[key]=iso;state.dirty=true;state.events.push(['date',key,iso]);});
+}
+function route(){
+  state.routes++;state.events.push(['route']);persist();
+  if(state.routes<=(state.noOpRoutes||0))return;
+  if(state.directIssue){later(()=>{state.status='ISSUE';state.events.push(['close']);});return;}
+  if(state.unknownDialog){
+    document.getElementById('dialogs').innerHTML='<section role="dialog" id="unknown-dialog_inner">Revisión manual <button onclick="state.events.push([\'unsafe\']);persist()">Aceptar</button></section>';return;
+  }
+  if(state.warning&&!state.warned){
+    state.warned=true;persist();document.getElementById('dialogs').innerHTML='<section role="dialog" id="alreadyreported-dialog_inner">Problema ya informado <button onclick="render(tab)">Continuar</button></section>';return;
+  }
+  const label=state.wrongChoice?'Salida de almacén':'Cerrar OT';
+  document.getElementById('dialogs').innerHTML=`<section role="dialog" id="inputwf-dialog_inner">
+    <label><input name="choice" type="radio" checked>Cancelar OT</label>
+    <label><input id="choice-close" name="choice" type="radio">${label}</label>
+    <button onclick="confirmClose()">Aceptar</button><button>Cancelar</button></section>`;
+}
+function confirmClose(){
+  if(!document.getElementById('choice-close').checked)throw Error('Wrong choice');
+  state.events.push(['confirm-close']);persist();
+  later(()=>{if(!state.noConfirmation){state.status=state.resultStatus||'ISSUE';state.events.push(['close']);}});
+}
+if(sessionStorage.getItem('close-fixture')){
+  state=JSON.parse(sessionStorage.getItem('close-fixture'));render(sessionStorage.getItem('close-tab')||'main');
+}else resetState();
+</script></body></html>

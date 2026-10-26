@@ -34,6 +34,8 @@ VISIBLE_DIALOGS_SCRIPT = """
 
 class WorkorderStarter:
     route_dialog_timeout = 8
+    active_status = 'APPR'
+    operation = 'inicio'
 
     def __init__(self, driver, ot, progress=None, timeout=30):
         self.driver = driver
@@ -46,7 +48,7 @@ class WorkorderStarter:
             return WebDriverWait(self.driver, self.timeout, poll_frequency=0.25,
                                  ignored_exceptions=(StaleElementReferenceException,)).until(condition)
         except TimeoutException as exc:
-            raise RuntimeError(f"Tiempo agotado: {description}. No se continuará el inicio de la OT.") from exc
+            raise RuntimeError(f"Tiempo agotado: {description}. No se continuará el {self.operation} de la OT.") from exc
 
     def idle(self):
         self.wait(lambda d: d.execute_script("""
@@ -80,7 +82,7 @@ class WorkorderStarter:
     def check_ot(self):
         current = self.wait(lambda d: self.value("Orden de trabajo"), "ficha de la OT")
         if current != self.ot:
-            raise RuntimeError(f"La ficha ya no corresponde a la OT {self.ot}; se detuvo el inicio.")
+            raise RuntimeError(f"La ficha ya no corresponde a la OT {self.ot}; se detuvo el {self.operation}.")
 
     def dialogs(self):
         return self.driver.execute_script(VISIBLE_DIALOGS_SCRIPT + "return visibleDialogs;")
@@ -139,7 +141,7 @@ class WorkorderStarter:
         aria_disabled = action.get_attribute("aria-disabled")
         if aria_disabled == "true" or (aria_disabled is None and action.get_attribute("disabled") in {"true", "disabled"}):
             return False
-        self.progress(f"OT {self.ot}: guardando los códigos de anomalía…")
+        self.progress(f"OT {self.ot}: guardando los cambios…")
         marker = self.response_sequence()
         self.click_fresh(
             lambda: self.driver.find_element(By.ID, "toolactions_SAVE-tbb_anchor"), "botón Guardar",
@@ -203,9 +205,14 @@ class WorkorderStarter:
     def tab(self, title):
         self.idle()
         self.check_ot()
-        self.wait(lambda d: next((e for e in d.find_elements(By.CSS_SELECTOR, "a[role=tab]")
-                                 if e.is_displayed() and normalized(e.text) == normalized(title)), None),
-                  f"pestaña {title}").click()
+        def find():
+            return next((e for e in self.driver.find_elements(By.CSS_SELECTOR, "a[role=tab]")
+                         if e.is_displayed() and normalized(e.text) == normalized(title)), None)
+        def active():
+            tab = find()
+            return tab is not None and tab.get_attribute('aria-expanded') == 'true'
+        self.click_fresh(find, f"pestaña {title}", completed=active)
+        self.wait(lambda d: active(), f"activación de {title}")
         self.idle()
         self.wait(lambda d: self.field("Estado"), f"ficha en {title}")
         self.check_ot()
@@ -221,7 +228,7 @@ class WorkorderStarter:
                 raise RuntimeError(f"Hay varios botones «{text}» en el diálogo de Maximo.")
             return matches[0] if matches else None
         self.click_fresh(find, f"botón {text}", completed=lambda: self.dialog_is_gone(dialog_id) or
-                         self.value("Estado") not in (None, "", "APPR"))
+                         self.value("Estado") not in (None, "", self.active_status))
 
     def option(self, dialog, code):
         if dialog is None:
@@ -431,7 +438,7 @@ class WorkorderStarter:
     def check_location(self):
         url = urlsplit(self.driver.current_url)
         if url.scheme != "https" or url.hostname != "eam.indraweb.net" or not url.path.startswith("/maximo/ui"):
-            raise RuntimeError("El inicio de OT solo está disponible en la ficha de Maximo.")
+            raise RuntimeError("La acción de OT solo está disponible en la ficha de Maximo.")
 
     def run(self):
         self.check_location()
@@ -483,7 +490,7 @@ def start_workorder(driver, ot, progress=None):
 
 def browser_error_message(error):
     if isinstance(error, StaleElementReferenceException):
-        return "Maximo actualizó la pantalla durante la acción. Vuelve a intentar iniciar la OT."
+        return "Maximo actualizó la pantalla durante la acción. Vuelve a intentar la acción de OT."
     if isinstance(error, WebDriverException):
         return "No se pudo completar una acción en Maximo. Revisa la ficha y vuelve a intentarlo."
     return " ".join(str(error).split())[:500]

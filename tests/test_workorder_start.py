@@ -78,36 +78,36 @@ class StartConfigurationTests(TestCase):
         self.assertTrue(driver._maximo_workorder_start_enabled)
         driver.quit.assert_not_called()
 
-    def test_disabled_start_does_not_launch_a_browser(self):
-        with patch.object(client, 'load_config', return_value=config.AppConfig()), \
-             patch.object(client, 'setup_driver') as setup:
-            with self.assertRaisesRegex(ValueError, 'habilitado'):
-                client.start_ot('4314531')
+    def test_desktop_headless_start_entry_points_are_removed(self):
+        self.assertFalse(hasattr(client, 'start_ot'))
+        with patch.object(client,'setup_driver') as setup:
+            with self.assertRaises(TypeError):
+                client.open_ot('4314531',headless=True,start_workflow=True)
         setup.assert_not_called()
 
-    def test_explicit_headless_start_reports_result_and_always_closes_its_session(self):
-        for failure in (False, True):
-            with self.subTest(failure=failure):
-                driver, report = Mock(), Mock()
-                cfg = SimpleNamespace(workorder_start_enabled=True, repair_extension_enabled=False)
-                result = {'ot':'4314531','status':'INPRG','already_started':False}
-                with patch.object(client, 'load_config', return_value=cfg), \
-                     patch.object(client, 'create_edge_profile', return_value='test-profile'), \
-                     patch.object(client, 'setup_driver', return_value=driver) as setup, \
-                     patch.object(client, 'login'), patch.object(client, 'open_workorders_app'), \
-                     patch.object(client, 'wait_for'), \
-                     patch.object(client, 'cleanup_edge_profile') as cleanup, \
-                     patch.object(workflow, 'start_workorder', side_effect=RuntimeError('fallo') if failure else None,
-                                  return_value=result) as start:
-                    if failure:
-                        with self.assertRaisesRegex(RuntimeError, 'fallo'):
-                            client.start_ot('4314531', report)
-                    else:
-                        self.assertEqual(client.start_ot('4314531', report), result)
-                self.assertTrue(setup.call_args.kwargs['headless'])
-                start.assert_called_once_with(driver, '4314531', report)
-                driver.quit.assert_called_once()
-                cleanup.assert_called_once_with('test-profile')
+    def test_close_is_exposed_only_in_visible_sessions_and_open_never_closes(self):
+        cfg=SimpleNamespace(workorder_start_enabled=False,workorder_close_enabled=True,repair_extension_enabled=False)
+        for headless in (False,True):
+            with self.subTest(headless=headless):
+                driver=Mock()
+                callback=Mock()
+                with patch.object(client,'load_config',return_value=cfg), \
+                     patch.object(client,'create_edge_profile',return_value='test-profile'), \
+                     patch.object(client,'cleanup_edge_profile'), \
+                     patch.object(client,'setup_driver',return_value=driver), \
+                     patch.object(client,'login'),patch.object(client,'open_workorders_app'), \
+                     patch.object(client,'wait_for'),patch.object(client,'_start_ot_action_watcher') as watcher, \
+                     patch('workorder_close.poll_browser_close') as close:
+                    client.open_ot('4378677',headless=headless,on_workorder_closed=callback)
+                close.assert_not_called()
+                callback.assert_not_called()
+                if headless:
+                    watcher.assert_not_called()
+                    self.assertNotIn('_maximo_workorder_close_enabled',driver.__dict__)
+                else:
+                    watcher.assert_called_once_with(driver)
+                    self.assertTrue(driver._maximo_workorder_close_enabled)
+                    self.assertIs(driver._maximo_workorder_closed,callback)
 
     def test_start_location_must_be_the_configured_maximo_site(self):
         for url in ('https://example.org/maximo/ui/', 'http://eam.indraweb.net/maximo/ui/',

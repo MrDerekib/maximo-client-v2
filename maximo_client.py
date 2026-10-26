@@ -122,6 +122,12 @@ def _start_ot_action_watcher(driver) -> None:
                     callback = getattr(driver, "_maximo_workorder_started", None)
                     if result and callback:
                         callback(result)
+                if getattr(driver, "_maximo_workorder_close_enabled", False):
+                    from workorder_close import poll_browser_close
+                    result = poll_browser_close(driver)
+                    callback = getattr(driver, "_maximo_workorder_closed", None)
+                    if result and callback:
+                        callback(result)
                 _click_pending_repair_lookup(driver)
             except WebDriverException:
                 # A closed Edge session ends the watcher; a transient stale element
@@ -500,7 +506,7 @@ def process_html_table(file_path):
 def open_ot(
     ot: str, headless: bool = False, report_action: str | None = None,
     close_after_direct_print: bool = False,
-    start_workflow: bool = False, progress_callback=None, on_workorder_started=None,
+    on_workorder_started=None, on_workorder_closed=None,
 ):
     """
     Abre Maximo, entra en la aplicación de OT favorita y busca una OT concreta.
@@ -513,9 +519,8 @@ def open_ot(
     if report_action not in (None, "print", "pdf") or (report_action and headless):
         raise ValueError("La acción del parte requiere una ventana visible y un formato válido.")
     cfg = load_config()
-    if start_workflow and (report_action or not getattr(cfg, "workorder_start_enabled", False)):
-        raise ValueError("El inicio de OT debe estar habilitado y no puede combinarse con un parte.")
     browser_start_enabled = not headless and getattr(cfg, "workorder_start_enabled", False)
+    browser_close_enabled = not headless and getattr(cfg, "workorder_close_enabled", False)
     repair_extension_loaded = not headless and (
         report_action is not None or getattr(cfg, "repair_extension_enabled", False)
     )
@@ -553,15 +558,7 @@ def open_ot(
         search_box.send_keys(Keys.RETURN)
         logging.info(f"OT {ot} enviada a Maximo.")
 
-        if start_workflow:
-            from workorder_start import start_workorder
-            result = start_workorder(driver, ot, progress_callback)
-            if headless:
-                driver.quit()
-                cleanup_edge_profile(profile_dir)
-                return result
-
-        if repair_extension_loaded or browser_start_enabled:
+        if repair_extension_loaded or browser_start_enabled or browser_close_enabled:
             wait_for(
                 driver,
                 lambda browser: (
@@ -593,7 +590,10 @@ def open_ot(
         if browser_start_enabled:
             driver._maximo_workorder_start_enabled = True
             driver._maximo_workorder_started = on_workorder_started
-        if repair_extension_loaded or browser_start_enabled:
+        if browser_close_enabled:
+            driver._maximo_workorder_close_enabled = True
+            driver._maximo_workorder_closed = on_workorder_closed
+        if repair_extension_loaded or browser_start_enabled or browser_close_enabled:
             _start_ot_action_watcher(driver)
 
         if headless:
@@ -614,11 +614,6 @@ def open_ot(
             pass
         cleanup_edge_profile(profile_dir)
         raise
-
-
-def start_ot(ot: str, progress_callback=None):
-    """Inicia una OT explícitamente en segundo plano; abrir una ficha no la inicia."""
-    return open_ot(ot, headless=True, start_workflow=True, progress_callback=progress_callback)
 
 
 def start_repair_report(
