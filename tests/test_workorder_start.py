@@ -205,6 +205,51 @@ class BrowserStartTests(TestCase):
         state = self.browser.execute_script('return state')
         self.assertEqual(state['routes'], 0)
         self.assertEqual(len(self.browser.find_elements(By.ID, 'warndiv')), 1)
+        self.assertEqual(FixtureStarter(self.browser, '4314531').dialog_snapshot()[-1]['id'], 'warndiv')
+
+    def test_closed_warning_shell_does_not_block_start(self):
+        starter = FixtureStarter(self.browser, '4314531', timeout=5)
+        self.assertEqual(starter.dialog_snapshot(), [])
+        self.assertEqual(starter.dialogs(), [])
+        self.assertEqual(starter.run()['status'], 'INPRG')
+
+    def test_a_visible_warning_in_the_zero_width_shell_still_blocks_start(self):
+        self.browser.execute_script("showWarning('BMXAA4523E - Mensaje del sistema')")
+        starter = FixtureStarter(self.browser, '4314531', timeout=5)
+        self.assertEqual(starter.dialog_snapshot()[0]['id'], 'warndiv')
+        with self.assertRaisesRegex(RuntimeError, 'Cierra el diálogo'):
+            starter.run()
+        self.assertEqual(self.browser.execute_script('return state.events'), [])
+
+    def test_zero_area_transparent_or_aria_hidden_dialogs_are_not_active(self):
+        self.browser.execute_script("""
+            for (const attributes of [
+              {style:'width:0;height:100px'}, {style:'width:100px;height:100px;opacity:0'},
+              {style:'width:100px;height:100px', 'aria-hidden':'true'}]) {
+              const dialog=document.createElement('div'); dialog.role='dialog';
+              for (const [key,value] of Object.entries(attributes)) dialog.setAttribute(key,value);
+              dialog.textContent='Aviso retenido'; document.body.appendChild(dialog);
+            }
+        """)
+        starter = FixtureStarter(self.browser, '4314531')
+        self.assertEqual(starter.dialog_snapshot(), [])
+        self.assertEqual(starter.dialogs(), [])
+
+    def test_browser_button_uses_the_same_active_dialog_detection(self):
+        original = self.browser.execute_script
+        def execute(script, *args):
+            return original(script.replace("if (location.origin !== 'https://eam.indraweb.net' || !location.pathname.startsWith('/maximo/ui')) return '';", ''), *args)
+        with patch.object(self.browser, 'execute_script', side_effect=execute):
+            workflow.poll_browser_start(self.browser)
+            button = self.browser.find_element(By.ID, 'maximo-desktop-start-ot')
+            self.assertTrue(button.is_enabled())
+            original("showWarning('BMXAA4523E - Mensaje del sistema')")
+            workflow.poll_browser_start(self.browser)
+            self.assertFalse(button.is_enabled())
+            original('hideWarning()')
+            workflow.poll_browser_start(self.browser)
+            self.assertTrue(button.is_enabled())
+        self.assertEqual(original('return state.events'), [])
 
     def test_manual_start_choice_supports_aria_and_single_radio_containers(self):
         for markup in ('aria','container'):

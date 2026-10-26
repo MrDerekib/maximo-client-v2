@@ -7,10 +7,25 @@
 <img id="toolactions_SAVE-tbb_image" alt="Guardar orden de trabajo" width="25" height="25" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="></a>
 <div role="alert" id="saved-notice"></div><main id="form"></main><div id="dialogs"></div>
 <div id="wait" style="display:none;position:fixed;inset:0;background:#ddd8">Cargando</div>
+<aside id="warndiv" role="alert" aria-hidden="true" style="position:absolute;left:100%;top:0;width:0;height:100%">
+<table id="warndiv_inner" style="display:none;position:fixed;left:10px;top:10px;width:400px;background:white;z-index:10000">
+<tr><td id="warning-message">Mensaje del sistema: aviso anterior</td></tr>
+<tr><td><button onclick="hideWarning()">Aceptar</button></td></tr></table></aside>
+<div id="dijit_Dialog_0" role="dialog" style="display:none">Pegar desde Word</div>
 <script>
 let state, tab, generation = 0;
 const save = () => sessionStorage.setItem('workflow-fixture', JSON.stringify(state));
+function hideWarning() {
+  document.getElementById('warndiv').setAttribute('aria-hidden','true');
+  document.getElementById('warndiv_inner').style.display='none';
+}
+function showWarning(message) {
+  document.getElementById('warning-message').textContent=message;
+  document.getElementById('warndiv').setAttribute('aria-hidden','false');
+  document.getElementById('warndiv_inner').style.display='table';
+}
 function resetState(overrides = {}) {
+  hideWarning();
   state = {ot:'4314531',status:'APPR',faultclass:'OTHER',problem:'OLD-01',cause:'OLD-02',
     remedy:'OLD-03',events:[],routes:0,dirty:false,pendingDeletion:false,responses:0,...overrides};
   state.dirty = state.dirty || state.pendingDeletion;
@@ -59,7 +74,7 @@ function lookup(key, query = '') {
 }
 function selectCode(key, code) {
   if (key !== 'faultclass' && (state.pendingDeletion || state.forceHierarchyError)) {
-    document.getElementById('dialogs').insertAdjacentHTML('beforeend', '<section role="alert" id="warndiv">Mensaje del sistema BMXAA4523E - El código de anomalía no se puede cambiar del estado de supresión porque es un nivel inferior de un código de anomalía marcado para supresión.<button onclick="this.parentElement.remove()">Aceptar</button></section>');
+    showWarning('Mensaje del sistema BMXAA4523E - El código de anomalía no se puede cambiar del estado de supresión porque es un nivel inferior de un código de anomalía marcado para supresión.');
     return;
   }
   state.events.push(['select',key,code]);

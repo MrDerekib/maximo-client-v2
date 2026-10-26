@@ -15,6 +15,23 @@ def normalized(text):
     return " ".join("".join(c for c in text if not unicodedata.combining(c)).split()).strip(" *:").casefold()
 
 
+VISIBLE_DIALOGS_SCRIPT = """
+    const visibleDialogs = [...document.querySelectorAll('[role=dialog], #warndiv')].filter(root => {
+      // Maximo keeps a zero-width warning shell in the navigation bar even
+      // when no warning is open. Its inner table is the visible popup.
+      const panel = root.id === 'warndiv' ? root.querySelector('#warndiv_inner') || root : root;
+      const rect = panel.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      for (let node = panel; node; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (node.getAttribute('aria-hidden') === 'true' || style.display === 'none' ||
+            ['hidden', 'collapse'].includes(style.visibility) || Number(style.opacity) === 0) return false;
+      }
+      return true;
+    });
+"""
+
+
 class WorkorderStarter:
     route_dialog_timeout = 8
 
@@ -66,17 +83,11 @@ class WorkorderStarter:
             raise RuntimeError(f"La ficha ya no corresponde a la OT {self.ot}; se detuvo el inicio.")
 
     def dialogs(self):
-        return self.driver.execute_script("""
-            return [...document.querySelectorAll('[role=dialog], #warndiv')].filter(e =>
-              e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
-        """)
+        return self.driver.execute_script(VISIBLE_DIALOGS_SCRIPT + "return visibleDialogs;")
 
     def dialog_snapshot(self):
-        return self.driver.execute_script("""
-            return [...document.querySelectorAll('[role=dialog], #warndiv')].filter(e =>
-              e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
-              .map(e => ({id:e.id, text:e.innerText.slice(0, 900)}));
-        """)
+        return self.driver.execute_script(VISIBLE_DIALOGS_SCRIPT +
+                                          "return visibleDialogs.map(e => ({id:e.id, text:e.innerText.slice(0, 900)}));")
 
     def reject_dialogs(self, allowed=()):
         for dialog in self.dialog_snapshot():
@@ -383,6 +394,7 @@ def poll_browser_start(driver):
     """Expose an explicit action in MD's Edge session and consume one click."""
     button_script = """
         if (location.origin !== 'https://eam.indraweb.net' || !location.pathname.startsWith('/maximo/ui')) return '';
+    """ + VISIBLE_DIALOGS_SCRIPT + """
         const field = caption => {
           const label = [...document.querySelectorAll('label[for]')].find(e =>
             e.getClientRects().length && e.textContent.trim().replace(/:$/, '') === caption);
@@ -407,8 +419,7 @@ def poll_browser_start(driver):
         if (button) {
           button.hidden = !/^\\d{1,20}$/.test(ot || '');
           if (button.dataset.busy !== 'true') {
-            button.disabled = status !== 'APPR' || [...document.querySelectorAll('[role=dialog]')].some(e =>
-              e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+            button.disabled = status !== 'APPR' || visibleDialogs.length > 0;
             button.style.opacity = button.disabled ? '0.6' : '1';
             button.title = 'Establecer RFN-70, OTROS-01/02/03 e iniciar una OT en APPR';
           }

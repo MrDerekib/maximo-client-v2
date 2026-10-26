@@ -2,6 +2,11 @@
 
 ## Pendiente de publicación
 
+- Corregido el falso aviso de diálogo abierto al iniciar una OT: Maximo conserva
+  el contenedor `warndiv` aunque su panel esté oculto. El botón y la automatización
+  comprueban ahora la visibilidad del panel real, sin bloquear por contenedores
+  inactivos ni dejar pasar los avisos que sí están abiertos.
+
 - Corregida la recuperación cuando Maximo reconstruye un diálogo antes de pulsar
   «Continuar» u otro botón del inicio de OT. Se vuelve a localizar el control y se
   comprueba el resultado antes de repetir una acción.

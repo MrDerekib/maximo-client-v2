@@ -131,6 +131,9 @@ Si la primera pulsación de Enrutar no abre el diálogo, se comprueba de nuevo
 el estado y se reintenta, con un máximo de tres pulsaciones. Los controles que
 Maximo reemplaza durante una actualización se vuelven a localizar sin repetir
 el proceso completo. Si la acción ya tuvo efecto, no se vuelve a enviar.
+Los contenedores de avisos y diálogos que Maximo conserva ocultos no bloquean el
+inicio: se comprueba la visibilidad de sus paneles, tanto en el botón como en la
+automatización. Un aviso visible sigue requiriendo revisión.
 
 ### Pruebas
 
