@@ -127,6 +127,11 @@ Así Maximo confirma la eliminación de la jerarquía anterior antes de reutiliz
 sus códigos. El guardado espera la respuesta del servidor y su confirmación;
 también contempla el aviso de problema ya informado en ese paso.
 
+Si la primera pulsación de Enrutar no abre el diálogo, se comprueba de nuevo
+el estado y se reintenta, con un máximo de tres pulsaciones. Los controles que
+Maximo reemplaza durante una actualización se vuelven a localizar sin repetir
+el proceso completo. Si la acción ya tuvo efecto, no se vuelve a enviar.
+
 ### Pruebas
 
 ```powershell

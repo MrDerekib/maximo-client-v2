@@ -12,6 +12,8 @@ from unittest.mock import Mock, patch
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.options import Options
+from selenium.webdriver.remote.webelement import WebElement
+from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
 
 import config
 import db
@@ -21,6 +23,40 @@ from tests.test_support import temporary_directory
 
 
 class StartConfigurationTests(TestCase):
+    def test_stale_click_reacquires_only_the_target(self):
+        stale, fresh = Mock(), Mock()
+        stale.click.side_effect = StaleElementReferenceException('redrawn')
+        find = Mock(side_effect=[stale, fresh])
+        starter = workflow.WorkorderStarter(Mock(), '4314531', timeout=1)
+        starter.check_ot = Mock()
+        self.assertTrue(starter.click_fresh(find, 'Continuar'))
+        self.assertEqual(find.call_count, 2)
+        fresh.click.assert_called_once()
+
+    def test_click_is_not_repeated_if_its_effect_is_already_visible(self):
+        state = {'done': False}
+        def accepted():
+            state['done'] = True
+            raise StaleElementReferenceException('removed after acceptance')
+        target = Mock()
+        target.click.side_effect = accepted
+        find = Mock(return_value=target)
+        starter = workflow.WorkorderStarter(Mock(), '4314531', timeout=1)
+        starter.check_ot = Mock()
+        self.assertFalse(starter.click_fresh(find, 'Aceptar', completed=lambda: state['done']))
+        find.assert_called_once()
+        target.click.assert_called_once()
+
+    def test_technical_browser_errors_are_logged_but_not_shown_in_the_button(self):
+        error = StaleElementReferenceException('technical details with Stacktrace')
+        self.assertNotIn('Stacktrace', workflow.browser_error_message(error))
+        with patch.object(workflow, 'WorkorderStarter') as starter:
+            starter.return_value.run.side_effect = error
+            with self.assertRaisesRegex(RuntimeError, 'Maximo actualizó la pantalla'):
+                workflow.start_workorder(Mock(), '4314531')
+        starter.return_value.run.assert_called_once()
+        self.assertNotIn('Stacktrace', workflow.browser_error_message(WebDriverException('Stacktrace')))
+
     def test_start_is_opt_in_and_invalid_values_cannot_enable_it(self):
         self.assertFalse(config.AppConfig().workorder_start_enabled)
         self.assertTrue(config.AppConfig(workorder_start_enabled=True).workorder_start_enabled)
@@ -100,6 +136,8 @@ FIXTURE = (Path(__file__).parent / 'fixtures' / 'workorder_start.html').resolve(
 
 
 class FixtureStarter(workflow.WorkorderStarter):
+    route_dialog_timeout = 0.5
+
     def response_sequence(self):
         # The offline fixture models server replies without making HTTP calls.
         return self.driver.execute_script('return state.responses')
@@ -173,6 +211,57 @@ class BrowserStartTests(TestCase):
             with self.subTest(markup=markup):
                 self.run_fixture(radioMarkup=markup)
                 self.assertEqual(self.browser.execute_script('return state.events').count(['start']), 1)
+
+    def test_routing_retries_a_click_that_did_not_open_any_dialog(self):
+        for count in (1, 2):
+            with self.subTest(no_op_clicks=count):
+                self.run_fixture(noOpRoutes=count)
+                state = self.browser.execute_script('return state')
+                self.assertEqual(state['routes'], count + 1)
+                self.assertEqual(state['events'].count(['start']), 1)
+
+    def test_routing_stops_after_three_clicks_without_an_effect(self):
+        with self.assertRaisesRegex(RuntimeError, 'tres intentos'):
+            self.run_fixture(noOpRoutes=10)
+        state = self.browser.execute_script('return state')
+        self.assertEqual(state['routes'], 3)
+        self.assertEqual(state['status'], 'APPR')
+        self.assertNotIn(['start'], state['events'])
+
+    def test_routing_does_not_click_again_while_maximo_is_loading_the_dialog(self):
+        self.run_fixture(routeDelayMs=900)
+        state = self.browser.execute_script('return state')
+        self.assertEqual(state['routes'], 2)
+        self.assertEqual(state['events'].count(['start']), 1)
+
+    def test_continue_button_is_relocated_after_the_whole_dialog_is_redrawn(self):
+        original_click = WebElement.click
+        redraws = []
+        def redraw_then_click(element):
+            if not redraws and element.tag_name == 'button' and element.text == 'Continuar':
+                self.browser.execute_script("const d=arguments[0].closest('[role=dialog]'); d.replaceWith(d.cloneNode(true));", element)
+                redraws.append(True)
+            return original_click(element)
+        with patch.object(WebElement, 'click', redraw_then_click):
+            self.run_fixture()
+        self.assertEqual(len(redraws), 1)
+        events = self.browser.execute_script('return state.events')
+        self.assertEqual(events.count(['continue']), 1)
+        self.assertEqual(events.count(['start']), 1)
+
+    def test_final_accept_is_not_replayed_if_maximo_replaces_it_after_dispatch(self):
+        original_click = WebElement.click
+        dispatched = []
+        def accepted_then_stale(element):
+            if not dispatched and element.tag_name == 'button' and element.text == 'Aceptar':
+                dispatched.append(True)
+                original_click(element)
+                raise StaleElementReferenceException('button removed after request was sent')
+            return original_click(element)
+        with patch.object(WebElement, 'click', accepted_then_stale):
+            self.run_fixture()
+        self.assertEqual(len(dispatched), 1)
+        self.assertEqual(self.browser.execute_script('return state.events').count(['start']), 1)
 
     def test_save_response_observer_sees_real_local_ajax_completion(self):
         class Handler(BaseHTTPRequestHandler):

@@ -2,6 +2,14 @@
 
 ## Pendiente de publicación
 
+- Corregida la recuperación cuando Maximo reconstruye un diálogo antes de pulsar
+  «Continuar» u otro botón del inicio de OT. Se vuelve a localizar el control y se
+  comprueba el resultado antes de repetir una acción.
+- «Enrutar flujo de trabajo» se reintenta hasta tres veces si no abre ningún
+  diálogo y la OT sigue en APPR. No se vuelve a pulsar mientras Maximo está
+  cargando ni después de iniciar la orden. Los errores técnicos completos se
+  conservan en el log; el botón muestra un mensaje breve.
+
 - El inicio de OT guarda los cambios antes de seleccionar los códigos y después
   de cambiar cada nivel de la jerarquía. Evita reutilizar códigos que Maximo
   mantiene pendientes de eliminación al cambiar la clase de anomalía

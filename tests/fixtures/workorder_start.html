@@ -95,6 +95,19 @@ function commitSave() {
 }
 function route() {
   state.routes++; state.events.push(['route']); save();
+  if (state.routes <= (state.noOpRoutes || 0)) return;
+  if (state.routeDelayMs && !state.routeDelayed) {
+    state.routeDelayed = true;
+    document.getElementById('wait').style.display = 'block';
+    setTimeout(() => {
+      showRouteDialog(); save();
+      document.getElementById('wait').style.display = 'none';
+    }, state.routeDelayMs);
+    return;
+  }
+  showRouteDialog();
+}
+function showRouteDialog() {
   if (state.unexpected) {
     document.getElementById('dialogs').innerHTML = '<section role="dialog" id="unknown-dialog_inner">Error inesperado <button onclick="state.events.push([\'unsafe-accept\']);save()">Aceptar</button></section>';
   } else if (state.routes === 1) {
