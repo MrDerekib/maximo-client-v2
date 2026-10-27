@@ -16,11 +16,15 @@
   por MD. Retirado el inicio de OT del menú contextual y su ejecución en segundo
   plano desde la aplicación. «Abrir OT» sigue abriendo únicamente la ficha.
 - Nuevo cierre de reparación desde Edge: revisa las horas en Consumos Actuales,
-  pregunta el inicio real y calcula la finalización, sin superar la hora actual.
-  Solo acepta duraciones en tramos de 0,25 h (15 minutos). La revisión exige confirmación explícita;
+  permite indicar el inicio o el final y calcula la otra hora según la duración,
+  sin superar la hora actual. Solo acepta duraciones en tramos de 0,25 h
+  (15 minutos). La revisión exige confirmación explícita;
   cancelar no modifica los datos. Tras guardar y verificar duración y fechas,
   enruta hasta ISSUE, pendiente de salida del almacén, sin continuar a CLOSE.
   Ante un resultado incierto no repite la aceptación final del cierre.
+- «Ahora» completa la finalización con la hora actual. Las fechas se introducen
+  con precisión de minuto y el diálogo se ha rediseñado para mantener los
+  controles legibles y accesibles en ventanas pequeñas.
 
 - Corregido el falso aviso de diálogo abierto al iniciar una OT: Maximo conserva
   el contenedor `warndiv` aunque su panel esté oculto. El botón y la automatización

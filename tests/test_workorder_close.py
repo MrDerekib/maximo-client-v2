@@ -141,7 +141,19 @@ class BrowserCloseTests(TestCase):
     def fill_start(self,value='2026-10-26T10:00:00'):
         self.browser.execute_script("""
             const f=document.querySelector('#maximo-close-review [name=start]');
-            f.value=arguments[0];f.dispatchEvent(new Event('input',{bubbles:true}));
+            f.value=arguments[0].slice(0,16);f.dispatchEvent(new Event('input',{bubbles:true}));
+        """,value)
+
+    def select_date_basis(self,value):
+        self.browser.execute_script("""
+            const f=document.querySelector(`#maximo-close-review [name=dateBasis][value="${arguments[0]}"]`);
+            f.checked=true;f.dispatchEvent(new Event('change',{bubbles:true}));
+        """,value)
+
+    def fill_end(self,value):
+        self.browser.execute_script("""
+            const f=document.querySelector('#maximo-close-review [name=end]');
+            f.value=arguments[0].slice(0,16);f.dispatchEvent(new Event('input',{bubbles:true}));
         """,value)
 
     def test_preparing_and_cancelling_never_changes_record_or_routes(self):
@@ -166,6 +178,30 @@ class BrowserCloseTests(TestCase):
         self.assertEqual(dialog.find_element(By.NAME,'end').get_property('value'),'2026-10-26T11:15')
         self.assertFalse(dialog.find_element(By.NAME,'confirm').get_property('disabled'))
         self.assertEqual(self.state()['events'],[])
+
+    def test_user_can_enter_end_and_let_the_dialog_calculate_start(self):
+        dialog=self.prepare_dialog()
+        self.select_date_basis('end')
+        self.fill_end('2026-10-26T13:15')
+        duration=dialog.find_element(By.NAME,'duration')
+        duration.send_keys('1,25')
+        self.assertEqual(dialog.find_element(By.NAME,'start').get_property('value'),'2026-10-26T12:00')
+        self.assertEqual(dialog.find_element(By.NAME,'end').get_property('value'),'2026-10-26T13:15')
+        self.assertTrue(dialog.find_element(By.NAME,'start').get_property('readOnly'))
+        self.assertFalse(dialog.find_element(By.NAME,'end').get_property('readOnly'))
+        self.assertFalse(dialog.find_element(By.NAME,'confirm').get_property('disabled'))
+
+    def test_now_button_uses_current_minute_and_calculates_start(self):
+        dialog=self.prepare_dialog()
+        self.select_date_basis('end')
+        dialog.find_element(By.NAME,'duration').send_keys('1')
+        dialog.find_element(By.NAME,'now').click()
+        start=datetime.strptime(dialog.find_element(By.NAME,'start').get_property('value'),'%Y-%m-%dT%H:%M')
+        end=datetime.strptime(dialog.find_element(By.NAME,'end').get_property('value'),'%Y-%m-%dT%H:%M')
+        self.assertEqual((end-start).total_seconds(),3600)
+        self.assertLess((datetime.now()-end).total_seconds(),60)
+        self.assertEqual(dialog.find_element(By.NAME,'start').get_property('step'),'60')
+        self.assertEqual(dialog.find_element(By.NAME,'end').get_property('step'),'60')
 
     def test_human_confirmation_persists_values_before_closing_and_consumes_approval(self):
         dialog=self.prepare_dialog(origin='Consumos Actuales')

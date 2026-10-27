@@ -348,58 +348,132 @@ BROWSER_REVIEW_SCRIPT = r"""
     const data=arguments[0],token=arguments[1];
     const dialog=document.createElement('dialog'); dialog.id='maximo-close-review'; dialog.setAttribute('role','dialog');
     dialog.setAttribute('aria-labelledby','maximo-close-title');
-    Object.assign(dialog.style,{border:'1px solid #b8cbe0',borderRadius:'12px',padding:'24px',
-      width:'440px',maxWidth:'90vw',font:'14px Arial,sans-serif',color:'#122d48',background:'#fff',
-      boxShadow:'0 12px 60px #0005'});
-    dialog.innerHTML=`<form><h2 id="maximo-close-title" style="margin-top:0;font-size:20px"></h2>
-      <p>Revisa las horas de reparación. El cierre deja la OT pendiente de salida del almacén (ISSUE).</p>
-      <p><label>Duración en horas <input name="duration" type="text" inputmode="decimal" required
-        placeholder="Ejemplo: 0,75" style="display:block;width:95%;padding:8px;margin-top:6px"></label>
-        <small>Solo múltiplos de 0,25 h (15 minutos).</small></p>
-      <p><label>Inicio real <input name="start" type="datetime-local" step="1" required
-        style="display:block;width:95%;padding:8px;margin-top:6px"></label></p>
-      <p><label>Finalización calculada <input name="end" type="datetime-local" step="1" readonly
-        style="display:block;width:95%;padding:8px;margin-top:6px"></label></p>
-      <p id="maximo-close-existing" style="font-size:12px;color:#526578"></p>
-      <p id="maximo-close-error" role="alert" style="color:#a12727"></p>
-      <p><strong>El cierre no es reversible. Confirma solo si el equipo está listo.</strong></p>
-      <div style="display:flex;gap:10px;justify-content:flex-end"><button type="button" name="cancel">Cancelar</button>
-        <button type="submit" name="confirm">Confirmar cierre</button></div></form>`;
+    const style=document.createElement('style'); style.id='maximo-close-review-style';
+    style.textContent=`
+      #maximo-close-review{width:min(590px,calc(100vw - 32px));max-width:none;max-height:calc(100vh - 32px);
+        padding:0;overflow-y:auto;overscroll-behavior:contain;
+        border:1px solid #a9bfd7;border-radius:16px;background:#f7faff;color:#18344f;
+        box-shadow:0 22px 72px #102c4b50;font:14px/1.45 "Segoe UI",Arial,sans-serif}
+      #maximo-close-review::backdrop{background:#12283d80;backdrop-filter:blur(2px)}
+      #maximo-close-review *{box-sizing:border-box}
+      #maximo-close-review .close-head{padding:22px 26px 18px;background:linear-gradient(135deg,#eaf3ff,#fff);
+        border-bottom:1px solid #d7e3f0}
+      #maximo-close-review .close-kicker{margin:0 0 5px;color:#3974b7;font-size:11px;font-weight:700;
+        letter-spacing:.09em;text-transform:uppercase}
+      #maximo-close-review h2{margin:0;color:#17395d;font-size:21px;line-height:1.25}
+      #maximo-close-review .close-intro{margin:8px 0 0;color:#526b83}
+      #maximo-close-review .close-body{display:grid;gap:16px;padding:20px 26px}
+      #maximo-close-review .close-card{padding:15px 16px;border:1px solid #d8e3ef;border-radius:11px;background:#fff}
+      #maximo-close-review .close-label{display:block;margin:0 0 6px;color:#284b6b;font-weight:650}
+      #maximo-close-review input[type=text],#maximo-close-review input[type=datetime-local]{
+        display:block;width:100%;min-height:40px;padding:8px 10px;border:1px solid #b8cbe0;border-radius:7px;
+        background:#fff;color:#18344f;font:14px "Segoe UI",Arial,sans-serif;outline:none}
+      #maximo-close-review input:focus{border-color:#3783cf;box-shadow:0 0 0 3px #3783cf26}
+      #maximo-close-review input[readonly]{background:#eff4fa;color:#597087}
+      #maximo-close-review .close-hint{display:block;margin-top:6px;color:#637991;font-size:12px}
+      #maximo-close-review fieldset{margin:0;padding:0;border:0}
+      #maximo-close-review legend{margin-bottom:9px;color:#284b6b;font-weight:700}
+      #maximo-close-review .close-choice-row{display:flex;flex-wrap:wrap;gap:9px}
+      #maximo-close-review .close-choice{display:flex;align-items:center;gap:8px;min-height:40px;padding:8px 11px;
+        border:1px solid #d2dfed;border-radius:8px;background:#fff;color:#284b6b;cursor:pointer}
+      #maximo-close-review .close-choice:has(input:checked){border-color:#5592ce;background:#edf6ff;color:#174f86}
+      #maximo-close-review .close-date-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end}
+      #maximo-close-review .close-date-field{min-width:0}
+      #maximo-close-review .close-now{min-height:36px;margin-top:7px;padding:6px 12px;border:1px solid #7da9d4;
+        border-radius:7px;background:#eff6fd;color:#235b91;font:600 13px "Segoe UI",Arial,sans-serif;cursor:pointer}
+      #maximo-close-review .close-now:hover{background:#e1effd}
+      #maximo-close-review .close-existing{margin:0;color:#637991;font-size:12px}
+      #maximo-close-review .close-error{min-height:18px;margin:0;color:#a22d36;font-weight:600}
+      #maximo-close-review .close-warning{margin:0;padding:10px 12px;border:1px solid #f0d3a5;border-radius:8px;
+        background:#fff8ed;color:#835315;font-weight:600}
+      #maximo-close-review .close-actions{display:flex;justify-content:flex-end;gap:10px;padding:14px 26px 20px;
+        border-top:1px solid #e0e8f1;background:#fff}
+      #maximo-close-review button.close-cancel,#maximo-close-review button.close-confirm{min-height:40px;padding:8px 15px;
+        border:1px solid #b8cbe0;border-radius:8px;background:#fff;color:#284b6b;font:600 13px "Segoe UI",Arial,sans-serif;cursor:pointer}
+      #maximo-close-review button.close-confirm{border-color:#2874bb;background:#2874bb;color:#fff}
+      #maximo-close-review button.close-confirm:hover:not(:disabled){background:#1c609f}
+      #maximo-close-review button.close-confirm:disabled{border-color:#c7d3df;background:#c7d3df;color:#f8fafc;cursor:not-allowed}
+      @media(max-width:520px){#maximo-close-review .close-date-grid{grid-template-columns:1fr}}
+    `;
+    document.getElementById(style.id)?.remove(); document.head.appendChild(style);
+    dialog.innerHTML=`<form>
+      <header class="close-head"><p class="close-kicker">Revisión antes del cierre</p>
+        <h2 id="maximo-close-title"></h2>
+        <p class="close-intro">El cierre dejará la OT pendiente de salida del almacén (ISSUE).</p></header>
+      <div class="close-body">
+        <section class="close-card"><label class="close-label" for="maximo-close-duration">Duración de la reparación</label>
+          <input id="maximo-close-duration" name="duration" type="text" inputmode="decimal" required placeholder="Ejemplo: 0,75">
+          <small class="close-hint">Horas decimales en tramos de 0,25 h (15 minutos).</small></section>
+        <section class="close-card"><fieldset><legend>¿Qué hora quieres indicar?</legend>
+          <div class="close-choice-row">
+            <label class="close-choice"><input type="radio" name="dateBasis" value="start" checked> Hora de inicio</label>
+            <label class="close-choice"><input type="radio" name="dateBasis" value="end"> Hora de finalización</label>
+          </div></fieldset>
+          <div class="close-date-grid" style="margin-top:14px">
+            <label class="close-date-field"><span class="close-label">Inicio real</span>
+              <input name="start" type="datetime-local" step="60" aria-label="Inicio real"></label>
+            <label class="close-date-field"><span class="close-label">Finalización real</span>
+              <input name="end" type="datetime-local" step="60" aria-label="Finalización real">
+              <button class="close-now" type="button" name="now">Ahora</button></label>
+          </div>
+        </section>
+        <p id="maximo-close-existing" class="close-existing"></p>
+        <p id="maximo-close-error" class="close-error" role="alert"></p>
+        <p class="close-warning">El cierre no es reversible. Comprueba los datos antes de confirmar.</p>
+      </div>
+      <div class="close-actions"><button type="button" name="cancel" class="close-cancel">Cancelar</button>
+        <button type="submit" name="confirm" class="close-confirm">Confirmar cierre</button></div></form>`;
     const form=dialog.querySelector('form'),duration=form.elements.duration,start=form.elements.start,end=form.elements.end;
+    const nowButton=form.elements.now,basis=form.elements.dateBasis;
     dialog.querySelector('h2').textContent='Cerrar OT '+data.ot;
     duration.value=data.duration;
-    // Ask for the actual start; the automatically recorded time is only a reference.
     dialog.querySelector('#maximo-close-existing').textContent=
       'Inicio actual en Maximo (referencia): '+(data.start.replace('T',' ')||'sin indicar')+
       '. Finalización actual: '+(data.end.replace('T',' ')||'sin indicar');
     const calculate=()=>{
-      end.value=''; const text=duration.value.trim().replace(',','.');
+      const useStart=basis.value==='start';
+      start.readOnly=!useStart; end.readOnly=useStart; nowButton.hidden=useStart;
+      if(useStart)end.value=''; else start.value='';
+      const text=duration.value.trim().replace(',','.');
       const hours=Number(text),quarter=hours*4;
       let error='';
       if (!/^\d+(?:\.\d+)?$/.test(text) || !(hours>0) || !Number.isSafeInteger(quarter))
         error='Introduce una duración mayor que cero en múltiplos de 0,25 h.';
-      if (!start.value) error=error||'Indica la fecha y hora de inicio real.';
+      const source=useStart?start:end;
+      if (!source.value) error=error||(useStart?'Indica la fecha y hora de inicio.':'Indica la fecha y hora de finalización.');
       if (!error) {
         // Civil clock arithmetic, matching Python datetime even across DST.
-        const p=start.value.split(/[-T:]/).map(Number),date=new Date(Date.UTC(p[0],p[1]-1,p[2],p[3],p[4],p[5]||0));
-        date.setUTCSeconds(date.getUTCSeconds()+quarter*900);
-        if (!Number.isFinite(date.getTime()) || date.getUTCFullYear()>9999) error='La duración está fuera de rango.';
+        const p=source.value.split(/[-T:]/).map(Number),base=new Date(Date.UTC(p[0],p[1]-1,p[2],p[3],p[4],p[5]||0));
+        const startDate=new Date(base),endDate=new Date(base);
+        if(useStart)endDate.setUTCSeconds(endDate.getUTCSeconds()+quarter*900);
+        else startDate.setUTCSeconds(startDate.getUTCSeconds()-quarter*900);
+        if (!Number.isFinite(base.getTime()) || !Number.isFinite(startDate.getTime()) ||
+            !Number.isFinite(endDate.getTime()) || startDate.getUTCFullYear()>9999 || endDate.getUTCFullYear()>9999)
+          error='La duración está fuera de rango.';
         else {
-          end.value=date.toISOString().slice(0,19);
+          const toInput=date=>date.toISOString().slice(0,16);
+          start.value=toInput(startDate); end.value=toInput(endDate);
           const now=new Date(),civilNow=Date.UTC(now.getFullYear(),now.getMonth(),now.getDate(),
             now.getHours(),now.getMinutes(),now.getSeconds());
-          if(date.getTime()>civilNow)error='La finalización no puede ser posterior a la hora actual.';
+          if(endDate.getTime()>civilNow)error='La finalización no puede ser posterior a la hora actual.';
         }
       }
       dialog.querySelector('#maximo-close-error').textContent=error;
       form.elements.confirm.disabled=!!error;
       return !error;
     };
+    duration.addEventListener('input',calculate); start.addEventListener('input',calculate);
+    end.addEventListener('input',calculate); basis.forEach(option=>option.addEventListener('change',calculate));
+    nowButton.addEventListener('click',()=>{
+      const now=new Date(); now.setSeconds(0,0);
+      const pad=n=>String(n).padStart(2,'0');
+      end.value=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      basis.value='end'; calculate();
+    });
     const cancel=event=>{
       event.preventDefault(); dialog.close(); dialog.remove();
       document.documentElement.dataset.maximoCloseOtRequest=JSON.stringify({action:'cancel',token});
     };
-    duration.addEventListener('input',calculate); start.addEventListener('input',calculate);
     form.elements.cancel.addEventListener('click',cancel); dialog.addEventListener('cancel',cancel);
     form.addEventListener('submit',event=>{
       event.preventDefault(); if (!event.isTrusted || !calculate()) return;
