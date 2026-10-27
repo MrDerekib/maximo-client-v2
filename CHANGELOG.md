@@ -23,8 +23,9 @@
   enruta hasta ISSUE, pendiente de salida del almacén, sin continuar a CLOSE.
   Ante un resultado incierto no repite la aceptación final del cierre.
 - «Ahora» completa la finalización con la hora actual. Las fechas se introducen
-  con precisión de minuto y el diálogo se ha rediseñado para mantener los
-  controles legibles y accesibles en ventanas pequeñas.
+  con precisión de minuto; el selector avanza en intervalos de cinco minutos.
+  El diálogo se ha rediseñado para mantener los controles legibles y accesibles
+  en ventanas pequeñas.
 - Cada fecha se guarda y verifica en Maximo antes de modificar la siguiente,
   evitando que se pierda la finalización al actualizar ambos campos seguidos.
 

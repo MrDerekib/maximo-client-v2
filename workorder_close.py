@@ -403,7 +403,7 @@ BROWSER_REVIEW_SCRIPT = r"""
       @media(max-width:520px){#maximo-close-review .close-date-grid{grid-template-columns:1fr}}
     `;
     document.getElementById(style.id)?.remove(); document.head.appendChild(style);
-    dialog.innerHTML=`<form>
+    dialog.innerHTML=`<form novalidate>
       <header class="close-head"><p class="close-kicker">Revisión antes del cierre</p>
         <h2 id="maximo-close-title"></h2>
         <p class="close-intro">El cierre dejará la OT pendiente de salida del almacén (ISSUE).</p></header>
@@ -418,9 +418,9 @@ BROWSER_REVIEW_SCRIPT = r"""
           </div></fieldset>
           <div class="close-date-grid" style="margin-top:14px">
             <label class="close-date-field"><span class="close-label">Inicio real</span>
-              <input name="start" type="datetime-local" step="60" aria-label="Inicio real"></label>
+              <input name="start" type="datetime-local" step="300" aria-label="Inicio real"></label>
             <label class="close-date-field"><span class="close-label">Finalización real</span>
-              <input name="end" type="datetime-local" step="60" aria-label="Finalización real">
+              <input name="end" type="datetime-local" step="300" aria-label="Finalización real">
               <button class="close-now" type="button" name="now">Ahora</button></label>
           </div>
         </section>

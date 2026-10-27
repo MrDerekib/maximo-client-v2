@@ -200,8 +200,9 @@ class BrowserCloseTests(TestCase):
         end=datetime.strptime(dialog.find_element(By.NAME,'end').get_property('value'),'%Y-%m-%dT%H:%M')
         self.assertEqual((end-start).total_seconds(),3600)
         self.assertLess((datetime.now()-end).total_seconds(),60)
-        self.assertEqual(dialog.find_element(By.NAME,'start').get_property('step'),'60')
-        self.assertEqual(dialog.find_element(By.NAME,'end').get_property('step'),'60')
+        self.assertEqual(dialog.find_element(By.NAME,'start').get_property('step'),'300')
+        self.assertEqual(dialog.find_element(By.NAME,'end').get_property('step'),'300')
+        self.assertTrue(dialog.find_element(By.TAG_NAME,'form').get_property('noValidate'))
 
     def test_human_confirmation_persists_values_before_closing_and_consumes_approval(self):
         dialog=self.prepare_dialog(origin='Consumos Actuales')
