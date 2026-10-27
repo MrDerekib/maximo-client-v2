@@ -97,9 +97,15 @@ class WorkorderCloser(WorkorderStarter):
         self.tab('Orden de trabajo')
         start=self.field_snapshot('Inicio real')
         end=self.field_snapshot('Finalización real')
+        try:
+            start_value=iso_date(actual_datetime(start['value'],start['title']))
+            end_value=iso_date(actual_datetime(end['value'],end['title']))
+        except ValueError as exc:
+            raise ValueError(f'Maximo muestra una fecha no reconocida en la OT {self.ot}: '
+                             f'Inicio={start["value"]!r}/{start["title"]!r}, '
+                             f'fin={end["value"]!r}/{end["title"]!r}.') from exc
         return {'ot':self.ot,'duration':str(duration['value'] or '').strip(),
-                'start':iso_date(actual_datetime(start['value'],start['title'])),
-                'end':iso_date(actual_datetime(end['value'],end['title']))}
+                'start':start_value,'end':end_value}
 
     def set_duration(self, duration):
         seconds=repair_seconds(duration)
@@ -131,42 +137,37 @@ class WorkorderCloser(WorkorderStarter):
         current=self.field_snapshot(caption)
         if actual_datetime(current['value'],current['title'])==value:
             return
-        if not current['lookup']:
-            raise RuntimeError(f'Maximo no ofrece el selector de {caption}.')
         self.progress(f'OT {self.ot}: configurando {caption.lower()}…')
-        popup_id=current['id']+'_popup'
-        def popup():
-            return next((e for e in self.driver.find_elements(By.ID,popup_id) if e.is_displayed()),None)
-        for _ in range(2):
-            if popup() is not None:
-                break
-            self.click_fresh(lambda:self.driver.find_element(By.ID,current['lookup']),
-                             f'selector {caption}',completed=lambda:popup() is not None)
-            try:
-                WebDriverWait(self.driver,3,poll_frequency=0.2).until(lambda d:popup() is not None)
-                break
-            except TimeoutException:
-                self.reject_dialogs()
-        self.wait(lambda d:popup(),f'calendario de {caption}')
-        # Use the public value API of the calendar control, never assign the
-        # readonly Maximo input. Its native OK button sends Maximo's onChange.
-        ok=self.driver.execute_script("""
-            const w=window.dijit?.byId(arguments[0]);
-            if (!w || w.declaredClass!=='ibm.tivoli.mbs.dijit.DateTimeCalendar') return null;
-            const p=arguments[1],date=new Date(p[0],p[1]-1,p[2],p[3],p[4],p[5]);
-            w.set('value',date);
-            const result=w.get('value');
-            if (!(result instanceof Date) || result.getTime()!==date.getTime()) return null;
-            return w.okButtonNode;
-        """,popup_id,[value.year,value.month,value.day,value.hour,value.minute,value.second])
-        if ok is None:
-            raise RuntimeError(f'El calendario no confirmó el valor de {caption}; no se cerrará la OT.')
-        ok.click()
         def confirmed(d):
             self.reject_dialogs()
             snapshot=self.field_snapshot(caption)
-            return popup() is None and actual_datetime(snapshot['value'],snapshot['title'])==value
-        self.wait(confirmed,f'confirmación de {caption}')
+            return actual_datetime(snapshot['value'],snapshot['title'])==value
+
+        if current['readonly']:
+            raise RuntimeError(f'Maximo no permite escribir {caption}. Revisa el campo manualmente; no se cerrará la OT.')
+        # DateTime inputs with datatype=4 accept the localized date/time via
+        # keyboard. Tab triggers Maximo's validation and change handlers.
+        formatted=value.strftime('%d/%m/%y %H:%M:%S')
+        for attempt in range(3):
+            try:
+                field=self.field(caption)
+                field.click()
+                field.send_keys(Keys.CONTROL,'a',Keys.BACKSPACE)
+                field.send_keys(formatted)
+                typed=field.get_attribute('value')
+                if actual_datetime(typed)!=value:
+                    raise RuntimeError(f'Maximo interpretó {typed!r} al escribir {caption}; '
+                                       'se detuvo antes de guardar.')
+                field.send_keys(Keys.TAB)
+                break
+            except StaleElementReferenceException:
+                # A redraw after Tab can mean Maximo accepted the value. Check
+                # the live field first, then safely reacquire only this input.
+                if confirmed(self.driver):
+                    break
+                if attempt==2:
+                    raise RuntimeError(f'Maximo actualizó la ficha al escribir {caption}; revisa el valor antes de continuar.')
+        self.wait(confirmed,f'validación de {caption}')
 
     def prepare_close(self, approval, pending):
         """Persist the reviewed inputs and verify them before any routing click."""
@@ -354,7 +355,7 @@ BROWSER_REVIEW_SCRIPT = r"""
     duration.value=data.duration;
     // Ask for the actual start; the automatically recorded time is only a reference.
     dialog.querySelector('#maximo-close-existing').textContent=
-      'Inicio actual: '+(data.start.replace('T',' ')||'sin indicar')+
+      'Inicio actual en Maximo (referencia): '+(data.start.replace('T',' ')||'sin indicar')+
       '. Finalización actual: '+(data.end.replace('T',' ')||'sin indicar');
     const calculate=()=>{
       end.value=''; const text=duration.value.trim().replace(',','.');

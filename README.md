@@ -155,8 +155,8 @@ La finalización se calcula a partir del inicio y de la duración, y no puede se
 posterior a la hora actual. Esta condición se comprueba también antes de guardar.
 
 Cancelar esta revisión no cambia los datos. **Confirmar cierre** guarda la
-duración mediante teclado y Tab, y las fechas mediante el calendario nativo de
-Maximo. Antes de enrutar se recarga la ficha y se comprueba que se han guardado
+duración y fechas escribiéndolas con el teclado en los campos de Maximo y pulsando
+Tab para validarlos. Antes de enrutar se recarga la ficha y se comprueba que se han guardado
 los tres valores. Si los datos cambiaron desde la revisión, la confirmación ha
 caducado o Maximo muestra un error, se detiene sin intentar el cierre.
 

@@ -20,13 +20,24 @@ function dateText(iso){
   if(!iso)return '';
   const p=iso.split(/[-T:]/);return `${p[2]}/${p[1]}/${p[0].slice(-2)} ${p[3]}:${p[4]}:${p[5]||'00'}`;
 }
+function saveInput(key,value){
+  later(()=>{
+    if(key==='duration')state[key]=value;
+    else {
+      const parts=value.match(/^(\d{2})\/(\d{2})\/(\d{2}) (\d{2}:\d{2}:\d{2})$/);
+      if(!parts)throw Error('Invalid date in the offline fixture');
+      state[key]=`20${parts[3]}-${parts[2]}-${parts[1]}T${parts[4]}`;
+    }
+    state.dirty=true;state.events.push([key,value]);
+  });
+}
 function control(caption,key){
   const id='mx'+(++generation)+'-tb',image=id.replace('-tb','-img'),date=['start','end'].includes(key);
   const value=date?dateText(state[key]):state[key];
   return `<p><label for="${id}">${caption}:</label><input id="${id}" ctype="textbox" li="${image}"
-    ${key==='duration'&&!state.durationReadonly?'':'readonly'}
+    ${((key==='duration'&&!state.durationReadonly)||(['start','end'].includes(key)&&!state.dateReadonly))?'':'readonly'}
     value="${date&&state.titleOnly?'':value}" title="${value}"
-    onblur="if('${key}'==='duration'&&this.value!==state.duration)later(()=>{state.duration=this.value;state.dirty=true;state.events.push(['duration',this.value])})">
+    onblur="if(['duration','start','end'].includes('${key}'))saveInput('${key}',this.value)">
     ${date?`<img id="${image}" alt="Seleccionar fecha y hora" width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onclick="openDate('${key}','${id}')">`:''}</p>`;
 }
 function render(next){
@@ -50,7 +61,15 @@ function openDate(key,id){
   const popup=id+'_popup';
   document.getElementById('dialogs').innerHTML=`<section id="${popup}"><button id="date-ok" onclick="commitDate('${key}')">Aceptar</button><button onclick="render(tab)">Cancelar</button></section>`;
   widget={id:popup,declaredClass:'ibm.tivoli.mbs.dijit.DateTimeCalendar',value:new Date(state[key]||'2026-10-26T00:00:00'),
-    set(name,value){if(name==='value')this.value=value;},get(name){return this.value;},
+    tNode:{value:new Date(state[key]||'2026-10-26T00:00:00'),set(name,value){this.value=value;}},
+    set(name,value){
+      if(name==='value'){
+        // Actual Maximo Calendar.onChange combines the new date with the
+        // existing time picker value, overriding a whole-widget set alone.
+        const t=this.tNode.value;this.value=new Date(value);
+        this.value.setHours(t.getHours(),t.getMinutes(),t.getSeconds());
+      }
+    },get(name){return this.value;},
     okButtonNode:document.getElementById('date-ok')};
 }
 function commitDate(key){

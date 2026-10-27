@@ -195,7 +195,7 @@ class BrowserCloseTests(TestCase):
         self.assertIn('hora actual',dialog.find_element(By.ID,'maximo-close-error').text)
         self.assertEqual(self.state()['events'],[])
 
-    def test_calendar_uses_its_model_and_native_accept_and_title_fallback(self):
+    def test_keyboard_entered_dates_are_validated_and_saved(self):
         self.browser.execute_script('resetState({titleOnly:true})')
         approval,pending=self.plan()
         self.assertEqual(pending['snapshot']['start'],'2026-10-26T10:00:00')
@@ -203,13 +203,24 @@ class BrowserCloseTests(TestCase):
         self.browser.refresh()
         self.assertEqual(self.closer.inspect_repair()['end'],'2026-10-26T11:00:00')
         self.assertEqual(self.state()['routes'],0)
-        self.assertIn(['date','end','2026-10-26T11:00:00'],self.state()['events'])
+        self.assertIn(['end','26/10/26 11:00:00'],self.state()['events'])
 
     def test_dates_moving_past_old_end_change_end_first(self):
         self.browser.execute_script("resetState({duration:'1',end:'2026-10-26T11:00:00'})")
         approval,pending=self.plan(start='2026-10-26T12:00:00',end='2026-10-26T13:00:00')
         self.closer.prepare_close(approval,pending)
-        self.assertEqual([e[1] for e in self.state()['events'] if e[0]=='date'],['end','start'])
+        changed=[e[0] for e in self.state()['events'] if e[0] in ('start','end')]
+        self.assertEqual(changed[:2],['end','start'])
+        self.assertEqual(self.state()['start'],'2026-10-26T12:00:00')
+        self.assertEqual(self.state()['end'],'2026-10-26T13:00:00')
+
+    def test_keyboard_entry_does_not_round_start_to_quarters(self):
+        self.browser.execute_script("resetState({start:'2026-10-26T14:08:16'})")
+        approval,pending=self.plan(start='2026-10-26T11:07:12',end='2026-10-26T12:07:12')
+        self.closer.prepare_close(approval,pending)
+        self.assertEqual(self.state()['start'],'2026-10-26T11:07:12')
+        self.assertEqual(self.state()['end'],'2026-10-26T12:07:12')
+        self.assertEqual(self.state()['routes'],0)
 
     def test_missing_confirmation_expiry_token_or_wrong_ot_never_writes(self):
         for mutation in ('unapproved','expired','token','ot'):
