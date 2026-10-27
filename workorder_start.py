@@ -1,4 +1,5 @@
 """Inicio explícito de OT con el flujo RFN-70, mediante controles de Maximo."""
+import json
 import logging
 import time
 import unicodedata
@@ -440,12 +441,14 @@ class WorkorderStarter:
         if url.scheme != "https" or url.hostname != "eam.indraweb.net" or not url.path.startswith("/maximo/ui"):
             raise RuntimeError("La acción de OT solo está disponible en la ficha de Maximo.")
 
-    def run(self):
+    def run(self, return_tab=None):
         self.check_location()
         self.wait(lambda d: self.value("Orden de trabajo") == self.ot and self.value("Estado"), "carga de la OT")
         self.check_ot()
         status = self.value("Estado")
         if status == "INPRG":
+            if return_tab:
+                self.tab(return_tab)
             return {"ot": self.ot, "status": "INPRG", "already_started": True}
         if status != "APPR":
             raise RuntimeError(f"No se puede iniciar la OT {self.ot} en estado {status}. Debe estar en APPR.")
@@ -477,15 +480,30 @@ class WorkorderStarter:
             raise RuntimeError("La OT está iniciada, pero Maximo no conservó RFN-70. Revisa la ficha.")
         self.tab("Soluciones")
         logging.info("OT %s iniciada y verificada: RFN-70 / OTROS-01 / OTROS-02 / OTROS-03", self.ot)
+        if return_tab:
+            self.tab(return_tab)
         return {"ot": self.ot, "status": "INPRG", "already_started": False}
 
 
-def start_workorder(driver, ot, progress=None):
+def start_workorder(driver, ot, progress=None, return_tab=None):
+    starter = WorkorderStarter(driver, ot, progress)
     try:
-        return WorkorderStarter(driver, ot, progress).run()
+        return starter.run(return_tab=return_tab)
     except WebDriverException as exc:
         logging.exception("Falló una acción del navegador al iniciar la OT %s", ot)
+        if return_tab:
+            try:
+                starter.tab(return_tab)
+            except Exception:
+                logging.info("No se pudo restaurar la pestaña de origen tras el fallo al iniciar la OT %s", ot)
         raise RuntimeError(browser_error_message(exc)) from exc
+    except Exception:
+        if return_tab:
+            try:
+                starter.tab(return_tab)
+            except Exception:
+                logging.info("No se pudo restaurar la pestaña de origen tras el fallo al iniciar la OT %s", ot)
+        raise
 
 
 def browser_error_message(error):
@@ -518,14 +536,18 @@ def poll_browser_start(driver):
           button.addEventListener('click', () => {
             if (button.disabled) return;
             button.disabled = true; button.dataset.busy = 'true'; button.textContent = 'Iniciando OT…';
-            document.documentElement.dataset.maximoStartOt = field('Orden de trabajo');
+            const activeTab = [...document.querySelectorAll('a[role=tab]')]
+              .find(e => e.getClientRects().length && e.getAttribute('aria-expanded') === 'true');
+            document.documentElement.dataset.maximoStartOt = JSON.stringify({
+              ot: field('Orden de trabajo'), returnTab: activeTab?.textContent.trim() || ''
+            });
           });
           document.body.appendChild(button);
         }
         if (button) {
-          button.hidden = !/^\\d{1,20}$/.test(ot || '');
+          button.hidden = !/^\\d{1,20}$/.test(ot || '') || status !== 'APPR';
           if (button.dataset.busy !== 'true') {
-            button.disabled = status !== 'APPR' || visibleDialogs.length > 0;
+            button.disabled = visibleDialogs.length > 0;
             button.style.opacity = button.disabled ? '0.6' : '1';
             button.title = 'Establecer RFN-70, OTROS-01/02/03 e iniciar una OT en APPR';
           }
@@ -534,8 +556,17 @@ def poll_browser_start(driver):
         delete document.documentElement.dataset.maximoStartOt;
         return request;
     """
-    request = driver.execute_script(button_script)
-    if not request:
+    request_data = driver.execute_script(button_script)
+    if not request_data:
+        return None
+    try:
+        request = json.loads(request_data)
+        ot = str(request.get("ot") or "").strip()
+        return_tab = str(request.get("returnTab") or "").strip()
+    except (TypeError, ValueError, AttributeError):
+        logging.warning("Se descartó una solicitud mal formada para iniciar una OT")
+        return None
+    if not ot:
         return None
 
     def report(message):
@@ -545,14 +576,14 @@ def poll_browser_start(driver):
         """, message)
 
     try:
-        result = start_workorder(driver, request, report)
+        result = start_workorder(driver, ot, report, return_tab=return_tab)
         # The verification reload removes injected controls; restore the
         # button before displaying the completion message.
         driver.execute_script(button_script)
-        report(f"OT {request} ya iniciada" if result["already_started"] else f"OT {request} iniciada")
+        report(f"OT {ot} ya iniciada" if result["already_started"] else f"OT {ot} iniciada")
         return result
     except Exception as exc:
-        logging.exception("No se pudo iniciar la OT %s desde el navegador", request)
+        logging.exception("No se pudo iniciar la OT %s desde el navegador", ot)
         report(f"No se pudo iniciar: {browser_error_message(exc)}")
         return None
     finally:

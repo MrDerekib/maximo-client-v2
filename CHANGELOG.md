@@ -2,6 +2,12 @@
 
 ## Pendiente de publicación
 
+- Las acciones «Iniciar OT» y «Cerrar OT» vuelven a la pestaña de Maximo desde
+  la que se lanzaron. «Iniciar OT» solo aparece en estado APPR y «Cerrar OT»
+  solo aparece cuando la orden ya está iniciada (INPRG).
+- El botón «Imprimir parte» se vuelve a insertar si Maximo reconstruye la página
+  al cambiar de pestaña, evitando tener que recargar la ficha para recuperarlo.
+
 - Las acciones «Iniciar OT» y «Cerrar OT» se habilitan por separado en
   Configuración y se ejecutan únicamente desde las ventanas de Edge abiertas
   por MD. Retirado el inicio de OT del menú contextual y su ejecución en segundo

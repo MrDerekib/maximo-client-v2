@@ -130,8 +130,10 @@ class BrowserCloseTests(TestCase):
         with patch.object(workflow,'BROWSER_BUTTON_SCRIPT',script),patch.object(workflow,'WorkorderCloser',FixtureCloser):
             return workflow.poll_browser_close(self.browser)
 
-    def prepare_dialog(self):
+    def prepare_dialog(self, origin='Orden de trabajo'):
         self.poll()
+        if origin == 'Consumos Actuales':
+            self.browser.execute_script("render('actuals')")
         self.browser.find_element(By.ID,'maximo-desktop-close-ot').click()
         self.poll()
         return self.browser.find_element(By.ID,'maximo-close-review')
@@ -143,12 +145,14 @@ class BrowserCloseTests(TestCase):
         """,value)
 
     def test_preparing_and_cancelling_never_changes_record_or_routes(self):
-        dialog=self.prepare_dialog()
+        dialog=self.prepare_dialog(origin='Consumos Actuales')
+        self.assertEqual(self.browser.execute_script("return sessionStorage.getItem('close-tab')"),'actuals')
         self.assertEqual(self.state()['events'],[])
         self.assertEqual(self.state()['duration'],'')
         dialog.find_element(By.NAME,'cancel').click()
         self.poll()
         self.assertEqual(self.state()['events'],[])
+        self.assertEqual(self.browser.execute_script("return sessionStorage.getItem('close-tab')"),'actuals')
         self.assertIsNone(self.browser._maximo_close_review)
 
     def test_review_rejects_non_quarter_hours_and_recalculates_end(self):
@@ -164,7 +168,7 @@ class BrowserCloseTests(TestCase):
         self.assertEqual(self.state()['events'],[])
 
     def test_human_confirmation_persists_values_before_closing_and_consumes_approval(self):
-        dialog=self.prepare_dialog()
+        dialog=self.prepare_dialog(origin='Consumos Actuales')
         self.fill_start()
         dialog.find_element(By.NAME,'duration').send_keys('1')
         dialog.find_element(By.NAME,'confirm').click()
@@ -177,9 +181,22 @@ class BrowserCloseTests(TestCase):
         self.assertLess(events.index('save'),events.index('route'))
         self.assertEqual(events.count('confirm-close'),1)
         self.assertIsNone(self.browser._maximo_close_review)
+        self.assertEqual(self.browser.execute_script("return sessionStorage.getItem('close-tab')"),'actuals')
         self.poll()
         self.assertEqual(self.state()['routes'],state['routes'])
-        self.assertTrue(self.browser.find_element(By.ID,'maximo-desktop-close-ot').get_property('disabled'))
+        self.assertTrue(self.browser.find_element(By.ID,'maximo-desktop-close-ot').get_property('hidden'))
+
+    def test_close_button_is_hidden_until_the_work_order_is_in_progress(self):
+        self.browser.execute_script("resetState({status:'APPR'})")
+        self.poll()
+        button=self.browser.find_element(By.ID,'maximo-desktop-close-ot')
+        self.assertTrue(button.get_property('hidden'))
+        self.browser.execute_script("resetState({status:'INPRG'})")
+        self.poll()
+        self.assertFalse(button.get_property('hidden'))
+        self.browser.execute_script("resetState({status:'ISSUE'})")
+        self.poll()
+        self.assertTrue(button.get_property('hidden'))
 
     def test_future_end_blocks_both_review_and_backend_before_any_write(self):
         start=workflow.iso_date(datetime.now()+timedelta(hours=1))
@@ -281,7 +298,7 @@ class BrowserCloseTests(TestCase):
         for status in ('APPR','ISSUE','CLOSE'):
             self.browser.execute_script('resetState(arguments[0])',{'status':status})
             self.poll()
-            self.assertTrue(self.browser.find_element(By.ID,'maximo-desktop-close-ot').get_property('disabled'))
+            self.assertTrue(self.browser.find_element(By.ID,'maximo-desktop-close-ot').get_property('hidden'))
             with self.assertRaises(RuntimeError):self.closer.inspect_repair()
             with self.assertRaises(RuntimeError):self.closer.require_in_progress()
             if status!='ISSUE':

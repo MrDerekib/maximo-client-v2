@@ -164,9 +164,14 @@ class BrowserStartTests(TestCase):
         self.browser.get(FIXTURE)
         self.browser.execute_script('resetState()')
 
-    def run_fixture(self, **state):
+    def run_fixture(self, return_tab=None, **state):
         self.browser.execute_script('resetState(arguments[0])', state)
-        return FixtureStarter(self.browser, '4314531', timeout=5).run()
+        return FixtureStarter(self.browser, '4314531', timeout=5).run(return_tab=return_tab)
+
+    def test_start_returns_to_the_tab_where_the_user_launched_it(self):
+        self.run_fixture(return_tab='Informes de anomalías', faultclass='RFN-70',
+                         problem='OTROS-01', cause='OTROS-02', remedy='OTROS-03')
+        self.assertEqual(self.browser.execute_script("return sessionStorage.getItem('workflow-fixture-tab')"), 'anomaly')
 
     def test_empty_or_different_class_is_selected_before_the_solutions_and_persisted(self):
         for initial in ('', 'OTHER'):
@@ -302,6 +307,30 @@ class BrowserStartTests(TestCase):
             workflow.poll_browser_start(self.browser)
             self.assertTrue(button.is_enabled())
         self.assertEqual(original('return state.events'), [])
+
+    def test_start_button_is_hidden_after_the_order_has_started(self):
+        original = self.browser.execute_script
+        def execute(script, *args):
+            return original(script.replace("if (location.origin !== 'https://eam.indraweb.net' || !location.pathname.startsWith('/maximo/ui')) return '';", ''), *args)
+        with patch.object(self.browser, 'execute_script', side_effect=execute):
+            workflow.poll_browser_start(self.browser)
+            button = self.browser.find_element(By.ID, 'maximo-desktop-start-ot')
+            self.assertFalse(button.get_property('hidden'))
+            original("state.status='INPRG';render(tab)")
+            workflow.poll_browser_start(self.browser)
+            self.assertTrue(button.get_property('hidden'))
+
+    def test_start_button_click_captures_the_current_tab_for_return(self):
+        original = self.browser.execute_script
+        def execute(script, *args):
+            return original(script.replace("if (location.origin !== 'https://eam.indraweb.net' || !location.pathname.startsWith('/maximo/ui')) return '';", ''), *args)
+        with patch.object(self.browser, 'execute_script', side_effect=execute):
+            workflow.poll_browser_start(self.browser)
+            original("render('anomaly')")
+            self.browser.find_element(By.ID, 'maximo-desktop-start-ot').click()
+            with patch.object(workflow, 'start_workorder', return_value={'already_started': False}) as start:
+                workflow.poll_browser_start(self.browser)
+        self.assertEqual(start.call_args.kwargs['return_tab'], 'Informes de anomalías')
 
     def test_manual_start_choice_supports_aria_and_single_radio_containers(self):
         for markup in ('aria','container'):

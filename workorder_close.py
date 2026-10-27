@@ -287,6 +287,8 @@ class WorkorderCloser(WorkorderStarter):
         self.driver.refresh()
         self.wait(lambda d:self.value('Orden de trabajo')==self.ot and self.value('Estado')=='ISSUE',
                   'confirmación guardada de ISSUE')
+        if pending.get('return_tab'):
+            self.tab(pending['return_tab'])
         logging.info('OT %s: cierre confirmado en ISSUE tras revisión explícita del usuario',self.ot)
         return {'ot':self.ot,'status':'ISSUE'}
 
@@ -310,14 +312,18 @@ BROWSER_BUTTON_SCRIPT = r"""
       button.addEventListener('click',event=>{
         if (!event.isTrusted || button.disabled) return;
         button.disabled=true; button.dataset.busy='true'; button.textContent='Revisando cierre…';
-        document.documentElement.dataset.maximoCloseOtRequest=JSON.stringify({action:'prepare',ot:field('Orden de trabajo')});
+        const activeTab=[...document.querySelectorAll('a[role=tab]')]
+          .find(e=>e.getClientRects().length&&e.getAttribute('aria-expanded')==='true');
+        document.documentElement.dataset.maximoCloseOtRequest=JSON.stringify({
+          action:'prepare',ot:field('Orden de trabajo'),returnTab:activeTab?.textContent.trim()||''
+        });
       });
       document.body.appendChild(button);
     }
     if (button) {
-      button.hidden=!/^\d{1,20}$/.test(ot||'');
+      button.hidden=!/^\d{1,20}$/.test(ot||'') || status!=='INPRG';
       if (button.dataset.busy!=='true') {
-        button.disabled=status!=='INPRG' || visibleDialogs.length>0;
+        button.disabled=visibleDialogs.length>0;
         button.style.opacity=button.disabled?'0.6':'1';
         button.title='Revisar duración y fechas antes de confirmar el cierre de una OT en INPRG';
       }
@@ -419,7 +425,11 @@ def poll_browser_close(driver):
         if action=='prepare':
             driver._maximo_close_review=None
             snapshot=WorkorderCloser(driver,request.get('ot'),report).inspect_repair()
-            pending={'token':uuid4().hex,'snapshot':snapshot,'created':time.monotonic()}
+            return_tab=str(request.get('returnTab') or '').strip()
+            if return_tab:
+                WorkorderCloser(driver,request.get('ot'),report).tab(return_tab)
+            pending={'token':uuid4().hex,'snapshot':snapshot,'created':time.monotonic(),
+                     'return_tab':return_tab}
             driver._maximo_close_review=pending
             driver.execute_script(BROWSER_REVIEW_SCRIPT,snapshot,pending['token'])
             keep_review=True
@@ -437,6 +447,13 @@ def poll_browser_close(driver):
         report(f'OT {result["ot"]}: pendiente de salida del almacén (ISSUE)')
         return result
     except Exception as exc:
+        pending_review=locals().get('pending') or getattr(driver,'_maximo_close_review',None)
+        return_tab=request.get('returnTab') or (pending_review or {}).get('return_tab')
+        if return_tab:
+            try:
+                WorkorderCloser(driver,request.get('ot'),report).tab(return_tab)
+            except Exception:
+                logging.info('No se pudo restaurar la pestaña de origen tras el error de cierre')
         driver._maximo_close_review=None
         logging.exception('No se pudo cerrar la OT desde Edge')
         driver.execute_script(BROWSER_BUTTON_SCRIPT)
