@@ -7,6 +7,9 @@
   solo aparece cuando la orden ya está iniciada (INPRG).
 - El botón «Imprimir parte» se vuelve a insertar si Maximo reconstruye la página
   al cambiar de pestaña, evitando tener que recargar la ficha para recuperarlo.
+- El cierre escribe inicio y fin mediante el selector DateTime nativo de Maximo,
+  actualizando fecha y hora. Si Maximo no conserva los datos, el aviso muestra
+  los valores leídos y el flujo se detiene antes de enrutar.
 
 - Las acciones «Iniciar OT» y «Cerrar OT» se habilitan por separado en
   Configuración y se ejecutan únicamente desde las ventanas de Edge abiertas

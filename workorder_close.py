@@ -137,36 +137,39 @@ class WorkorderCloser(WorkorderStarter):
         current=self.field_snapshot(caption)
         if actual_datetime(current['value'],current['title'])==value:
             return
+        if not current['lookup']:
+            raise RuntimeError(f'Maximo no ofrece el selector de {caption}. No se cambiará la OT.')
         self.progress(f'OT {self.ot}: configurando {caption.lower()}…')
+        popup_id=current['id']+'_popup'
+        def popup():
+            return next((e for e in self.driver.find_elements(By.ID,popup_id) if e.is_displayed()),None)
+        self.click_fresh(lambda:self.driver.find_element(By.ID,current['lookup']),
+                         f'selector {caption}',completed=lambda:popup() is not None)
+        self.wait(lambda d:popup(),f'calendario de {caption}')
+
+        # Maximo's DateTimeCalendar has a separate time widget. Updating only
+        # the calendar value lets its onChange handler restore the old time.
+        # Set both widget values, then press its native OK button so Maximo
+        # receives the normal date/time change event.
+        ok=self.driver.execute_script("""
+            const w=window.dijit?.byId(arguments[0]);
+            if(!w || w.declaredClass!=='ibm.tivoli.mbs.dijit.DateTimeCalendar' ||
+               !w.tNode || typeof w.tNode.set!=='function') return null;
+            const p=arguments[1],date=new Date(p[0],p[1]-1,p[2],p[3],p[4],p[5]);
+            w.tNode.set('value',new Date(date));
+            w.set('value',date);
+            const result=w.get('value');
+            if(!(result instanceof Date) || result.getTime()!==date.getTime()) return null;
+            return w.okButtonNode;
+        """,popup_id,[value.year,value.month,value.day,value.hour,value.minute,value.second])
+        if ok is None:
+            raise RuntimeError(f'El calendario de Maximo no confirmó fecha y hora para {caption}. No se guardará ni cerrará la OT.')
+        ok.click()
+
         def confirmed(d):
             self.reject_dialogs()
             snapshot=self.field_snapshot(caption)
-            return actual_datetime(snapshot['value'],snapshot['title'])==value
-
-        if current['readonly']:
-            raise RuntimeError(f'Maximo no permite escribir {caption}. Revisa el campo manualmente; no se cerrará la OT.')
-        # DateTime inputs with datatype=4 accept the localized date/time via
-        # keyboard. Tab triggers Maximo's validation and change handlers.
-        formatted=value.strftime('%d/%m/%y %H:%M:%S')
-        for attempt in range(3):
-            try:
-                field=self.field(caption)
-                field.click()
-                field.send_keys(Keys.CONTROL,'a',Keys.BACKSPACE)
-                field.send_keys(formatted)
-                typed=field.get_attribute('value')
-                if actual_datetime(typed)!=value:
-                    raise RuntimeError(f'Maximo interpretó {typed!r} al escribir {caption}; '
-                                       'se detuvo antes de guardar.')
-                field.send_keys(Keys.TAB)
-                break
-            except StaleElementReferenceException:
-                # A redraw after Tab can mean Maximo accepted the value. Check
-                # the live field first, then safely reacquire only this input.
-                if confirmed(self.driver):
-                    break
-                if attempt==2:
-                    raise RuntimeError(f'Maximo actualizó la ficha al escribir {caption}; revisa el valor antes de continuar.')
+            return popup() is None and actual_datetime(snapshot['value'],snapshot['title'])==value
         self.wait(confirmed,f'validación de {caption}')
 
     def prepare_close(self, approval, pending):
@@ -199,9 +202,15 @@ class WorkorderCloser(WorkorderStarter):
         self.save()
         self.driver.refresh()
         verified=self.inspect_repair()
-        if (repair_seconds(verified['duration'])!=plan['duration_seconds'] or
-                actual_datetime(verified['start'])!=start or actual_datetime(verified['end'])!=end):
-            raise RuntimeError('Maximo no guardó la duración y las fechas confirmadas. No se cerrará la OT.')
+        try:
+            duration_ok=repair_seconds(verified['duration'])==plan['duration_seconds']
+        except ValueError:
+            duration_ok=False
+        if (not duration_ok or actual_datetime(verified['start'])!=start or actual_datetime(verified['end'])!=end):
+            raise RuntimeError('Maximo no guardó los valores confirmados. '
+                               f'Recibido: duración={verified["duration"] or "vacía"}, '
+                               f'inicio={verified["start"] or "vacío"}, fin={verified["end"] or "vacío"}. '
+                               'No se cerrará la OT.')
         return verified
 
     def route_close(self):

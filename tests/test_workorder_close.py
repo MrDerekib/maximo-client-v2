@@ -212,7 +212,7 @@ class BrowserCloseTests(TestCase):
         self.assertIn('hora actual',dialog.find_element(By.ID,'maximo-close-error').text)
         self.assertEqual(self.state()['events'],[])
 
-    def test_keyboard_entered_dates_are_validated_and_saved(self):
+    def test_native_calendar_saves_both_date_and_time_values(self):
         self.browser.execute_script('resetState({titleOnly:true})')
         approval,pending=self.plan()
         self.assertEqual(pending['snapshot']['start'],'2026-10-26T10:00:00')
@@ -220,13 +220,13 @@ class BrowserCloseTests(TestCase):
         self.browser.refresh()
         self.assertEqual(self.closer.inspect_repair()['end'],'2026-10-26T11:00:00')
         self.assertEqual(self.state()['routes'],0)
-        self.assertIn(['end','26/10/26 11:00:00'],self.state()['events'])
+        self.assertIn(['date','end','2026-10-26T11:00:00'],self.state()['events'])
 
     def test_dates_moving_past_old_end_change_end_first(self):
         self.browser.execute_script("resetState({duration:'1',end:'2026-10-26T11:00:00'})")
         approval,pending=self.plan(start='2026-10-26T12:00:00',end='2026-10-26T13:00:00')
         self.closer.prepare_close(approval,pending)
-        changed=[e[0] for e in self.state()['events'] if e[0] in ('start','end')]
+        changed=[e[1] for e in self.state()['events'] if e[0]=='date']
         self.assertEqual(changed[:2],['end','start'])
         self.assertEqual(self.state()['start'],'2026-10-26T12:00:00')
         self.assertEqual(self.state()['end'],'2026-10-26T13:00:00')
