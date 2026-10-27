@@ -262,10 +262,25 @@ class BrowserCloseTests(TestCase):
         self.browser.execute_script("resetState({duration:'1',end:'2026-10-26T11:00:00'})")
         approval,pending=self.plan(start='2026-10-26T12:00:00',end='2026-10-26T13:00:00')
         self.closer.prepare_close(approval,pending)
-        changed=[e[1] for e in self.state()['events'] if e[0]=='date']
+        events=self.state()['events']
+        date_events=[(i,e) for i,e in enumerate(events) if e[0]=='date']
+        changed=[e[1] for _,e in date_events]
         self.assertEqual(changed[:2],['end','start'])
+        self.assertEqual(events[date_events[0][0]+1][0],'save')
         self.assertEqual(self.state()['start'],'2026-10-26T12:00:00')
         self.assertEqual(self.state()['end'],'2026-10-26T13:00:00')
+
+    def test_blank_end_is_saved_before_opening_its_date_widget(self):
+        self.browser.execute_script("resetState({end:''})")
+        approval,pending=self.plan(duration='1,25',start='2026-10-26T10:15:00',
+                                   end='2026-10-26T11:30:00')
+        self.closer.prepare_close(approval,pending)
+        events=self.state()['events']
+        date_events=[(i,e) for i,e in enumerate(events) if e[0]=='date']
+        self.assertEqual([e[1] for _,e in date_events],['start','end'])
+        self.assertEqual(events[date_events[0][0]+1][0],'save')
+        self.assertEqual(self.state()['start'],'2026-10-26T10:15:00')
+        self.assertEqual(self.state()['end'],'2026-10-26T11:30:00')
 
     def test_keyboard_entry_does_not_round_start_to_quarters(self):
         self.browser.execute_script("resetState({start:'2026-10-26T14:08:16'})")

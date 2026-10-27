@@ -171,6 +171,14 @@ class WorkorderCloser(WorkorderStarter):
             snapshot=self.field_snapshot(caption)
             return popup() is None and actual_datetime(snapshot['value'],snapshot['title'])==value
         self.wait(confirmed,f'validación de {caption}')
+        # Commit each date before opening the other Maximo date widget. The
+        # widget can still have an in-flight change request after its popup
+        # closes; changing the second date immediately can make Maximo drop it.
+        self.save()
+        saved=self.field_snapshot(caption)
+        if actual_datetime(saved['value'],saved['title'])!=value:
+            raise RuntimeError(f'Maximo no conservó {caption.lower()} después de guardar. '
+                               'No se continuará con el cierre de la OT.')
 
     def prepare_close(self, approval, pending):
         """Persist the reviewed inputs and verify them before any routing click."""
@@ -199,7 +207,6 @@ class WorkorderCloser(WorkorderStarter):
         else:
             self.set_actual_date('Inicio real',start)
             self.set_actual_date('Finalización real',end)
-        self.save()
         self.driver.refresh()
         verified=self.inspect_repair()
         try:
