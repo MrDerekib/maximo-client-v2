@@ -123,13 +123,15 @@
       summary.style.cssText="padding:10px;background:#f1f6fc;border-radius:6px;color:#365a7c;line-height:1.4"; panel.appendChild(summary);
       const buttons=document.createElement("div"); buttons.style.cssText="display:flex;justify-content:flex-end;gap:8px;margin-top:18px";
       const cancel=document.createElement("button"); cancel.type="button"; cancel.textContent="Cancelar";
-      const confirm=document.createElement("button"); confirm.type="button"; confirm.textContent=changing?"Guardar anomalías":"Iniciar OT";
+      const confirm=document.createElement("button"); confirm.type="button"; confirm.disabled=true;
+      confirm.textContent=changing?"Guardar anomalías":"Iniciar OT";
       for (const button of [cancel,confirm]) Object.assign(button.style,{padding:"8px 14px",borderRadius:"6px",border:"1px solid #b7cbe1",background:button===confirm?"#1769c2":"#fff",color:button===confirm?"#fff":"#173b60",fontWeight:"600",cursor:"pointer"});
       buttons.append(cancel,confirm); panel.appendChild(buttons);
       const selection={classKey:"",optionKeys:[],complete:false,label:""};
       function clearSelection() { selection.classKey="";selection.optionKeys=[];selection.complete=false;selection.label=""; }
       function renderChoices() {
-        selectionBox.replaceChildren(); clearSelection(); summary.textContent="Selecciona una ruta completa o elige «Solo iniciar OT».";
+        selectionBox.replaceChildren(); clearSelection();
+        summary.textContent=changing?"Selecciona una combinación de anomalías completa.":"Selecciona una ruta completa o elige «Solo iniciar OT».";
         labelFor(selectionBox,"Clase de anomalía");
         const classSelect=document.createElement("select");
         Object.assign(classSelect.style,{width:"100%",padding:"8px",border:"1px solid #b7cbe1",borderRadius:"6px",background:"#fff"});
@@ -137,6 +139,7 @@
         for(const item of (catalog.classes||[])) { const option=document.createElement("option");option.value=item.key;option.textContent=`${item.code} — ${item.description||item.organization||""}`;classSelect.appendChild(option); }
         selectionBox.appendChild(classSelect);
         const levels=document.createElement("div");selectionBox.appendChild(levels);
+        const selectHandlers=new WeakMap();
         function renderLevel(ref, index) {
           if(!ref) { selection.complete=selection.optionKeys.length>0; update(); return; }
           const options=catalog.option_sets?.[ref]||[];
@@ -159,21 +162,26 @@
             const description=item.description||catalog.descriptions?.[organization]?.[item.code]||"";
             option.textContent=`${item.code}${description?` — ${description}`:""}${occurrence} · ${item.type}`;select.appendChild(option); }
           wrapper.appendChild(select);
-          select.addEventListener("change",()=>{ selection.optionKeys=selection.optionKeys.slice(0,index);selection.complete=false;
+          const chooseOption=()=>{ selection.optionKeys=selection.optionKeys.slice(0,index);selection.complete=false;
             [...levels.children].slice(index+1).forEach(child=>child.remove());
             const picked=options.find(item=>item.key===select.value);if(!picked){update();return;}
             selection.optionKeys.push(picked.key);selection.label=[...selectionBox.querySelectorAll("select")].map(s=>s.selectedOptions[0]?.textContent).filter(Boolean).join(" → ");
-            renderLevel(picked.children_ref,index+1); });
+            renderLevel(picked.children_ref,index+1); };
+          selectHandlers.set(select,chooseOption);
+          select.addEventListener("change",chooseOption);
         }
-        classSelect.addEventListener("change",()=>{levels.replaceChildren();clearSelection();const item=(catalog.classes||[]).find(x=>x.key===classSelect.value);
-          selection.classKey=item?.key||"";selection.label=item?`${item.code}`:"";renderLevel(item?.options_ref,0);});
+        const chooseClass=()=>{levels.replaceChildren();clearSelection();const item=(catalog.classes||[]).find(x=>x.key===classSelect.value);
+          selection.classKey=item?.key||"";selection.label=item?`${item.code}`:"";renderLevel(item?.options_ref,0);};
+        classSelect.addEventListener("change",chooseClass);
         const defaultClass=(catalog.classes||[]).find(item=>item.key===defaultSelection?.class_key);
-        if(defaultClass){classSelect.value=defaultClass.key;classSelect.dispatchEvent(new Event("change"));
+        if(defaultClass){classSelect.value=defaultClass.key;chooseClass();
           // Preselect the configured default path, but keep each step conditional.
           const defaultKeys=Array.isArray(defaultSelection?.option_keys)?defaultSelection.option_keys:[];
           for(const key of defaultKeys){
             const selects=levels.querySelectorAll("select");const select=selects[selects.length-1];if(!select)break;
-            select.value=key;if(select.value!==key)break;select.dispatchEvent(new Event("change"));
+            // Maximo replaces window.Event with its own request object. Call
+            // our shared selection handler instead of dispatching a DOM event.
+            select.value=key;if(select.value!==key)break;selectHandlers.get(select)();
           }
         }
         update();

@@ -696,6 +696,53 @@ class BrowserStartTests(TestCase):
                 "//*[@id='maximo-start-options-overlay']//button[normalize-space()='Cancelar']").click()
         self.assertEqual(self.browser.execute_script('return state.events'), [])
 
+    def test_default_path_loads_when_maximo_replaces_the_native_event_constructor(self):
+        default = workflow.default_selection()
+        self.browser._maximo_workorder_start_selection = default
+        self.browser._maximo_workorder_start_mode = 'configured'
+        for status in ('APPR','INPRG'):
+            with self.subTest(status=status):
+                self.browser.get(FIXTURE)
+                self.browser.execute_script("""
+                    resetState({status:arguments[0]});
+                    // Maximo defines its own Event(type,targetId,value,requestType).
+                    window.Event=function Event(type,targetId,value,requestType){
+                      this.type=type;this.targetId=targetId;this.value=value;
+                    };
+                """,status)
+                with self.maximo_page_scripts():
+                    workflow.poll_browser_start(self.browser)
+                    button_id='maximo-desktop-change-anomalies' if status=='INPRG' else 'maximo-desktop-start-options'
+                    self.browser.find_element(By.ID,button_id).click()
+                    selects=self.browser.find_elements(By.CSS_SELECTOR,'#maximo-start-options-overlay select')
+                    self.assertEqual(len(selects),4)
+                    self.assertEqual([select.get_attribute('value') for select in selects],
+                                     [default['class_key'],*default['option_keys']])
+                    self.assertTrue(all(select.is_displayed() for select in selects))
+                    label='Guardar anomalías' if status=='INPRG' else 'Iniciar OT'
+                    confirm=self.browser.find_element(By.XPATH,
+                        f"//*[@id='maximo-start-options-overlay']//button[normalize-space()='{label}']")
+                    self.assertTrue(confirm.is_enabled())
+                    confirm.click()
+                    with patch.object(workflow,'start_workorder',return_value={'already_started':False,'status':'INPRG'}) as start, \
+                         patch.object(workflow,'change_workorder_anomalies') as change:
+                        workflow.poll_browser_start(self.browser)
+                    selected=change.call_args.args[2] if status=='INPRG' else start.call_args.kwargs['anomaly_selection']
+                    self.assertEqual(selected,default)
+                    self.assertEqual(self.browser.execute_script('return state.events'),[])
+
+    def test_incomplete_default_never_enables_apply_when_maximo_replaces_event(self):
+        self.browser._maximo_workorder_start_selection={'class_key':'TRANSPORTES|RFN-70','option_keys':[]}
+        self.browser.execute_script("resetState({status:'INPRG'});window.Event=function Event(type){this.type=type}")
+        with self.maximo_page_scripts():
+            workflow.poll_browser_start(self.browser)
+            self.browser.find_element(By.ID,'maximo-desktop-change-anomalies').click()
+            selects=self.browser.find_elements(By.CSS_SELECTOR,'#maximo-start-options-overlay select')
+            self.assertEqual(len(selects),2)
+            confirm=self.browser.find_element(By.XPATH,
+                "//*[@id='maximo-start-options-overlay']//button[normalize-space()='Guardar anomalías']")
+            self.assertFalse(confirm.is_enabled())
+
     def anomaly_selection(self, remedy='OTROS-04'):
         selection = workflow.default_selection()
         if remedy != 'OTROS-03':

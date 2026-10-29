@@ -2,6 +2,10 @@
 
 ## 1.1.0 — Inicio y cierre de OT desde Edge y anomalías configurables
 
+- Corregida la carga inicial de los desplegables de anomalías en Maximo,
+  que sustituye el constructor JavaScript Event. La combinación predeterminada
+  aparece completa sin cambiar antes de clase; confirmar permanece deshabilitado
+  hasta disponer de una selección válida.
 - Corregido el bloqueo al intentar Guardar desde un menú deshabilitado tras
   seleccionar anomalías. Si Maximo ya las ha guardado, se confirma su persistencia
   recargando la ficha antes de continuar, sin esperar una respuesta de un botón
