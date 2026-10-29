@@ -109,7 +109,7 @@ excluidos del control de versiones.
 ### Inicio opcional de OT
 
 En **Configuración → Extensión de Edge → Órdenes de trabajo**, activa
-**Mostrar «Iniciar OT» en Edge** y guarda los cambios. Está desactivado por defecto.
+**Mostrar «Iniciar OT» y «Cambiar anomalías» en Edge** y guarda los cambios. Está desactivado por defecto.
 «Abrir OT» y los enlaces del listado siguen abriendo la ficha sin iniciarla.
 
 Al habilitarlo aparece un botón en las nuevas ventanas de Maximo abiertas desde
@@ -129,6 +129,14 @@ Las instalaciones anteriores conservan `RFN-70 → OTROS-01 → OTROS-02 → OTR
 como predeterminado. **Elegir anomalías…** junto al botón de Edge permite escoger
 otra combinación, o solo iniciar, para esa ejecución; no cambia la configuración
 de MD. Cancelar el diálogo no modifica la OT.
+
+La misma opción **Mostrar «Iniciar OT» y «Cambiar anomalías» en Edge** habilita
+**Cambiar anomalías** cuando la OT ya está en `INPRG`. Abre el selector condicional
+y permite confirmar con **Guardar anomalías**. La aplicación usa los controles
+nativos, guarda y verifica la combinación y vuelve a la pestaña de origen.
+Esta acción no enruta, inicia ni cierra la OT, ni cambia los predeterminados de MD.
+Solo actúa mientras la ficha siga correspondiendo a la misma OT en `INPRG`.
+La revisión del cierre y el cambio de anomalías se bloquean entre sí.
 
 El flujo solo inicia OT en `APPR`. En modo configurado usa la clase y
 **Seleccionar códigos de anomalía** de Maximo. Si cambia una jerarquía existente,

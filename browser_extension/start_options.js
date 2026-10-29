@@ -30,7 +30,7 @@
       return true;
     });
     const state = {catalog, defaultSelection, configuredMode,
-      request: "", busy: false, modal: null};
+      request: "", busy: false, modal: null, buttonId: "maximo-desktop-start-ot"};
     state.modeValid=["only","configured"].includes(configuredMode);
     const buttonStyle = {zIndex:"2147483647",padding:"8px 12px",maxWidth:"190px",overflow:"hidden",
       textOverflow:"ellipsis",
@@ -46,25 +46,32 @@
       return button;
     }
     function setButtonMessage(message) {
-      const button = document.getElementById("maximo-desktop-start-ot");
+      const button = document.getElementById(state.buttonId);
       if (button) { button.textContent = message; button.title = message; }
     }
-    function capture(mode, selection, opened = null) {
+    function capture(mode, selection, opened = null, action = "start") {
       const now = current();
-      if (!/^\d{1,20}$/.test(now.ot) || now.status !== "APPR") {
-        if (opened) showModalError("Iniciar OT solo está disponible en una OT APPR.");
-        else setButtonMessage("Iniciar OT solo está disponible en una OT APPR");
+      const changing=action==="change_anomalies", expectedStatus=changing?"INPRG":"APPR";
+      if (!/^\d{1,20}$/.test(now.ot) || now.status !== expectedStatus) {
+        const message=changing?"Cambiar anomalías solo está disponible en una OT INPRG.":"Iniciar OT solo está disponible en una OT APPR.";
+        if (opened) showModalError(message);
+        else setButtonMessage(message);
         setTimeout(() => refresh(), 4000); return;
       }
       if (opened && (opened.ot !== now.ot || opened.status !== now.status)) {
         showModalError("La OT o su estado cambiaron. Cierra esta ventana y vuelve a abrir la selección.");
         return;
       }
-      state.request = JSON.stringify({ot:now.ot, returnTab:activeTab(), mode, selection});
+      if(document.getElementById("maximo-desktop-close-ot")?.dataset.busy==="true") {
+        showModalError("Hay una revisión o acción de cierre en curso."); return;
+      }
+      state.request = JSON.stringify({ot:now.ot, returnTab:activeTab(), action, mode, selection});
       state.busy = true;
-      const main=document.getElementById("maximo-desktop-start-ot");
+      state.buttonId=changing?"maximo-desktop-change-anomalies":"maximo-desktop-start-ot";
+      if(changing)document.documentElement.dataset.maximoAnomalyChangeBusy="true";
+      const main=document.getElementById(state.buttonId);
       if(main) main.dataset.busy="true";
-      setButtonMessage("Iniciando OT…");
+      setButtonMessage(changing?"Cambiando anomalías…":"Iniciando OT…");
       refresh();
     }
     function labelFor(element, text) {
@@ -76,21 +83,26 @@
       const node = document.getElementById("maximo-start-options-error");
       if (node) node.textContent = text;
     }
-    function openModal() {
+    function openModal(action = "start") {
       if (state.busy || state.modal) return;
       const opened = current();
-      if (!/^\d{1,20}$/.test(opened.ot) || opened.status !== "APPR") return;
+      const changing=action==="change_anomalies";
+      if (!/^\d{1,20}$/.test(opened.ot) || opened.status !== (changing?"INPRG":"APPR") ||
+          hasBlockingDialog() || document.getElementById("maximo-desktop-close-ot")?.dataset.busy==="true") return;
       const overlay = document.createElement("div"); overlay.id = "maximo-start-options-overlay";
       Object.assign(overlay.style, {position:"fixed",inset:"0",zIndex:"2147483647",background:"#10243b88",
         display:"grid",placeItems:"center",font:"14px Arial,sans-serif",color:"#173b60"});
       const panel = document.createElement("section");
+      panel.setAttribute("role","dialog");panel.setAttribute("aria-modal","true");
       Object.assign(panel.style, {width:"min(560px, calc(100vw - 32px))",maxHeight:"min(82vh, 720px)",
         overflow:"auto",boxSizing:"border-box",background:"#fff",border:"1px solid #bfd2e8",
         borderRadius:"12px",boxShadow:"0 16px 48px #0005",padding:"22px"});
       overlay.appendChild(panel);
-      const heading = document.createElement("h2"); heading.textContent = `Iniciar OT ${opened.ot}`;
+      const heading = document.createElement("h2"); heading.textContent = `${changing?"Cambiar anomalías · OT":"Iniciar OT"} ${opened.ot}`;
       heading.style.cssText = "margin:0 0 8px;font-size:20px;color:#153c65"; panel.appendChild(heading);
-      const intro = document.createElement("p"); intro.textContent = "Elige la configuración para esta OT. La selección manual solo se aplica a esta ejecución.";
+      const intro = document.createElement("p"); intro.textContent = changing?
+        "Elige la combinación que quieres guardar en esta OT. No cambia los valores predeterminados de MD.":
+        "Elige la configuración para esta OT. La selección manual solo se aplica a esta ejecución.";
       intro.style.cssText = "margin:0 0 16px;color:#526a83;line-height:1.4"; panel.appendChild(intro);
       const modeGroup = document.createElement("fieldset");
       modeGroup.style.cssText = "border:1px solid #cbd9e8;border-radius:8px;padding:12px 14px;margin:0 0 12px";
@@ -103,6 +115,7 @@
         label.append(radio,document.createTextNode(text));modeGroup.appendChild(label);
       }
       panel.appendChild(modeGroup);
+      modeGroup.hidden=changing;
       const selectionBox=document.createElement("div"); panel.appendChild(selectionBox);
       const error=document.createElement("div"); error.id="maximo-start-options-error";
       error.style.cssText="min-height:18px;color:#a52a1a;font-weight:600;margin:10px 0"; panel.appendChild(error);
@@ -110,7 +123,7 @@
       summary.style.cssText="padding:10px;background:#f1f6fc;border-radius:6px;color:#365a7c;line-height:1.4"; panel.appendChild(summary);
       const buttons=document.createElement("div"); buttons.style.cssText="display:flex;justify-content:flex-end;gap:8px;margin-top:18px";
       const cancel=document.createElement("button"); cancel.type="button"; cancel.textContent="Cancelar";
-      const confirm=document.createElement("button"); confirm.type="button"; confirm.textContent="Iniciar OT";
+      const confirm=document.createElement("button"); confirm.type="button"; confirm.textContent=changing?"Guardar anomalías":"Iniciar OT";
       for (const button of [cancel,confirm]) Object.assign(button.style,{padding:"8px 14px",borderRadius:"6px",border:"1px solid #b7cbe1",background:button===confirm?"#1769c2":"#fff",color:button===confirm?"#fff":"#173b60",fontWeight:"600",cursor:"pointer"});
       buttons.append(cancel,confirm); panel.appendChild(buttons);
       const selection={classKey:"",optionKeys:[],complete:false,label:""};
@@ -181,7 +194,7 @@
         if(confirm.disabled)return;
         const mode=only.checked?"only":"configured";
         const spec=mode==="only"?null:{class_key:selection.classKey,option_keys:[...selection.optionKeys]};
-        capture(mode,spec,opened);
+        capture(mode,spec,opened,action);
         if(state.request){overlay.remove();state.modal=null;}
       });
       document.body.appendChild(overlay);state.modal=overlay;renderChoices();
@@ -197,22 +210,30 @@
         if(!state.modeValid){setButtonMessage("Revisa configuración de inicio en MD");return;}
         capture(state.configuredMode,state.configuredMode==="only"?null:defaultSelection);
       },group);
-      const choose=ensureButton("maximo-desktop-start-options", "Elegir anomalías…",openModal,group);
-      const usable=/^\d{1,20}$/.test(now.ot)&&now.status==="APPR"&&!hasBlockingDialog();
+      const choose=ensureButton("maximo-desktop-start-options", "Elegir anomalías…",()=>openModal(),group);
+      const change=ensureButton("maximo-desktop-change-anomalies", "Cambiar anomalías",()=>openModal("change_anomalies"),group);
+      const hasOt=/^\d{1,20}$/.test(now.ot), blocked=hasBlockingDialog();
+      const usable=hasOt&&now.status==="APPR"&&!blocked;
+      const canChange=hasOt&&now.status==="INPRG"&&!blocked;
       main.hidden=choose.hidden=!usable;
+      change.hidden=!canChange;
+      group.style.bottom=now.status==="INPRG"?"110px":"65px";
+      change.title="Elegir y guardar anomalías en la OT en progreso, sin enrutarla.";
       main.title=state.modeValid?(state.configuredMode==="only"?
         "Iniciar la OT conservando sus códigos de anomalía actuales.":"Aplicar la selección configurada e iniciar la OT."):
         "Revisa configuración de inicio en MD; puedes elegir una opción manual para esta OT.";
-      for(const button of [main,choose]) { button.disabled=!usable||state.busy||Boolean(state.modal)||(button===main&&!state.modeValid);
+      const closeBusy=document.getElementById("maximo-desktop-close-ot")?.dataset.busy==="true";
+      for(const button of [main,choose,change]) { button.disabled=!(button===change?canChange:usable)||state.busy||Boolean(state.modal)||closeBusy||(button===main&&!state.modeValid);
         button.style.opacity=button.disabled?"0.6":"1"; }
       if(!state.modeValid)main.textContent="Revisar inicio en MD";
       return state.request;
     }
     globalThis.MaximoDesktopStartOptions={version:VERSION,installed:true,refresh,poll(){const request=state.request;state.request="";refresh();return request;},
-      message(text){const main=document.getElementById("maximo-desktop-start-ot");
+      message(text){const main=document.getElementById(state.buttonId);
         if(main){main.textContent=String(text||"");main.title=String(text||"");}},
-      complete(message){state.busy=false;const main=document.getElementById("maximo-desktop-start-ot");
-        if(main){main.dataset.busy="false";setButtonMessage(message);setTimeout(()=>{if(main.isConnected){main.textContent="Iniciar OT";refresh();}},8000);}refresh();}};
+      complete(message){state.busy=false;delete document.documentElement.dataset.maximoAnomalyChangeBusy;
+        const main=document.getElementById(state.buttonId);
+        if(main){main.dataset.busy="false";setButtonMessage(message);setTimeout(()=>{if(main.isConnected){main.textContent=main.id==="maximo-desktop-change-anomalies"?"Cambiar anomalías":"Iniciar OT";refresh();}},8000);}refresh();}};
     refresh();
   }
 

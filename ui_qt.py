@@ -1182,7 +1182,7 @@ class MaximoDesktopWindow(QMainWindow):
         edge_extension_layout.addWidget(QLabel("Órdenes de trabajo", objectName="settingsSectionTitle"))
 
         start_form = QFormLayout()
-        self.workorder_start_check = QCheckBox("Mostrar «Iniciar OT» en Edge")
+        self.workorder_start_check = QCheckBox("Mostrar «Iniciar OT» y «Cambiar anomalías» en Edge")
         self.workorder_start_mode_combo = DecoratedComboBox()
         self.workorder_start_mode_combo.addItem("Elegir comportamiento…", None)
         self.workorder_start_mode_combo.addItem("Iniciar y establecer anomalías", "configured")
@@ -1193,7 +1193,8 @@ class MaximoDesktopWindow(QMainWindow):
             "Añade un botón «Iniciar OT» en las nuevas ventanas de Maximo abiertas desde MD. "
             "Elige si inicia conservando los datos actuales o establece la combinación predeterminada. "
             "En Edge también puedes elegir otra combinación para una OT concreta. "
-            "Se aplica a las nuevas ventanas de OT en estado APPR."
+            "En estado INPRG permite cambiar las anomalías sin iniciar ni cerrar la OT. "
+            "Se aplica a las nuevas ventanas de OT."
         )
         start_hint.setObjectName("filterHint")
         start_hint.setWordWrap(True)

@@ -45,7 +45,7 @@ def record_anomaly_incident(context, snapshots, error):
         identifier = uuid4().hex
         event = {"schema_version": 1, "id": identifier,
                  "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                 **_fields(context, ("ot", "mode", "stage")),
+                 **_fields(context, ("ot", "mode", "stage", "operation")),
                  "error": {"type": type(error).__name__, "message": _text(error, 700)}}
         requested = context.get("requested", {})
         event["requested"] = _fields(requested, ("class_key", "class_code", "organization"))

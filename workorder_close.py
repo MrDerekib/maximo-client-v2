@@ -374,7 +374,7 @@ BROWSER_BUTTON_SCRIPT = r"""
         padding:'9px 14px',border:'1px solid #1155a0',borderRadius:'6px',background:'#1769c2',
         color:'#fff',font:'600 13px Arial,sans-serif',boxShadow:'0 3px 12px #0004',cursor:'pointer'});
       button.addEventListener('click',event=>{
-        if (!event.isTrusted || button.disabled) return;
+        if (!event.isTrusted || button.disabled || document.documentElement.dataset.maximoAnomalyChangeBusy==='true') return;
         button.disabled=true; button.dataset.busy='true'; button.textContent='Revisando cierre…';
         const activeTab=[...document.querySelectorAll('a[role=tab]')]
           .find(e=>e.getClientRects().length&&e.getAttribute('aria-expanded')==='true');
@@ -387,7 +387,7 @@ BROWSER_BUTTON_SCRIPT = r"""
     if (button) {
       button.hidden=!/^\d{1,20}$/.test(ot||'') || status!=='INPRG';
       if (button.dataset.busy!=='true') {
-        button.disabled=visibleDialogs.length>0;
+        button.disabled=visibleDialogs.length>0 || document.documentElement.dataset.maximoAnomalyChangeBusy==='true';
         button.style.opacity=button.disabled?'0.6':'1';
         button.title='Revisar duración y fechas antes de confirmar el cierre de una OT en INPRG';
       }

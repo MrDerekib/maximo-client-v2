@@ -2,6 +2,10 @@
 
 ## 1.1.0 — Inicio y cierre de OT desde Edge y anomalías configurables
 
+- Nuevo botón «Cambiar anomalías» en las OT iniciadas (INPRG). Permite elegir,
+  guardar y verificar otra combinación sin enrutar la OT ni modificar los
+  predeterminados de MD. Comparte la activación con «Iniciar OT» y vuelve a la
+  pestaña de origen. El cambio y la revisión del cierre no se ejecutan a la vez.
 - «Elegir anomalías…» conserva y vuelve a mostrar los desplegables al alternar
   entre aplicar una combinación y solo iniciar. Una ruta incompleta sigue
   requiriendo completar sus opciones antes de iniciar con anomalías.

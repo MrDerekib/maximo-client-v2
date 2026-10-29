@@ -24,6 +24,21 @@ from tests.test_support import temporary_directory
 
 
 class StartConfigurationTests(TestCase):
+    def test_invalid_change_requests_never_fall_back_to_starting(self):
+        for action,mode,selection in (('change_anomalies','only',None),
+                                      ('change_anomalies','configured',None),
+                                      ('unknown','configured',{})):
+            driver = Mock()
+            request = json.dumps({'ot':'4314531','action':action,'mode':mode,'selection':selection})
+            driver.execute_script.side_effect = [True,None,True,request,None]
+            with self.subTest(action=action,mode=mode), \
+                 patch.object(workflow,'_start_options_source',return_value='/*fixture*/'), \
+                 patch.object(workflow,'start_workorder') as start, \
+                 patch.object(workflow,'change_workorder_anomalies') as change:
+                self.assertIsNone(workflow.poll_browser_start(driver))
+            start.assert_not_called()
+            change.assert_not_called()
+
     def test_explicit_invalid_start_mode_is_rejected_before_any_navigation(self):
         starter = workflow.WorkorderStarter(Mock(current_url='https://eam.indraweb.net/maximo/ui'), '4314531')
         starter.check_location = Mock()
@@ -172,6 +187,10 @@ class FixtureStarter(workflow.WorkorderStarter):
         # This suite only drives the committed local HTML fixture, never Maximo.
         if self.driver.current_url != FIXTURE:
             raise AssertionError('Browser test left the local fixture')
+
+
+class FixtureAnomalyChanger(workflow.WorkorderAnomalyChanger, FixtureStarter):
+    pass
 
 
 @skipUnless(os.environ.get('MAXIMO_BROWSER_TESTS') == '1', 'Set MAXIMO_BROWSER_TESTS=1 for offline Edge tests')
@@ -621,3 +640,132 @@ class BrowserStartTests(TestCase):
             self.browser.find_element(By.XPATH,
                 "//*[@id='maximo-start-options-overlay']//button[normalize-space()='Cancelar']").click()
         self.assertEqual(self.browser.execute_script('return state.events'), [])
+
+    def anomaly_selection(self, remedy='OTROS-04'):
+        selection = workflow.default_selection()
+        if remedy != 'OTROS-03':
+            from failure_catalog import choices
+            selection['option_keys'][-1] = next(item['key'] for item in choices(
+                selection['class_key'], selection['option_keys'][:-1]) if item['code'] == remedy)
+        return selection
+
+    def test_change_anomalies_saves_the_path_without_routing_or_changing_status(self):
+        self.browser.execute_script("resetState({status:'INPRG'});render('solutions')")
+        changer = FixtureAnomalyChanger(self.browser, '4314531', timeout=5)
+        with patch.object(changer, 'route', side_effect=AssertionError('must not route')):
+            result = changer.run_change(self.anomaly_selection(), return_tab='Soluciones')
+        state = self.browser.execute_script('return state')
+        self.assertEqual(result, {'ot':'4314531', 'status':'INPRG', 'action':'change_anomalies'})
+        self.assertEqual((state['faultclass'],state['problem'],state['cause'],state['remedy']),
+                         ('RFN-70','OTROS-01','OTROS-02','OTROS-04'))
+        self.assertFalse(state['dirty'])
+        self.assertEqual(state['routes'], 0)
+        self.assertNotIn(['start'], state['events'])
+        self.assertEqual(self.browser.execute_script('return tab'), 'solutions')
+
+    def test_change_anomalies_keeps_an_already_correct_combination(self):
+        self.browser.execute_script("resetState({status:'INPRG',faultclass:'RFN-70',problem:'OTROS-01',cause:'OTROS-02',remedy:'OTROS-03'})")
+        FixtureAnomalyChanger(self.browser, '4314531', timeout=5).run_change(workflow.default_selection())
+        self.assertEqual(self.browser.execute_script('return state.events'), [])
+        self.assertEqual(self.browser.execute_script('return state.status'), 'INPRG')
+
+    def test_change_anomalies_rejects_ineligible_status_and_invalid_selection_before_writes(self):
+        for status in ('APPR', 'ISSUE', 'CLOSE', 'CAN'):
+            self.browser.execute_script('resetState({status:arguments[0]})', status)
+            with self.subTest(status=status), self.assertRaisesRegex(RuntimeError, 'INPRG'):
+                FixtureAnomalyChanger(self.browser, '4314531', timeout=1).run_change(workflow.default_selection())
+            self.assertEqual(self.browser.execute_script('return state.events'), [])
+        self.browser.execute_script("resetState({status:'INPRG'})")
+        for spec in ({}, None):
+            with self.subTest(spec=spec), self.assertRaises(ValueError):
+                FixtureAnomalyChanger(self.browser, '4314531', timeout=1).run_change(spec)
+            self.assertEqual(self.browser.execute_script('return state.events'), [])
+
+    def test_change_anomalies_stops_if_status_changes_during_save(self):
+        self.browser.execute_script("resetState({status:'INPRG'})")
+        changer = FixtureAnomalyChanger(self.browser, '4314531', timeout=2)
+        original_save = changer.save
+        def changed_status():
+            result = original_save()
+            self.browser.execute_script("state.status='ISSUE';render(tab)")
+            return result
+        with patch.object(changer, 'save', side_effect=changed_status), self.assertRaisesRegex(RuntimeError, 'INPRG'):
+            changer.run_change(self.anomaly_selection())
+        state = self.browser.execute_script('return state')
+        self.assertEqual(state['routes'], 0)
+        self.assertFalse(any(event[0] == 'native-click' for event in state['events']))
+
+    def test_failed_anomaly_change_keeps_diagnostic_evidence_and_never_routes(self):
+        self.browser.execute_script("resetState({status:'INPRG',faultclass:'RFN-70',forceNativeError:true})")
+        changer = FixtureAnomalyChanger(self.browser, '4314531', timeout=2)
+        with patch.object(workflow,'WorkorderAnomalyChanger',return_value=changer), \
+             patch.object(workflow,'record_anomaly_incident') as record:
+            with self.assertRaisesRegex(RuntimeError,'BMXAA4523E'):
+                workflow.change_workorder_anomalies(self.browser,'4314531',self.anomaly_selection())
+        self.assertEqual(record.call_args.args[0]['operation'], 'cambio de anomalías')
+        self.assertTrue(record.call_args.args[1])
+        self.assertEqual(self.browser.execute_script('return state.routes'), 0)
+
+    def test_change_anomalies_button_is_visible_only_for_in_progress_workorders(self):
+        with self.maximo_page_scripts():
+            for status in ('APPR','INPRG','ISSUE','CLOSE'):
+                self.browser.execute_script('resetState({status:arguments[0]})', status)
+                workflow.poll_browser_start(self.browser)
+                self.assertEqual(self.browser.find_element(By.ID,'maximo-desktop-change-anomalies').is_displayed(), status=='INPRG')
+                self.assertEqual(self.browser.find_element(By.ID,'maximo-desktop-start-ot').is_displayed(), status=='APPR')
+
+    def test_change_dialog_cancel_is_read_only_and_confirm_uses_change_action(self):
+        default = self.anomaly_selection()
+        self.browser._maximo_workorder_start_selection = default.copy()
+        self.browser._maximo_workorder_start_mode = 'only'
+        self.browser.execute_script("resetState({status:'INPRG'})")
+        with self.maximo_page_scripts():
+            workflow.poll_browser_start(self.browser)
+            self.browser.find_element(By.ID, 'maximo-desktop-change-anomalies').click()
+            self.assertFalse(self.browser.find_element(By.CSS_SELECTOR, 'input[value="only"]').is_displayed())
+            self.browser.find_element(By.XPATH, "//*[@id='maximo-start-options-overlay']//button[normalize-space()='Cancelar']").click()
+            self.assertIsNone(workflow.poll_browser_start(self.browser))
+            self.assertEqual(self.browser.execute_script('return state.events'), [])
+            self.browser.find_element(By.ID, 'maximo-desktop-change-anomalies').click()
+            self.browser.find_element(By.XPATH, "//*[@id='maximo-start-options-overlay']//button[normalize-space()='Guardar anomalías']").click()
+            with patch.object(workflow, 'change_workorder_anomalies', return_value={'action':'change_anomalies'}) as change, \
+                 patch.object(workflow, 'start_workorder') as start:
+                self.assertIsNone(workflow.poll_browser_start(self.browser))
+            start.assert_not_called()
+            self.assertEqual(change.call_args.args[2], default)
+            self.assertEqual(self.browser._maximo_workorder_start_selection, default)
+            self.assertNotEqual(self.browser.execute_script('return document.documentElement.dataset.maximoAnomalyChangeBusy'), 'true')
+
+    def test_change_dialog_rejects_a_status_change_before_confirmation(self):
+        self.browser.execute_script("resetState({status:'INPRG'})")
+        self.browser._maximo_workorder_start_selection = workflow.default_selection()
+        with self.maximo_page_scripts():
+            workflow.poll_browser_start(self.browser)
+            self.browser.find_element(By.ID, 'maximo-desktop-change-anomalies').click()
+            self.browser.execute_script("state.status='ISSUE';document.querySelectorAll('label[for]').forEach(l=>{if(l.textContent.trim()==='Estado:')document.getElementById(l.htmlFor).value='ISSUE'})")
+            self.browser.find_element(By.XPATH, "//*[@id='maximo-start-options-overlay']//button[normalize-space()='Guardar anomalías']").click()
+            self.assertIn('INPRG', self.browser.find_element(By.ID, 'maximo-start-options-error').text)
+            with patch.object(workflow,'change_workorder_anomalies') as change:
+                self.assertIsNone(workflow.poll_browser_start(self.browser))
+            change.assert_not_called()
+        self.assertEqual(self.browser.execute_script('return state.events'), [])
+
+    def test_change_and_close_actions_cannot_be_started_together(self):
+        from workorder_close import BROWSER_BUTTON_SCRIPT
+        close_script = BROWSER_BUTTON_SCRIPT.replace(
+            "if (location.origin !== 'https://eam.indraweb.net' || !location.pathname.startsWith('/maximo/ui')) return null;", '')
+        self.browser.execute_script("resetState({status:'INPRG'})")
+        self.browser._maximo_workorder_start_selection = workflow.default_selection()
+        with self.maximo_page_scripts():
+            workflow.poll_browser_start(self.browser)
+            self.browser.execute_script(close_script)
+            close = self.browser.find_element(By.ID, 'maximo-desktop-close-ot')
+            self.browser.find_element(By.ID, 'maximo-desktop-change-anomalies').click()
+            self.browser.execute_script(close_script)
+            self.assertFalse(close.is_enabled())
+            self.browser.find_element(By.XPATH, "//*[@id='maximo-start-options-overlay']//button[normalize-space()='Guardar anomalías']").click()
+            self.browser.execute_script(close_script)
+            self.assertFalse(close.is_enabled())
+            self.browser.execute_script("globalThis.MaximoDesktopStartOptions.complete('guardado');arguments[0].dataset.busy='true'", close)
+            workflow.poll_browser_start(self.browser)
+            self.assertFalse(self.browser.find_element(By.ID, 'maximo-desktop-change-anomalies').is_enabled())

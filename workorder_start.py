@@ -78,6 +78,7 @@ class WorkorderStarter:
         self.anomaly_diagnostic_context = {
             "ot": self.ot,
             "mode": mode,
+            "operation": self.operation,
             "stage": "selection_validation",
             "requested": requested,
             "expected": {},
@@ -185,8 +186,9 @@ class WorkorderStarter:
     def check_startable(self):
         self.check_ot()
         status=self.wait(lambda d:self.value("Estado"),"estado de la OT")
-        if status!="APPR":
-            raise RuntimeError(f"La OT {self.ot} ya no está en APPR (estado actual: {status}); no se seguirá iniciando.")
+        if status != self.active_status:
+            raise RuntimeError(f"La OT {self.ot} ya no está en {self.active_status} (estado actual: {status}); "
+                               f"se detuvo el {self.operation}.")
 
     def dialogs(self):
         return self.driver.execute_script(VISIBLE_DIALOGS_SCRIPT + "return visibleDialogs;")
@@ -289,7 +291,7 @@ class WorkorderStarter:
             if not saved:
                 raise RuntimeError("Maximo respondió, pero no confirmó que la OT se haya guardado.")
             return True
-        raise RuntimeError("Maximo repitió el aviso de guardado; se detuvo el inicio de la OT.")
+        raise RuntimeError(f"Maximo repitió el aviso de guardado; se detuvo el {self.operation} de la OT.")
 
     def start_choice(self, dialog):
         """Match radio captions through labels, ARIA or a single-radio container."""
@@ -717,7 +719,7 @@ class WorkorderStarter:
             wanted = expected.get(kind, "")
             if actual != wanted:
                 label = wanted or "vacío"
-                raise RuntimeError(f"Maximo no confirmó {label} ({kind}); no se iniciará la OT.")
+                raise RuntimeError(f"Maximo no confirmó {label} ({kind}); se detuvo el {self.operation} de la OT.")
 
     def verify_failure_rows(self, path):
         self.set_anomaly_diagnostic_stage("verify_saved_hierarchy")
@@ -728,10 +730,10 @@ class WorkorderStarter:
         rows=snapshot["rows"]
         pending = [row for row in rows if "deshacer suprimir" in normalized(row.get("toggleTitle"))]
         if pending:
-            raise RuntimeError("Maximo conserva filas marcadas para suprimir tras guardar; no se iniciará la OT.")
+            raise RuntimeError(f"Maximo conserva filas marcadas para suprimir tras guardar; se detuvo el {self.operation} de la OT.")
         actual=sorted((row["type"],row["code"]) for row in rows)
         if actual!=expected:
-            raise RuntimeError("Las filas de anomalía guardadas no coinciden exactamente con la ruta elegida; no se iniciará la OT.")
+            raise RuntimeError(f"Las filas de anomalía guardadas no coinciden exactamente con la ruta elegida; se detuvo el {self.operation} de la OT.")
         self.tab("Soluciones")
 
     def route(self):
@@ -801,6 +803,72 @@ class WorkorderStarter:
         if url.scheme != "https" or url.hostname != "eam.indraweb.net" or not url.path.startswith("/maximo/ui"):
             raise RuntimeError("La acción de OT solo está disponible en la ficha de Maximo.")
 
+    def apply_anomalies(self, selection=None):
+        """Apply and verify a complete path, without any workflow routing."""
+        spec = selection if selection is not None else default_selection()
+        self.begin_anomaly_diagnostics("configured", spec)
+        resolved = resolve_selection(spec)
+        self.anomaly_diagnostic_context["requested"].update(resolved)
+        self.set_anomaly_diagnostic_stage("inspect_existing_hierarchy")
+        self.anomaly_path = resolved["path"]
+        self.tab("Informes de anomalías")
+        current_class = (self.value("Clase de anomalía") or "").strip()
+        rows_snapshot=self.wait(lambda d:(rows:=self.failure_rows()) is not None and {"rows":rows} or False,
+                                "tabla de códigos de anomalía")
+        active_rows=[row for row in rows_snapshot["rows"]
+                     if "deshacer suprimir" not in normalized(row.get("toggleTitle"))]
+        pending_suppressions=[row for row in rows_snapshot["rows"]
+                              if "deshacer suprimir" in normalized(row.get("toggleTitle"))]
+        self.tab("Soluciones")
+        current = self.solution_codes()
+        expected = {item["type"]: item["code"] for item in resolved["path"]}
+        current_values = {kind: (current.get(kind) or "").strip()
+                          for kind in ("PROBLEM", "CAUSE", "REMEDY")}
+        rows_match=sorted((row["type"],row["code"]) for row in active_rows)==sorted(
+            (item["type"],item["code"]) for item in resolved["path"])
+        matches = (current_class == resolved["class_code"] and all(
+            current_values[kind] == expected.get(kind, "")
+            for kind in ("PROBLEM", "CAUSE", "REMEDY")) and rows_match)
+        if not matches:
+            prefix_len = 0
+            if current_class == resolved["class_code"]:
+                for item in resolved["path"]:
+                    if current_values[item["type"]] != item["code"]:
+                        break
+                    prefix_len += 1
+                allowed_prefix = {item["type"] for item in resolved["path"][:prefix_len]}
+                if any(value and kind not in allowed_prefix for kind, value in current_values.items()):
+                    prefix_len = 0
+                expected_prefix=sorted((item["type"],item["code"])
+                                       for item in resolved["path"][:prefix_len])
+                actual_prefix=sorted((row["type"],row["code"]) for row in active_rows)
+                if actual_prefix!=expected_prefix:
+                    prefix_len=0
+            if (any(current_values.values()) or rows_snapshot["rows"]) and prefix_len == 0:
+                self.suppress_failure_rows()
+            if current_class != resolved["class_code"]:
+                self.tab("Informes de anomalías")
+                class_changed=self.select_failure_class(resolved["class_code"],resolved["organization"])
+                if class_changed:
+                    self.set_anomaly_diagnostic_stage("save_class")
+                    if not self.save():
+                        raise RuntimeError("Maximo no confirmó el guardado de la clase de anomalía.")
+            self.tab("Informes de anomalías")
+            self.select_failure_codes(path=resolved["path"][prefix_len:])
+            self.set_anomaly_diagnostic_stage("save_codes")
+            if not self.save():
+                raise RuntimeError("Maximo no confirmó el guardado de los códigos de anomalía.")
+            self.verify_failure_rows(resolved["path"])
+            self.verify_solution_codes(resolved["path"])
+        else:
+            if pending_suppressions:
+                self.set_anomaly_diagnostic_stage("save_pending_suppressions")
+                if not self.save():
+                    raise RuntimeError("Maximo no confirmó el guardado de las filas marcadas para suprimir.")
+                self.verify_failure_rows(resolved["path"])
+            self.progress(f"OT {self.ot}: los códigos elegidos ya están aplicados; no se modificarán.")
+        return resolved
+
     def run(self, return_tab=None, anomaly_mode="configured", anomaly_selection=None):
         self.check_location()
         self.wait(lambda d: self.value("Orden de trabajo") == self.ot and self.value("Estado"), "carga de la OT")
@@ -823,68 +891,7 @@ class WorkorderStarter:
         # Validate the complete selection before the first write/navigation.
         resolved = None
         if mode == "configured":
-            spec = anomaly_selection if anomaly_selection is not None else default_selection()
-            self.begin_anomaly_diagnostics(mode, spec)
-            resolved = resolve_selection(spec)
-            self.anomaly_diagnostic_context["requested"].update(resolved)
-            self.set_anomaly_diagnostic_stage("inspect_existing_hierarchy")
-            self.anomaly_path = resolved["path"]
-            self.tab("Informes de anomalías")
-            current_class = (self.value("Clase de anomalía") or "").strip()
-            rows_snapshot=self.wait(lambda d:(rows:=self.failure_rows()) is not None and {"rows":rows} or False,
-                                    "tabla de códigos de anomalía")
-            active_rows=[row for row in rows_snapshot["rows"]
-                         if "deshacer suprimir" not in normalized(row.get("toggleTitle"))]
-            pending_suppressions=[row for row in rows_snapshot["rows"]
-                                  if "deshacer suprimir" in normalized(row.get("toggleTitle"))]
-            self.tab("Soluciones")
-            current = self.solution_codes()
-            expected = {item["type"]: item["code"] for item in resolved["path"]}
-            current_values = {kind: (current.get(kind) or "").strip()
-                              for kind in ("PROBLEM", "CAUSE", "REMEDY")}
-            rows_match=sorted((row["type"],row["code"]) for row in active_rows)==sorted(
-                (item["type"],item["code"]) for item in resolved["path"])
-            matches = (current_class == resolved["class_code"] and all(
-                current_values[kind] == expected.get(kind, "")
-                for kind in ("PROBLEM", "CAUSE", "REMEDY")) and rows_match)
-            if not matches:
-                prefix_len = 0
-                if current_class == resolved["class_code"]:
-                    for item in resolved["path"]:
-                        if current_values[item["type"]] != item["code"]:
-                            break
-                        prefix_len += 1
-                    allowed_prefix = {item["type"] for item in resolved["path"][:prefix_len]}
-                    if any(value and kind not in allowed_prefix for kind, value in current_values.items()):
-                        prefix_len = 0
-                    expected_prefix=sorted((item["type"],item["code"])
-                                           for item in resolved["path"][:prefix_len])
-                    actual_prefix=sorted((row["type"],row["code"]) for row in active_rows)
-                    if actual_prefix!=expected_prefix:
-                        prefix_len=0
-                if (any(current_values.values()) or rows_snapshot["rows"]) and prefix_len == 0:
-                    self.suppress_failure_rows()
-                if current_class != resolved["class_code"]:
-                    self.tab("Informes de anomalías")
-                    class_changed=self.select_failure_class(resolved["class_code"],resolved["organization"])
-                    if class_changed:
-                        self.set_anomaly_diagnostic_stage("save_class")
-                        if not self.save():
-                            raise RuntimeError("Maximo no confirmó el guardado de la clase de anomalía.")
-                self.tab("Informes de anomalías")
-                self.select_failure_codes(path=resolved["path"][prefix_len:])
-                self.set_anomaly_diagnostic_stage("save_codes")
-                if not self.save():
-                    raise RuntimeError("Maximo no confirmó el guardado de los códigos de anomalía.")
-                self.verify_failure_rows(resolved["path"])
-                self.verify_solution_codes(resolved["path"])
-            else:
-                if pending_suppressions:
-                    self.set_anomaly_diagnostic_stage("save_pending_suppressions")
-                    if not self.save():
-                        raise RuntimeError("Maximo no confirmó el guardado de las filas marcadas para suprimir.")
-                    self.verify_failure_rows(resolved["path"])
-                self.progress(f"OT {self.ot}: los códigos elegidos ya están aplicados; no se modificarán.")
+            resolved = self.apply_anomalies(anomaly_selection)
         else:
             # Deliberately do not inspect or edit fault class/solution fields.
             self.progress(f"OT {self.ot}: se iniciará conservando los códigos de anomalía existentes.")
@@ -900,6 +907,46 @@ class WorkorderStarter:
             self.set_anomaly_diagnostic_stage("restore_tab")
             self.tab(return_tab)
         return {"ot": self.ot, "status": "INPRG", "already_started": False}
+
+
+class WorkorderAnomalyChanger(WorkorderStarter):
+    """Save anomaly changes on an already started OT, without routing it."""
+    active_status = "INPRG"
+    operation = "cambio de anomalías"
+
+    def run_change(self, selection, return_tab=None):
+        self.check_location()
+        self.wait(lambda d: self.value("Orden de trabajo") == self.ot and self.value("Estado"), "carga de la OT")
+        self.check_startable()
+        self.reject_dialogs()
+        if selection is None:
+            raise ValueError("Elige una combinación de anomalías completa.")
+        resolved = self.apply_anomalies(selection)
+        self.check_startable()
+        if return_tab:
+            self.set_anomaly_diagnostic_stage("restore_tab")
+            self.tab(return_tab)
+        self.check_startable()
+        logging.info("OT %s: anomalías guardadas y verificadas sin enrutar: %s / %s", self.ot,
+                     resolved["class_code"], " / ".join(item["code"] for item in resolved["path"]))
+        return {"ot": self.ot, "status": "INPRG", "action": "change_anomalies"}
+
+
+def change_workorder_anomalies(driver, ot, selection, progress=None, return_tab=None):
+    changer = WorkorderAnomalyChanger(driver, ot, progress)
+    try:
+        return changer.run_change(selection, return_tab=return_tab)
+    except Exception as exc:
+        changer.record_anomaly_failure(exc)
+        if return_tab:
+            try:
+                changer.tab(return_tab)
+            except Exception:
+                logging.info("No se pudo restaurar la pestaña tras el cambio de anomalías de la OT %s", ot)
+        if isinstance(exc, WebDriverException):
+            logging.exception("Falló el navegador al cambiar las anomalías de la OT %s", ot)
+            raise RuntimeError(browser_error_message(exc)) from exc
+        raise
 
 
 def start_workorder(driver, ot, progress=None, return_tab=None, anomaly_mode="configured", anomaly_selection=None):
@@ -972,13 +1019,15 @@ def poll_browser_start(driver):
         anomaly_mode = request.get("mode")
         anomaly_selection = request.get("selection")
         has_selection = "selection" in request
+        action = request.get("action", "start")
     except (TypeError, ValueError, AttributeError):
         logging.warning("Se descartó una solicitud mal formada para iniciar una OT")
         driver.execute_script("globalThis.MaximoDesktopStartOptions?.complete('No se pudo leer la solicitud de inicio.');")
         return None
     normalized_mode = anomaly_mode.strip().lower() if isinstance(anomaly_mode, str) else None
-    if (not ot or not isinstance(anomaly_mode, str) or
+    if (not ot or action not in ("start", "change_anomalies") or not isinstance(anomaly_mode, str) or
             normalized_mode not in {"configured", "only"} or
+            (action == "change_anomalies" and normalized_mode != "configured") or
             (normalized_mode == "configured" and (not has_selection or anomaly_selection is None))):
         driver.execute_script("globalThis.MaximoDesktopStartOptions?.complete('Solicitud de inicio no válida.');")
         return None
@@ -990,13 +1039,21 @@ def poll_browser_start(driver):
         """, message)
 
     try:
+        if action == "change_anomalies":
+            change_workorder_anomalies(driver, ot, anomaly_selection, report, return_tab=return_tab)
+            driver.execute_script("globalThis.MaximoDesktopStartOptions?.complete(arguments[0]);",
+                                  f"OT {ot}: anomalías guardadas")
+            # The watcher callback applies a started status locally; a change
+            # of anomaly codes must never be reported as a new start action.
+            return None
         result = start_workorder(driver, ot, report, return_tab=return_tab,
                                  anomaly_mode=anomaly_mode, anomaly_selection=anomaly_selection)
         driver.execute_script("globalThis.MaximoDesktopStartOptions?.complete(arguments[0]);",
                               f"OT {ot} ya iniciada" if result["already_started"] else f"OT {ot} iniciada")
         return result
     except Exception as exc:
-        logging.exception("No se pudo iniciar la OT %s desde el navegador", ot)
+        failure_label = "cambiar anomalías" if action == "change_anomalies" else "iniciar"
+        logging.exception("No se pudo %s la OT %s desde el navegador", failure_label, ot)
         driver.execute_script("globalThis.MaximoDesktopStartOptions?.complete(arguments[0]);",
-                              f"No se pudo iniciar: {browser_error_message(exc)}")
+                              f"No se pudo {failure_label}: {browser_error_message(exc)}")
         return None
