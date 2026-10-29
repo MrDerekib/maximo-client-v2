@@ -1,6 +1,6 @@
 # Historial de cambios
 
-## Pendiente de publicación
+## 1.1.0 — Inicio y cierre de OT desde Edge y anomalías configurables
 
 - El inicio de OT permite conservar las anomalías actuales o aplicar una
   combinación predeterminada mediante listas condicionales en Configuración.
@@ -66,16 +66,17 @@
   conservan en el log; el botón muestra un mensaje breve.
 
 - El inicio de OT usa «Seleccionar códigos de anomalía» en Informes de anomalías:
-  pulsa OTROS-01, OTROS-02 y OTROS-03, esperando el avance y el cierre automático
+  aplica la ruta elegida, esperando el avance de cada nivel y el cierre automático
   del diálogo. Soluciones se utiliza para verificar los valores, sin modificar
   sus tres campos mediante lupas. Los cambios se guardan tras configurar la
   clase y después de completar el selector; los errores se comunican sin timeout.
 - La opción «Iniciar orden» también se identifica cuando Maximo relaciona el
   botón de selección con su texto mediante ARIA o la fila contenedora.
 
-- Nuevo inicio opcional de OT con el flujo RFN-70 en Edge. Establece RFN-70
-  aunque falte o haya otra clase, selecciona OTROS-01/02/03 mediante el selector
-  nativo e inicia la orden. El progreso se muestra en el botón del navegador.
+- Nuevo inicio opcional de OT en Edge. La combinación predeterminada inicial
+  es RFN-70 / OTROS-01/02/03, modificable desde Configuración. El modo configurado
+  utiliza los selectores nativos para aplicar la ruta elegida antes de iniciar
+  la orden. El progreso se muestra en el botón del navegador.
 - El inicio comprueba el estado real: solo actúa sobre APPR, no vuelve a enrutar
   una OT ya iniciada y se detiene ante avisos desconocidos. Verifica el resultado
   guardado antes de actualizar el seguimiento local.
