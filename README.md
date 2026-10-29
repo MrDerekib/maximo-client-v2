@@ -157,6 +157,11 @@ Después de cambiar la clase y tras completar el selector se
 guardan los cambios. La automatización no modifica los campos de
 Soluciones mediante sus lupas. El guardado espera la respuesta del servidor y su
 confirmación; también contempla el aviso de problema ya informado en ese paso.
+Los controles deshabilitados se detectan también en el contenedor del menú.
+Si Guardar está deshabilitado, se recarga la ficha únicamente para comprobar
+que la clase, las filas y los códigos de Soluciones esperados se conservan.
+Solo entonces se continúa; los datos que desaparezcan o no coincidan detienen
+la operación. Si no se localiza ningún control Guardar, no se asume un guardado.
 
 Si la primera pulsación de Enrutar no abre el diálogo, se comprueba de nuevo
 el estado y se reintenta, con un máximo de tres pulsaciones. Los controles que

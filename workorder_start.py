@@ -55,6 +55,7 @@ class WorkorderStarter:
         self.anomaly_diagnostic_snapshots = []
         self._anomaly_diagnostic_snapshot_keys = set()
         self._anomaly_diagnostic_recorded = False
+        self._save_unavailable = None
 
     @staticmethod
     def _diagnostic_text(value, limit=180):
@@ -238,36 +239,49 @@ class WorkorderStarter:
             return window.__maximoDesktopResponses.sequence;
         """)
 
+    def save_action_state(self):
+        """Read native action availability, including Maximo's disabled menu LI."""
+        def enabled(element):
+            return self.driver.execute_script("""
+                const element=arguments[0];
+                if(!element || !element.getClientRects().length)return false;
+                const disabled=node=>node.hasAttribute('disabled') || node.getAttribute('aria-disabled')==='true';
+                for(let node=element;node;node=node.parentElement){
+                  if(disabled(node))return false;
+                  const style=getComputedStyle(node);
+                  if(style.display==='none'||['hidden','collapse'].includes(style.visibility)||
+                    Number(style.opacity)===0||style.pointerEvents==='none')return false;
+                }
+                return ![...element.querySelectorAll('span[id$="_tnode"],img')].some(disabled);
+            """, element)
+
+        toolbar = [e for e in self.driver.find_elements(By.ID, "toolactions_SAVE-tbb_anchor") if e.is_displayed()]
+        for action in toolbar:
+            if enabled(action):
+                return {"control": action, "unavailable": None}
+        common = [e for e in self.driver.find_elements(By.CSS_SELECTOR, "a,button,[role=menuitem],span")
+                  if e.is_displayed() and normalized(e.text) == "guardar orden de trabajo"]
+        active = [e for e in common if enabled(e)]
+        anchors = [e for e in active if e.tag_name == "a"]
+        active = anchors or active
+        if len(active) == 1:
+            return {"control": active[0], "unavailable": None}
+        if active:
+            raise RuntimeError("Hay varias acciones Guardar activas; no se enviará un guardado ambiguo.")
+        return {"control": None, "unavailable": "disabled" if toolbar or common else "missing"}
+
     def save(self):
         """Commit changes through the active toolbar or Maximo's common-actions menu."""
         self.idle()
         self.check_startable()
         self.reject_dialogs()
-        def toolbar_enabled():
-            actions = self.driver.find_elements(By.ID, "toolactions_SAVE-tbb_anchor")
-            if not actions:
-                return False
-            action = actions[0]
-            aria_disabled = action.get_attribute("aria-disabled")
-            return not (aria_disabled == "true" or
-                        (aria_disabled is None and action.get_attribute("disabled") in {"true", "disabled"}))
-
-        def common_save():
-            matches = [e for e in self.driver.find_elements(By.CSS_SELECTOR, "a,button,[role=menuitem],span")
-                       if e.is_displayed() and normalized(e.text) == "guardar orden de trabajo"]
-            if len(matches) > 1:
-                # Prefer the left navigation/action anchor when Maximo exposes
-                # both a menu label and a toolbar caption.
-                anchors = [e for e in matches if e.tag_name == "a"]
-                matches = anchors or matches
-            return matches[0] if len(matches) == 1 else None
-
-        if not toolbar_enabled() and common_save() is None:
+        state = self.save_action_state()
+        self._save_unavailable = state["unavailable"]
+        if state["control"] is None:
             return False
         self.progress(f"OT {self.ot}: guardando los cambios…")
         marker = self.response_sequence()
-        find_save = (lambda: self.driver.find_element(By.ID, "toolactions_SAVE-tbb_anchor")) \
-            if toolbar_enabled() else common_save
+        find_save = lambda: self.save_action_state()["control"]
         self.click_fresh(
             find_save, "acción Guardar",
         )
@@ -292,6 +306,42 @@ class WorkorderStarter:
                 raise RuntimeError("Maximo respondió, pero no confirmó que la OT se haya guardado.")
             return True
         raise RuntimeError(f"Maximo repitió el aviso de guardado; se detuvo el {self.operation} de la OT.")
+
+    def save_anomalies(self, path, class_code=None):
+        """Save normally, or verify a fresh server view when Save is disabled."""
+        if self.save():
+            return True
+        if self._save_unavailable != "disabled":
+            return False
+        self.check_startable()
+        self.reject_dialogs()
+        self.progress(f"OT {self.ot}: Guardar está deshabilitado; comprobando los datos guardados…")
+        self.set_anomaly_diagnostic_stage("verify_automatic_save")
+        self.driver.refresh()
+        self.wait(lambda d: self.value("Orden de trabajo") == self.ot and self.value("Estado"), "recarga para verificar el guardado")
+        self.idle()
+        self.check_location()
+        self.check_startable()
+        self.reject_dialogs()
+        self.tab("Informes de anomalías")
+        actual_class = self.value("Clase de anomalía")
+        snapshot = self.wait(lambda d: (rows := self.failure_rows()) is not None and {"rows": rows} or False,
+                             "anomalías guardadas en Maximo")
+        expected = sorted((item["type"], item["code"]) for item in path)
+        actual = sorted((row["type"], row["code"]) for row in snapshot["rows"])
+        if ((class_code is not None and actual_class != class_code) or actual != expected or
+                any("deshacer suprimir" in normalized(row.get("toggleTitle")) for row in snapshot["rows"])):
+            return False
+        self.tab("Soluciones")
+        codes = self.solution_codes()
+        if self.anomaly_diagnostic_context:
+            self.anomaly_diagnostic_context["actual_codes"] = codes
+        wanted = {item["type"]: item["code"] for item in path}
+        matches = all((codes.get(kind) or "").strip() == wanted.get(kind, "") for kind in ("PROBLEM", "CAUSE", "REMEDY"))
+        self.check_startable()
+        if matches:
+            logging.info("OT %s: valores confirmados tras recargar con Guardar deshabilitado", self.ot)
+        return matches
 
     def start_choice(self, dialog):
         """Match radio captions through labels, ARIA or a single-radio container."""
@@ -590,7 +640,7 @@ class WorkorderStarter:
             if len(marked)<=marked_before:
                 raise RuntimeError(f"Maximo no confirmó la supresión de {row['type']} {row['code']}.")
         if rows:
-            if not self.save():
+            if not self.save_anomalies([]):
                 raise RuntimeError("Maximo no habilitó Guardar tras marcar la jerarquía anterior para suprimir.")
         self.tab("Informes de anomalías")
         remaining = self.failure_rows()
@@ -851,19 +901,19 @@ class WorkorderStarter:
                 class_changed=self.select_failure_class(resolved["class_code"],resolved["organization"])
                 if class_changed:
                     self.set_anomaly_diagnostic_stage("save_class")
-                    if not self.save():
+                    if not self.save_anomalies([], resolved["class_code"]):
                         raise RuntimeError("Maximo no confirmó el guardado de la clase de anomalía.")
             self.tab("Informes de anomalías")
             self.select_failure_codes(path=resolved["path"][prefix_len:])
             self.set_anomaly_diagnostic_stage("save_codes")
-            if not self.save():
+            if not self.save_anomalies(resolved["path"], resolved["class_code"]):
                 raise RuntimeError("Maximo no confirmó el guardado de los códigos de anomalía.")
             self.verify_failure_rows(resolved["path"])
             self.verify_solution_codes(resolved["path"])
         else:
             if pending_suppressions:
                 self.set_anomaly_diagnostic_stage("save_pending_suppressions")
-                if not self.save():
+                if not self.save_anomalies(resolved["path"], resolved["class_code"]):
                     raise RuntimeError("Maximo no confirmó el guardado de las filas marcadas para suprimir.")
                 self.verify_failure_rows(resolved["path"])
             self.progress(f"OT {self.ot}: los códigos elegidos ya están aplicados; no se modificarán.")

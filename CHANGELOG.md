@@ -2,6 +2,10 @@
 
 ## 1.1.0 — Inicio y cierre de OT desde Edge y anomalías configurables
 
+- Corregido el bloqueo al intentar Guardar desde un menú deshabilitado tras
+  seleccionar anomalías. Si Maximo ya las ha guardado, se confirma su persistencia
+  recargando la ficha antes de continuar, sin esperar una respuesta de un botón
+  inactivo. La comprobación también se aplica a «Cambiar anomalías».
 - Nuevo botón «Cambiar anomalías» en las OT iniciadas (INPRG). Permite elegir,
   guardar y verificar otra combinación sin enrutar la OT ni modificar los
   predeterminados de MD. Comparte la activación con «Iniciar OT» y vuelve a la

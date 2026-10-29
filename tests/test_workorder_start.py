@@ -271,6 +271,61 @@ class BrowserStartTests(TestCase):
         self.assertTrue(state['saveWarningShown'])
         self.assertEqual(state['status'], 'INPRG')
 
+    def test_disabled_save_menu_is_not_clicked_or_waited_on(self):
+        self.browser.execute_script("resetState({faultclass:'RFN-70',problem:'',cause:'',remedy:''})")
+        starter = FixtureStarter(self.browser,'4314531',timeout=1)
+        self.assertFalse(starter.save())
+        self.assertEqual(starter._save_unavailable, 'disabled')
+        self.assertEqual(self.browser.execute_script('return state.events'), [])
+
+    def test_enabled_common_save_remains_available_when_the_toolbar_is_disabled(self):
+        self.browser.execute_script("resetState({dirty:true,toolbarSaveUnavailable:true})")
+        self.assertTrue(FixtureStarter(self.browser,'4314531',timeout=2).save())
+        self.assertEqual(self.browser.execute_script('return state.events').count(['save']), 1)
+
+    def test_automatic_code_save_is_verified_before_starting_without_a_second_save(self):
+        self.run_fixture(faultclass='OTHER',problem='',cause='',remedy='',nativeAutosave=True,persistenceModel=True)
+        state=self.browser.execute_script('return state')
+        self.assertEqual(state['events'].count(['save']),1)
+        self.assertEqual(state['events'].count(['fresh-read']),1)
+        self.assertEqual(state['events'].count(['start']),1)
+        self.assertEqual(state['status'],'INPRG')
+        self.assertFalse(state['dirty'])
+
+    def test_automatic_class_save_is_verified_before_selecting_the_hierarchy(self):
+        self.run_fixture(faultclass='OTHER',problem='',cause='',remedy='',autoSaveClass=True,persistenceModel=True)
+        events=self.browser.execute_script('return state.events')
+        self.assertEqual(events.count(['save']),1)
+        self.assertEqual(events.count(['fresh-read']),1)
+        self.assertLess(events.index(['fresh-read']),events.index(['native-open']))
+        self.assertEqual(events.count(['start']),1)
+
+    def test_disabled_save_does_not_accept_codes_that_disappear_on_a_fresh_read(self):
+        with self.assertRaisesRegex(RuntimeError,'guardado de los códigos'):
+            self.run_fixture(faultclass='RFN-70',problem='',cause='',remedy='',
+                nativeSaveDisabledAfterSelection=True,persistenceModel=True)
+        state=self.browser.execute_script('return state')
+        self.assertEqual(state['events'].count(['fresh-read']),1)
+        self.assertEqual(state['routes'],0)
+        self.assertEqual((state['problem'],state['cause'],state['remedy']),('','',''))
+
+    def test_missing_save_controls_do_not_trigger_a_reload_or_false_success(self):
+        self.browser.execute_script("resetState({hideAllSaveControls:true})")
+        starter=FixtureStarter(self.browser,'4314531',timeout=1)
+        with patch.object(self.browser,'refresh') as refresh:
+            self.assertFalse(starter.save_anomalies(workflow.resolve_selection(workflow.default_selection())['path']))
+        self.assertEqual(starter._save_unavailable,'missing')
+        refresh.assert_not_called()
+
+    def test_changing_anomalies_also_accepts_only_a_verified_automatic_save(self):
+        self.browser.execute_script("resetState({status:'INPRG',faultclass:'RFN-70',problem:'',cause:'',remedy:'',nativeAutosave:true,persistenceModel:true})")
+        FixtureAnomalyChanger(self.browser,'4314531',timeout=3).run_change(workflow.default_selection())
+        state=self.browser.execute_script('return state')
+        self.assertEqual(state['events'].count(['fresh-read']),1)
+        self.assertEqual(state['events'].count(['save']),0)
+        self.assertEqual(state['routes'],0)
+        self.assertEqual(state['status'],'INPRG')
+
     def test_native_hierarchy_avoids_the_problematic_solution_inputs(self):
         self.run_fixture(faultclass='RFN-70', forceHierarchyError=True)
         events = self.browser.execute_script('return state.events')

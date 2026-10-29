@@ -5,6 +5,8 @@
 <a role="tab" href="#" onclick="render('solutions');return false">Soluciones</a>
 </nav><a id="toolactions_SAVE-tbb_anchor" href="#" onclick="saveRecord();return false">
 <img id="toolactions_SAVE-tbb_image" alt="Guardar orden de trabajo" width="25" height="25" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="></a>
+<ul><li id="common-save-item"><a id="common-save-action" href="#" onclick="saveRecord();return false">
+<span id="common-save-action_tnode">Guardar orden de trabajo</span></a></li></ul>
 <div role="alert" id="saved-notice"></div><main id="form"></main><div id="dialogs"></div>
 <div id="wait" style="display:none;position:fixed;inset:0;background:#ddd8">Cargando</div>
 <aside id="warndiv" role="alert" aria-hidden="true" style="position:absolute;left:100%;top:0;width:0;height:100%">
@@ -29,8 +31,13 @@ function resetState(overrides = {}) {
   state = {ot:'4314531',status:'APPR',faultclass:'OTHER',problem:'OLD-01',cause:'OLD-02',
     remedy:'OLD-03',events:[],routes:0,dirty:false,pendingDeletion:false,responses:0,suppressed:{},extraFailureRows:[],...overrides};
   state.dirty = state.dirty || state.pendingDeletion || state.extraFailureRows.some(row=>row.suppressed);
+  persistFields();
   document.getElementById('saved-notice').textContent = '';
   tab = 'solutions'; save(); render(tab);
+}
+function persistFields() {
+  state.persistedFields={faultclass:state.faultclass,problem:state.problem,cause:state.cause,remedy:state.remedy,
+    extraFailureRows:state.extraFailureRows.map(row=>({...row,suppressed:false}))};
 }
 function asyncRender(action) {
   document.getElementById('wait').style.display = 'block';
@@ -52,6 +59,13 @@ function render(nextTab) {
     ((tab==='anomaly'&&a.textContent.includes('anomal'))||(tab==='solutions'&&a.textContent==='Soluciones'))?'true':'false'));
   sessionStorage.setItem('workflow-fixture-tab', tab);
   document.getElementById('toolactions_SAVE-tbb_anchor').setAttribute('aria-disabled', state.saveUnavailable?'true':(state.dirty?'false':'true'));
+  if(state.toolbarSaveUnavailable)document.getElementById('toolactions_SAVE-tbb_anchor').setAttribute('aria-disabled','true');
+  const saveDisabled=state.saveUnavailable||!state.dirty;
+  document.getElementById('common-save-item').setAttribute('aria-disabled',saveDisabled?'true':'false');
+  document.getElementById('common-save-action_tnode').toggleAttribute('disabled',saveDisabled);
+  document.getElementById('common-save-action_tnode').className=saveDisabled?'opacity_20':'';
+  document.getElementById('toolactions_SAVE-tbb_anchor').hidden=Boolean(state.hideAllSaveControls);
+  document.getElementById('common-save-item').hidden=Boolean(state.hideAllSaveControls);
   document.getElementById('form').innerHTML = control('Orden de trabajo','ot',true)+control('Estado','status',true)+
     (tab === 'anomaly' ? control('Clase de anomalía','faultclass')+
       '<button id="mx_bg_button_listfailurecodes-pb" onclick="openFailureCodes()">Seleccionar códigos de anomalía</button>'+failureTable() :
@@ -119,6 +133,9 @@ function selectCode(key, code) {
       state.remedy = '';
     }
     state[key] = code;
+    if(key==='faultclass' && state.autoSaveClass) {
+      state.dirty=false;state.pendingDeletion=false;persistFields();state.events.push(['automatic-save','class']);
+    }
   });
 }
 const defaultHierarchy = [
@@ -166,6 +183,10 @@ function selectFailureCode(index, code) {
     if (level.type==='PROBLEM') state.cause=state.remedy='';
     if (level.type==='CAUSE') state.remedy='';
     state[key]=code; state.dirty=true; state.pendingDeletion=false;state.suppressed={};
+    if(index===hierarchy().length-1 && (state.nativeAutosave||state.nativeSaveDisabledAfterSelection)) {
+      state.dirty=false;
+      if(state.nativeAutosave){persistFields();state.events.push(['automatic-save','codes']);}
+    }
     state.nativeFilterApplied=false;state.nativeFilterValue='';
     state.responses++;save(); render(tab);
     if (index<hierarchy().length-1 && !state.nativeCloseEarly) showFailureCodes(index+1);
@@ -189,6 +210,7 @@ function commitSave() {
       !row.suppressed&&!state.suppressed[`${row.type}:${row.code}`]);
     state.suppressed={};
     state.dirty = false; state.pendingDeletion = false; state.responses++;
+    persistFields();
     document.getElementById('saved-notice').textContent = 'BMXAA4205I - El registro ha sido guardado.';
   });
 }
@@ -228,6 +250,10 @@ function confirmStart() {
 }
 if (sessionStorage.getItem('workflow-fixture')) {
   state=JSON.parse(sessionStorage.getItem('workflow-fixture'));
+  if(state.persistenceModel) {
+    Object.assign(state,state.persistedFields);state.dirty=false;state.pendingDeletion=false;state.suppressed={};
+    state.events.push(['fresh-read']);save();
+  }
   render(sessionStorage.getItem('workflow-fixture-tab') || 'solutions');
 } else resetState();
 </script></body></html>
