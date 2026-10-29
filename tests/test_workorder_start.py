@@ -592,3 +592,32 @@ class BrowserStartTests(TestCase):
         self.assertIsNone(start.call_args.kwargs['anomaly_selection'])
         self.assertEqual(self.browser._maximo_workorder_start_mode,'configured')
         self.assertEqual(self.browser._maximo_workorder_start_selection,default)
+
+    def test_manual_anomaly_dropdowns_return_after_switching_modes(self):
+        self.browser._maximo_workorder_start_mode = 'configured'
+        self.browser._maximo_workorder_start_selection = workflow.default_selection()
+        with self.maximo_page_scripts():
+            workflow.poll_browser_start(self.browser)
+            self.browser.find_element(By.ID, 'maximo-desktop-start-options').click()
+            original_selects = self.browser.find_elements(By.CSS_SELECTOR, '#maximo-start-options-overlay select')
+            for _ in range(2):
+                self.browser.find_element(By.CSS_SELECTOR, 'input[name="maximo-start-mode"][value="only"]').click()
+                self.assertFalse(any(select.is_displayed() for select in self.browser.find_elements(
+                    By.CSS_SELECTOR, '#maximo-start-options-overlay select')))
+                self.browser.find_element(By.CSS_SELECTOR, 'input[name="maximo-start-mode"][value="configured"]').click()
+                selects = self.browser.find_elements(By.CSS_SELECTOR, '#maximo-start-options-overlay select')
+                self.assertEqual(len(selects), 4)
+                self.assertTrue(all(select.is_displayed() for select in selects))
+                self.assertEqual(selects, original_selects)
+            confirm = self.browser.find_element(By.XPATH,
+                "//*[@id='maximo-start-options-overlay']//button[normalize-space()='Iniciar OT']")
+            self.assertTrue(confirm.is_enabled())
+            self.browser.execute_script("arguments[0].selectedIndex=0;arguments[0].dispatchEvent(new Event('change'))", selects[0])
+            self.assertFalse(confirm.is_enabled())
+            self.browser.find_element(By.CSS_SELECTOR, 'input[name="maximo-start-mode"][value="only"]').click()
+            self.assertTrue(confirm.is_enabled())
+            self.browser.find_element(By.CSS_SELECTOR, 'input[name="maximo-start-mode"][value="configured"]').click()
+            self.assertFalse(confirm.is_enabled())
+            self.browser.find_element(By.XPATH,
+                "//*[@id='maximo-start-options-overlay']//button[normalize-space()='Cancelar']").click()
+        self.assertEqual(self.browser.execute_script('return state.events'), [])

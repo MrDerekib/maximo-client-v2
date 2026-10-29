@@ -117,7 +117,6 @@
       function clearSelection() { selection.classKey="";selection.optionKeys=[];selection.complete=false;selection.label=""; }
       function renderChoices() {
         selectionBox.replaceChildren(); clearSelection(); summary.textContent="Selecciona una ruta completa o elige «Solo iniciar OT».";
-        if (only.checked) { selection.complete=true;update();return; }
         labelFor(selectionBox,"Clase de anomalía");
         const classSelect=document.createElement("select");
         Object.assign(classSelect.style,{width:"100%",padding:"8px",border:"1px solid #b7cbe1",borderRadius:"6px",background:"#fff"});
@@ -169,12 +168,14 @@
       function update() {
         const useOnly=only.checked;
         selectionBox.hidden=useOnly;
-        selection.complete=useOnly || (Boolean(selection.classKey)&&selection.optionKeys.length>0&&selection.complete);
-        confirm.disabled=!selection.complete;confirm.style.opacity=confirm.disabled?"0.55":"1";
+        const canStart=useOnly || (Boolean(selection.classKey)&&selection.optionKeys.length>0&&selection.complete);
+        confirm.disabled=!canStart;confirm.style.opacity=confirm.disabled?"0.55":"1";
         summary.textContent=useOnly?"Se conservarán la clase y los códigos actuales de la OT.":
           (selection.label?`Selección para esta OT: ${selection.label}`:"Completa la ruta de códigos para habilitar el inicio.");
       }
-      configured.addEventListener("change",renderChoices);only.addEventListener("change",update);
+      // Switching mode only changes visibility. Rebuilding hidden selects can
+      // lose their state; only-mode must not mark an incomplete path complete.
+      configured.addEventListener("change",update);only.addEventListener("change",update);
       cancel.addEventListener("click",()=>{overlay.remove();state.modal=null;});
       confirm.addEventListener("click",()=>{
         if(confirm.disabled)return;

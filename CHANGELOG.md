@@ -2,6 +2,9 @@
 
 ## 1.1.0 — Inicio y cierre de OT desde Edge y anomalías configurables
 
+- «Elegir anomalías…» conserva y vuelve a mostrar los desplegables al alternar
+  entre aplicar una combinación y solo iniciar. Una ruta incompleta sigue
+  requiriendo completar sus opciones antes de iniciar con anomalías.
 - El inicio de OT permite conservar las anomalías actuales o aplicar una
   combinación predeterminada mediante listas condicionales en Configuración.
   «Elegir anomalías…» en Edge permite cambiarla solo para esa ejecución.
