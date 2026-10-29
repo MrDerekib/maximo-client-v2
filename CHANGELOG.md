@@ -2,14 +2,37 @@
 
 ## Pendiente de publicación
 
+- El inicio de OT permite conservar las anomalías actuales o aplicar una
+  combinación predeterminada mediante listas condicionales en Configuración.
+  «Elegir anomalías…» en Edge permite cambiarla solo para esa ejecución.
+  El catálogo conserva las relaciones entre clase, problema, causa y resolución;
+  no se ofrecen las combinaciones descartadas en la validación.
+- Las incidencias del flujo de anomalías se guardan en un registro local con
+  la combinación solicitada, el paso fallido y las opciones consultadas en Maximo,
+  incluyendo filtros y paginación. El archivo tiene rotación automática.
+- La impresión conserva la preferencia de cerrar ventanas después de recargar
+  la ficha al cerrar una OT, durante la misma sesión de Edge.
+- El diálogo de cierre mantiene la distribución al cambiar entre las acciones
+  o entre hora de inicio y finalización. Avisa de que cerrar, desechar y retener
+  son acciones irreversibles; el diálogo de justificación de Desechar activo
+  se reconoce como un paso manual del proceso.
+
+- «Imprimir parte» localiza el OT y su estado por las etiquetas de Maximo además
+  de los IDs habituales, para que el botón siga disponible al cambiar a otras
+  pestañas internas de la ficha.
+- El diálogo «Cerrar OT» permite elegir Cerrar, Desechar o Retener equipo.
+  Desechar y Retener exigen una confirmación adicional con casilla antes de
+  ejecutar la acción; el flujo nativo se limita a la opción elegida.
+- La configuración reúne las opciones de acciones de OT y partes de reparación
+  de la extensión bajo una única sección «Extensión de Edge».
 - Las acciones «Iniciar OT» y «Cerrar OT» vuelven a la pestaña de Maximo desde
   la que se lanzaron. «Iniciar OT» solo aparece en estado APPR y «Cerrar OT»
   solo aparece cuando la orden ya está iniciada (INPRG).
 - El botón «Imprimir parte» se vuelve a insertar si Maximo reconstruye la página
   al cambiar de pestaña, evitando tener que recargar la ficha para recuperarlo.
-- El cierre escribe inicio y fin mediante el selector DateTime nativo de Maximo,
-  actualizando fecha y hora. Si Maximo no conserva los datos, el aviso muestra
-  los valores leídos y el flujo se detiene antes de enrutar.
+- El cierre introduce inicio y fin con el formato de Maximo (`dd/MM/yy HH:mm:ss`)
+  y Tab. Los valores se mantienen en la ficha hasta confirmar el enrutado; después
+  se recarga la OT y se verifican en ISSUE antes de dar el proceso por terminado.
 
 - Las acciones «Iniciar OT» y «Cerrar OT» se habilitan por separado en
   Configuración y se ejecutan únicamente desde las ventanas de Edge abiertas
@@ -19,15 +42,15 @@
   permite indicar el inicio o el final y calcula la otra hora según la duración,
   sin superar la hora actual. Solo acepta duraciones en tramos de 0,25 h
   (15 minutos). La revisión exige confirmación explícita;
-  cancelar no modifica los datos. Tras guardar y verificar duración y fechas,
-  enruta hasta ISSUE, pendiente de salida del almacén, sin continuar a CLOSE.
+  cancelar no modifica los datos. Al confirmar, enruta hasta ISSUE, pendiente de
+  salida del almacén, y verifica duración y fechas tras recargar, sin continuar a CLOSE.
   Ante un resultado incierto no repite la aceptación final del cierre.
 - «Ahora» completa la finalización con la hora actual. Las fechas se introducen
   con precisión de minuto; el selector avanza en intervalos de cinco minutos.
   El diálogo se ha rediseñado para mantener los controles legibles y accesibles
   en ventanas pequeñas.
-- Cada fecha se guarda y verifica en Maximo antes de modificar la siguiente,
-  evitando que se pierda la finalización al actualizar ambos campos seguidos.
+- «Iniciar OT» y «Cerrar OT» comparten posición en la parte inferior derecha; solo
+  se muestra la acción correspondiente al estado, sin reservar espacio para la otra.
 
 - Corregido el falso aviso de diálogo abierto al iniciar una OT: Maximo conserva
   el contenedor `warndiv` aunque su panel esté oculto. El botón y la automatización

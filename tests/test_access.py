@@ -137,6 +137,30 @@ class AccessTests(unittest.TestCase):
             client.start_repair_report(driver, "4228010", "print", close_after_direct_print=True)
         self.assertTrue(driver.execute_script.call_args.args[3])
 
+    def test_ot_session_preserves_cleanup_policy_across_maximo_reloads(self):
+        cfg = SimpleNamespace(repair_extension_enabled=True, workorder_start_enabled=False,
+                              workorder_close_enabled=False)
+        for requested, printer, expected in [(True, "Office Printer", True),
+                                              (False, "Office Printer", False),
+                                              (True, "", False)]:
+            with self.subTest(requested=requested, printer=printer):
+                driver = Mock()
+                driver.find_element.return_value.get_attribute.return_value = "4384025"
+                driver.find_element.return_value.is_displayed.return_value = True
+                driver.find_element.return_value.is_enabled.return_value = True
+                with patch.object(client, "load_config", return_value=cfg), \
+                     patch.object(client, "create_edge_profile", return_value="test-profile"), \
+                     patch.object(client, "setup_driver", return_value=driver), \
+                     patch.object(client, "default_printer_name", return_value=printer), \
+                     patch.object(client, "login"), patch.object(client, "open_workorders_app"), \
+                     patch.object(client, "_start_ot_action_watcher"), \
+                     patch.object(client, "wait_for", side_effect=lambda d, condition, *_a, **_k: condition(d)):
+                    session = client.open_ot("4384025", close_after_direct_print=requested)
+                self.assertIs(session[0], driver)
+                driver.execute_script.assert_called_once_with(
+                    "window.sessionStorage.setItem('maximoDesktop.closeReportTabs', "
+                    "arguments[0] ? 'true' : 'false');", expected)
+
     def test_desktop_report_stops_before_extension_for_ineligible_status(self):
         driver = Mock()
         number = Mock()

@@ -1,5 +1,6 @@
 """Tests of explicit start semantics and the Maximo asynchronous workflow."""
 import os
+import json
 import sqlite3
 import threading
 from contextlib import closing
@@ -23,6 +24,31 @@ from tests.test_support import temporary_directory
 
 
 class StartConfigurationTests(TestCase):
+    def test_explicit_invalid_start_mode_is_rejected_before_any_navigation(self):
+        starter = workflow.WorkorderStarter(Mock(current_url='https://eam.indraweb.net/maximo/ui'), '4314531')
+        starter.check_location = Mock()
+        starter.wait = Mock()
+        starter.check_ot = Mock()
+        starter.value = Mock(return_value='APPR')
+        starter.dialogs = Mock(return_value=[])
+        starter.tab = Mock()
+        starter.route = Mock()
+        for mode in (None, '', 'invalid'):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, 'modo de inicio'):
+                starter.run(anomaly_mode=mode)
+        starter.tab.assert_not_called()
+        starter.route.assert_not_called()
+
+    def test_malformed_browser_mode_is_completed_without_running_or_sticking_busy(self):
+        driver = Mock()
+        payload = json.dumps({'ot':'4314531','returnTab':'Orden de trabajo','selection':{},'mode':None})
+        driver.execute_script.side_effect = [True, None, True, payload, None]
+        with patch.object(workflow, '_start_options_source', return_value='/*fixture*/'), \
+             patch.object(workflow, 'start_workorder') as start:
+            self.assertIsNone(workflow.poll_browser_start(driver))
+        start.assert_not_called()
+        self.assertIn('Solicitud de inicio no válida', driver.execute_script.call_args.args[0])
+
     def test_stale_click_reacquires_only_the_target(self):
         stale, fresh = Mock(), Mock()
         stale.click.side_effect = StaleElementReferenceException('redrawn')
@@ -164,14 +190,40 @@ class BrowserStartTests(TestCase):
         self.browser.get(FIXTURE)
         self.browser.execute_script('resetState()')
 
-    def run_fixture(self, return_tab=None, **state):
+    def run_fixture(self, return_tab=None, anomaly_mode="configured", anomaly_selection=None, **state):
         self.browser.execute_script('resetState(arguments[0])', state)
-        return FixtureStarter(self.browser, '4314531', timeout=5).run(return_tab=return_tab)
+        return FixtureStarter(self.browser, '4314531', timeout=5).run(return_tab=return_tab,
+            anomaly_mode=anomaly_mode, anomaly_selection=anomaly_selection)
+
+    def maximo_page_scripts(self):
+        original = self.browser.execute_script
+        def execute(script, *args):
+            if script == "return location.origin === 'https://eam.indraweb.net' && location.pathname.startsWith('/maximo/ui')":
+                return True
+            return original(script, *args)
+        return patch.object(self.browser, 'execute_script', side_effect=execute)
 
     def test_start_returns_to_the_tab_where_the_user_launched_it(self):
         self.run_fixture(return_tab='Informes de anomalías', faultclass='RFN-70',
                          problem='OTROS-01', cause='OTROS-02', remedy='OTROS-03')
         self.assertEqual(self.browser.execute_script("return sessionStorage.getItem('workflow-fixture-tab')"), 'anomaly')
+
+    def test_diagnostics_keep_consulted_options_and_missing_filtered_result(self):
+        self.browser.execute_script("resetState({faultclass:'RFN-70',problem:'',cause:'',remedy:'',nativeMissingCode:'OTROS-01'});render('anomaly')")
+        starter = FixtureStarter(self.browser, '4314531', timeout=1)
+        starter.begin_anomaly_diagnostics('configured', {})
+        with self.assertRaisesRegex(RuntimeError, 'tras filtrar'):
+            starter.select_failure_codes(path=[{'type':'PROBLEM','code':'OTROS-01'}])
+        snapshots = starter.anomaly_diagnostic_snapshots
+        self.assertTrue(any(not s.get('filter') and s['options'][0]['code']=='UNEXPECTED' for s in snapshots))
+        self.assertTrue(any(s.get('filter')=='=OTROS-01' for s in snapshots))
+        self.assertTrue(all(s['options'][0]['description']=='Descripción' for s in snapshots if s['options']))
+        self.assertEqual(self.browser.execute_script('return state.routes'), 0)
+
+    def test_configured_success_does_not_write_an_incident(self):
+        with patch.object(workflow, 'record_anomaly_incident') as record:
+            self.run_fixture()
+        record.assert_not_called()
 
     def test_empty_or_different_class_is_selected_before_the_solutions_and_persisted(self):
         for initial in ('', 'OTHER'):
@@ -187,7 +239,7 @@ class BrowserStartTests(TestCase):
                 ])
                 self.assertEqual(state['events'].count(['start']), 1)
                 self.assertFalse(state['pendingDeletion'])
-                self.assertEqual(state['events'].count(['save']), 2)
+                self.assertEqual(state['events'].count(['save']), 3)
                 self.assertEqual(state['events'].count(['native-open']), 1)
                 self.assertFalse(any(e[0]=='unexpected-selector-button' for e in state['events']))
                 self.assertFalse(any(e[0]=='lookup' and e[1]!='faultclass' for e in state['events']))
@@ -208,7 +260,58 @@ class BrowserStartTests(TestCase):
             ['native-click','REMEDY','OTROS-03'],
         ])
         self.assertFalse(any(e[0]=='lookup' for e in events))
-        self.assertEqual(events.count(['save']), 1)
+        self.assertEqual(events.count(['save']), 2)
+
+    def test_terminal_problem_path_is_supported_without_assumed_levels(self):
+        path=[{"type":"PROBLEM","code":"LG-01","key":"test-lg-root","allow_duplicate":False}]
+        selection={"class_key":"TRANSPORTES|RFN-70","option_keys":["test-lg-root"]}
+        with patch.object(workflow,"resolve_selection",return_value={"class_key":selection["class_key"],
+                "class_code":"RFN-70","organization":"TRANSPORTES","path":path}):
+            self.run_fixture(faultclass='RFN-70',problem='',cause='',remedy='',
+                nativeHierarchy=[{"type":"PROBLEM","key":"problem","code":"LG-01",
+                                  "options":["LG-00","LG-01"],"pageSize":1}],
+                anomaly_selection=selection)
+        state=self.browser.execute_script('return state')
+        self.assertEqual([e for e in state['events'] if e[0]=='native-click'],[['native-click','PROBLEM','LG-01']])
+        self.assertEqual(state['status'],'INPRG')
+
+    def test_direct_cause_and_two_level_paths_are_supported(self):
+        cases=[
+            ([{"type":"CAUSE","code":"CD-19-0-3","key":"c","allow_duplicate":False}],
+             [{"type":"CAUSE","key":"cause","code":"CD-19-0-3"}]),
+            ([{"type":"PROBLEM","code":"FGV-01","key":"p","allow_duplicate":False},
+              {"type":"CAUSE","code":"FGV-02","key":"c","allow_duplicate":False}],
+             [{"type":"PROBLEM","key":"problem","code":"FGV-01"},
+              {"type":"CAUSE","key":"cause","code":"FGV-02"}]),
+        ]
+        for path,hierarchy in cases:
+            with self.subTest(path=path):
+                selection={"class_key":"TRANSPORTES|RFN-70","option_keys":[item["key"] for item in path]}
+                resolved={"class_key":selection["class_key"],"class_code":"RFN-70",
+                          "organization":"TRANSPORTES","path":path}
+                self.browser.execute_script('resetState(arguments[0])',
+                    {"faultclass":"RFN-70","problem":"","cause":"","remedy":"","nativeHierarchy":hierarchy})
+                with patch.object(workflow,"resolve_selection",return_value=resolved):
+                    FixtureStarter(self.browser,'4314531',timeout=5).run(anomaly_selection=selection)
+                self.assertEqual(self.browser.execute_script('return state.status'),'INPRG')
+                self.assertEqual([event for event in self.browser.execute_script('return state.events') if event[0]=='native-click'],
+                                 [["native-click",item["type"],item["code"]] for item in path])
+
+    def test_invalid_selection_stops_before_edits_or_routing(self):
+        with self.assertRaises(ValueError):
+            self.run_fixture(anomaly_selection={})
+        state=self.browser.execute_script('return state')
+        self.assertEqual(state['events'],[])
+        self.assertEqual(state['routes'],0)
+
+    def test_only_mode_routes_without_reading_or_changing_anomalies(self):
+        starter=FixtureStarter(self.browser,'4314531',timeout=5)
+        starter.solution_codes=Mock(side_effect=AssertionError('only mode must not inspect solution codes'))
+        result=starter.run(anomaly_mode='only')
+        self.assertEqual(result['status'],'INPRG')
+        events=self.browser.execute_script('return state.events')
+        self.assertEqual(events.count(['start']),1)
+        self.assertFalse(any(event[0] in {'select','native-open','suppress'} for event in events))
 
     def test_bmxaa4523e_is_reported_immediately_without_accepting_or_routing(self):
         with self.assertRaisesRegex(RuntimeError, 'BMXAA4523E'):
@@ -220,7 +323,7 @@ class BrowserStartTests(TestCase):
 
     def test_missing_or_wrong_native_code_stops_before_routing(self):
         for state in ({'nativeMissingCode':'OTROS-03'}, {'nativeWrongType':'UNKNOWN'}):
-            with self.subTest(state=state), self.assertRaisesRegex(RuntimeError, 'opción|nivel'):
+            with self.subTest(state=state), self.assertRaisesRegex(RuntimeError, 'opción|nivel|selector muestra'):
                 self.run_fixture(**state)
             self.assertEqual(self.browser.execute_script('return state.routes'), 0)
 
@@ -235,7 +338,7 @@ class BrowserStartTests(TestCase):
         self.assertEqual(clicks,[['native-click','CAUSE','OTROS-02'],['native-click','REMEDY','OTROS-03']])
 
     def test_native_selector_does_not_skip_an_unconfirmed_parent(self):
-        with self.assertRaisesRegex(RuntimeError, 'sin confirmar OTROS-01'):
+        with self.assertRaisesRegex(RuntimeError, 'selector muestra CAUSE'):
             self.run_fixture(faultclass='RFN-70', problem='', nativeInitialStage=1)
         self.assertEqual(self.browser.execute_script('return state.routes'), 0)
 
@@ -294,9 +397,7 @@ class BrowserStartTests(TestCase):
 
     def test_browser_button_uses_the_same_active_dialog_detection(self):
         original = self.browser.execute_script
-        def execute(script, *args):
-            return original(script.replace("if (location.origin !== 'https://eam.indraweb.net' || !location.pathname.startsWith('/maximo/ui')) return '';", ''), *args)
-        with patch.object(self.browser, 'execute_script', side_effect=execute):
+        with self.maximo_page_scripts():
             workflow.poll_browser_start(self.browser)
             button = self.browser.find_element(By.ID, 'maximo-desktop-start-ot')
             self.assertTrue(button.is_enabled())
@@ -310,9 +411,7 @@ class BrowserStartTests(TestCase):
 
     def test_start_button_is_hidden_after_the_order_has_started(self):
         original = self.browser.execute_script
-        def execute(script, *args):
-            return original(script.replace("if (location.origin !== 'https://eam.indraweb.net' || !location.pathname.startsWith('/maximo/ui')) return '';", ''), *args)
-        with patch.object(self.browser, 'execute_script', side_effect=execute):
+        with self.maximo_page_scripts():
             workflow.poll_browser_start(self.browser)
             button = self.browser.find_element(By.ID, 'maximo-desktop-start-ot')
             self.assertFalse(button.get_property('hidden'))
@@ -322,13 +421,11 @@ class BrowserStartTests(TestCase):
 
     def test_start_button_click_captures_the_current_tab_for_return(self):
         original = self.browser.execute_script
-        def execute(script, *args):
-            return original(script.replace("if (location.origin !== 'https://eam.indraweb.net' || !location.pathname.startsWith('/maximo/ui')) return '';", ''), *args)
-        with patch.object(self.browser, 'execute_script', side_effect=execute):
+        with self.maximo_page_scripts():
             workflow.poll_browser_start(self.browser)
             original("render('anomaly')")
             self.browser.find_element(By.ID, 'maximo-desktop-start-ot').click()
-            with patch.object(workflow, 'start_workorder', return_value={'already_started': False}) as start:
+            with patch.object(workflow, 'start_workorder', return_value={'already_started': False,'status':'INPRG'}) as start:
                 workflow.poll_browser_start(self.browser)
         self.assertEqual(start.call_args.kwargs['return_tab'], 'Informes de anomalías')
 
@@ -427,6 +524,23 @@ class BrowserStartTests(TestCase):
         self.assertNotIn(['native-open'],events)
         self.assertEqual(events.count(['start']), 1)
 
+    def test_preexisting_route_with_marked_extra_row_must_save_before_routing(self):
+        with self.assertRaisesRegex(RuntimeError,'guardado de las filas marcadas'):
+            self.run_fixture(faultclass='RFN-70',problem='OTROS-01',cause='OTROS-02',remedy='OTROS-03',
+                extraFailureRows=[{'type':'CAUSE','code':'OLD-C','suppressed':True}],saveUnavailable=True)
+        state=self.browser.execute_script('return state')
+        self.assertEqual(state['routes'],0)
+        self.assertFalse(any(event[0]=='start' for event in state['events']))
+
+    def test_preexisting_route_saves_and_verifies_marked_extra_row_without_reselecting(self):
+        self.run_fixture(faultclass='RFN-70',problem='OTROS-01',cause='OTROS-02',remedy='OTROS-03',
+            extraFailureRows=[{'type':'CAUSE','code':'OLD-C','suppressed':True}])
+        state=self.browser.execute_script('return state')
+        self.assertEqual(state['extraFailureRows'],[])
+        self.assertEqual([event for event in state['events'] if event[0]=='select'],[])
+        self.assertEqual(state['events'].count(['save']),1)
+        self.assertEqual(state['events'].count(['start']),1)
+
     def test_navigating_to_another_ot_stops_before_editing_any_codes(self):
         self.browser.execute_script("resetState({ot:'9999999'})")
         starter = FixtureStarter(self.browser, '4314531', timeout=0.2)
@@ -448,17 +562,33 @@ class BrowserStartTests(TestCase):
         self.assertEqual(state['routes'], 1)
 
     def test_browser_button_only_starts_after_an_explicit_click(self):
-        with patch.object(workflow, 'WorkorderStarter', FixtureStarter):
-            # The injection intentionally targets Maximo only; use the same
-            # injected DOM on a mocked Maximo location for this fixture alone.
-            original = self.browser.execute_script
-            def execute(script, *args):
-                script = script.replace("if (location.origin !== 'https://eam.indraweb.net' || !location.pathname.startsWith('/maximo/ui')) return '';", '')
-                return original(script, *args)
-            with patch.object(self.browser, 'execute_script', side_effect=execute):
-                self.assertIsNone(workflow.poll_browser_start(self.browser))
-                self.assertEqual(original('return state.events'), [])
-                self.browser.find_element(By.ID, 'maximo-desktop-start-ot').click()
+        self.browser._maximo_workorder_start_mode = 'configured'
+        self.browser._maximo_workorder_start_selection = {
+            'class_key':'TRANSPORTES|RFN-70','option_keys':['PROBLEM:OTROS-01','CAUSE:OTROS-02','REMEDY:OTROS-03']}
+        with self.maximo_page_scripts():
+            self.assertIsNone(workflow.poll_browser_start(self.browser))
+            self.assertEqual(self.browser.execute_script('return state.events'), [])
+            self.browser.find_element(By.ID, 'maximo-desktop-start-ot').click()
+            with patch.object(workflow, 'start_workorder', return_value={'already_started': False,'status':'INPRG'}) as start:
                 result = workflow.poll_browser_start(self.browser)
-            self.assertEqual(result['status'], 'INPRG')
-            self.assertEqual(original('return state.events').count(['start']), 1)
+        self.assertEqual(result['status'], 'INPRG')
+        self.assertEqual(start.call_args.kwargs['anomaly_mode'], 'configured')
+        self.assertEqual(start.call_args.kwargs['anomaly_selection'], self.browser._maximo_workorder_start_selection)
+        self.assertEqual(self.browser.execute_script('return state.events'), [])
+
+    def test_manual_only_override_does_not_persist_or_replace_the_default(self):
+        default={'class_key':'TRANSPORTES|RFN-70','option_keys':['PROBLEM:OTROS-01','CAUSE:OTROS-02','REMEDY:OTROS-03']}
+        self.browser._maximo_workorder_start_mode='configured'
+        self.browser._maximo_workorder_start_selection=default.copy()
+        with self.maximo_page_scripts():
+            workflow.poll_browser_start(self.browser)
+            self.browser.find_element(By.ID,'maximo-desktop-start-options').click()
+            self.browser.find_element(By.CSS_SELECTOR,'input[name="maximo-start-mode"][value="only"]').click()
+            self.browser.find_element(By.XPATH,"//*[@id='maximo-start-options-overlay']//button[normalize-space()='Iniciar OT']").click()
+            with patch.object(workflow,'start_workorder',return_value={'already_started':False,'status':'INPRG'}) as start:
+                result=workflow.poll_browser_start(self.browser)
+        self.assertEqual(result['status'],'INPRG')
+        self.assertEqual(start.call_args.kwargs['anomaly_mode'],'only')
+        self.assertIsNone(start.call_args.kwargs['anomaly_selection'])
+        self.assertEqual(self.browser._maximo_workorder_start_mode,'configured')
+        self.assertEqual(self.browser._maximo_workorder_start_selection,default)

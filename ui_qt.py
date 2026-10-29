@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
 
 from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DEVELOPMENT_MODE, DOWNLOAD_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR, PROFILES_PATH, UPDATE_CACHE_DIR
 from config import AppConfig, credentials_configured, load_config, save_config
+from failure_catalog import resolve_selection
+from failure_picker import FailurePathPicker
 from db import (
     apply_started_workorder, apply_closed_repair,
     clear_current_priority_snapshot, current_priority_ots, current_priority_snapshots,
@@ -864,7 +866,8 @@ class MaximoDesktopWindow(QMainWindow):
             cancel = dialog.addButton("Cancelar", QMessageBox.RejectRole)
             dialog.exec()
             if dialog.clickedButton() is save:
-                self.save_settings(show_feedback=False)
+                if self.save_settings(show_feedback=False) is False:
+                    return False
             elif dialog.clickedButton() is discard:
                 self._load_config()
             else:
@@ -1168,21 +1171,38 @@ class MaximoDesktopWindow(QMainWindow):
         appearance_form.addRow("Tema", self.theme_combo)
         appearance_form.addRow("", theme_hint)
 
-        self.workorder_start_card = QGroupBox("Acciones de OT en Edge")
-        start_form = QFormLayout(self.workorder_start_card)
-        self.workorder_start_check = QCheckBox("Mostrar «Iniciar OT» en Edge (flujo RFN-70)")
+        self.edge_extension_card = QGroupBox("Extensión de Edge")
+        edge_extension_layout = QVBoxLayout(self.edge_extension_card)
+        edge_extension_intro = QLabel(
+            "Opciones de la extensión para las ventanas de Maximo abiertas desde Maximo Desktop."
+        )
+        edge_extension_intro.setObjectName("filterHint")
+        edge_extension_intro.setWordWrap(True)
+        edge_extension_layout.addWidget(edge_extension_intro)
+        edge_extension_layout.addWidget(QLabel("Órdenes de trabajo", objectName="settingsSectionTitle"))
+
+        start_form = QFormLayout()
+        self.workorder_start_check = QCheckBox("Mostrar «Iniciar OT» en Edge")
+        self.workorder_start_mode_combo = DecoratedComboBox()
+        self.workorder_start_mode_combo.addItem("Elegir comportamiento…", None)
+        self.workorder_start_mode_combo.addItem("Iniciar y establecer anomalías", "configured")
+        self.workorder_start_mode_combo.addItem("Solo iniciar: conservar anomalías actuales", "only")
+        self.workorder_failure_picker = FailurePathPicker(combo_factory=DecoratedComboBox)
         self.workorder_close_check = QCheckBox("Mostrar «Cerrar OT» en Edge")
         start_hint = QLabel(
             "Añade un botón «Iniciar OT» en las nuevas ventanas de Maximo abiertas desde MD. "
-            "Establece la clase RFN-70 y selecciona OTROS-01, OTROS-02 y OTROS-03 "
-            "en «Seleccionar códigos de anomalía» "
-            "e inicia la orden. Solo se aplica a OT en APPR. "
-            "«Abrir OT» sigue abriendo únicamente la ficha."
+            "Elige si inicia conservando los datos actuales o establece la combinación predeterminada. "
+            "En Edge también puedes elegir otra combinación para una OT concreta. "
+            "Se aplica a las nuevas ventanas de OT en estado APPR."
         )
         start_hint.setObjectName("filterHint")
         start_hint.setWordWrap(True)
         start_form.addRow("", self.workorder_start_check)
+        start_form.addRow("Al pulsar Iniciar OT", self.workorder_start_mode_combo)
+        start_form.addRow("", self.workorder_failure_picker)
         start_form.addRow("", start_hint)
+        self.workorder_start_check.toggled.connect(self._update_workorder_start_controls)
+        self.workorder_start_mode_combo.currentIndexChanged.connect(self._update_workorder_start_controls)
         start_form.addRow("", self.workorder_close_check)
         close_hint = QLabel(
             "Añade «Cerrar OT» en las nuevas ventanas de Maximo abiertas desde MD. "
@@ -1194,8 +1214,14 @@ class MaximoDesktopWindow(QMainWindow):
         close_hint.setWordWrap(True)
         start_form.addRow('', close_hint)
 
-        self.repair_card = QGroupBox("Partes de reparación")
-        repair_form = QFormLayout(self.repair_card)
+        edge_extension_layout.addLayout(start_form)
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        edge_extension_layout.addWidget(separator)
+        edge_extension_layout.addWidget(QLabel("Partes de reparación", objectName="settingsSectionTitle"))
+
+        repair_form = QFormLayout()
         self.repair_extension_check = QCheckBox("Mostrar «Imprimir parte» en Edge")
         self.repair_mode_combo = DecoratedComboBox()
         self.repair_mode_combo.addItem("Mostrar diálogo de impresión", "dialog")
@@ -1214,6 +1240,7 @@ class MaximoDesktopWindow(QMainWindow):
         repair_form.addRow("Al pulsar Imprimir parte", self.repair_mode_combo)
         repair_form.addRow("", self.repair_close_tabs_check)
         repair_form.addRow("", self.repair_hint)
+        edge_extension_layout.addLayout(repair_form)
         self.repair_extension_check.toggled.connect(self.repair_mode_combo.setEnabled)
 
 
@@ -1315,7 +1342,7 @@ class MaximoDesktopWindow(QMainWindow):
                      self.appearance_card, self.paths_card):
             self.settings_sections[0].addWidget(card)
         for card in (self.maintenance_card, self.fault_descriptions_card,
-                     self.priorities_card, self.workorder_start_card, self.repair_card):
+                     self.priorities_card, self.edge_extension_card):
             self.settings_sections[1].addWidget(card)
         body.addLayout(self.settings_columns)
         body.addStretch()
@@ -2175,6 +2202,9 @@ class MaximoDesktopWindow(QMainWindow):
         self.detailed_descriptions_check.setChecked(self.cfg.detailed_descriptions_enabled)
         self.repair_extension_check.setChecked(self.cfg.repair_extension_enabled)
         self.workorder_start_check.setChecked(self.cfg.workorder_start_enabled)
+        self._set_combo_value(self.workorder_start_mode_combo, self.cfg.workorder_start_mode)
+        self.workorder_failure_picker.set_selection(self.cfg.workorder_start_selection)
+        self._update_workorder_start_controls()
         self.workorder_close_check.setChecked(self.cfg.workorder_close_enabled)
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
         self.repair_close_tabs_check.setChecked(self.cfg.repair_close_tabs_after_direct_print)
@@ -2227,6 +2257,8 @@ class MaximoDesktopWindow(QMainWindow):
             or self.detailed_descriptions_check.isChecked() != self.cfg.detailed_descriptions_enabled
             or self.repair_extension_check.isChecked() != self.cfg.repair_extension_enabled
             or self.workorder_start_check.isChecked() != self.cfg.workorder_start_enabled
+            or (self.workorder_start_mode_combo.currentData() or "invalid") != self.cfg.workorder_start_mode
+            or self.workorder_failure_picker.selection() != self.cfg.workorder_start_selection
             or self.workorder_close_check.isChecked() != self.cfg.workorder_close_enabled
             or self.repair_mode_combo.currentData() != self.cfg.repair_print_mode
             or self.repair_close_tabs_check.isChecked() != self.cfg.repair_close_tabs_after_direct_print
@@ -2238,11 +2270,24 @@ class MaximoDesktopWindow(QMainWindow):
         )
 
     def save_settings(self, show_feedback=True):
+        start_mode = self.workorder_start_mode_combo.currentData()
+        start_selection = self.workorder_failure_picker.selection()
+        if self.workorder_start_check.isChecked():
+            try:
+                if start_mode not in ("configured", "only"):
+                    raise ValueError("Elige cómo quieres iniciar las OT.")
+                if start_mode == "configured":
+                    resolve_selection(start_selection)
+            except (TypeError, ValueError) as exc:
+                QMessageBox.warning(self, "Anomalías al iniciar OT", str(exc))
+                return False
         self.cfg.username = self.user_edit.text().strip(); self.cfg.password = self.password_edit.text(); self.cfg.auto_update_enabled = self.auto_check.isChecked(); self.cfg.auto_update_interval_min = self.interval_spin.value(); self.cfg.reconciliation_enabled = self.reconcile_check.isChecked(); self.cfg.reconciliation_batch_size = self.batch_spin.value()
         self.cfg.fault_descriptions_enabled = self.fault_descriptions_check.isChecked()
         self.cfg.detailed_descriptions_enabled = self.detailed_descriptions_check.isChecked()
         self.cfg.repair_extension_enabled = self.repair_extension_check.isChecked()
         self.cfg.workorder_start_enabled = self.workorder_start_check.isChecked()
+        self.cfg.workorder_start_mode = start_mode or "invalid"
+        self.cfg.workorder_start_selection = start_selection
         self.cfg.workorder_close_enabled = self.workorder_close_check.isChecked()
         self.cfg.repair_print_mode = self.repair_mode_combo.currentData()
         self.cfg.repair_close_tabs_after_direct_print = self.repair_close_tabs_check.isChecked()
@@ -2252,7 +2297,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.cfg.priority_renfe_validity = self.priority_renfe_validity.currentData()
         self.cfg.theme = self.theme_combo.currentData()
         save_config(self.cfg)
-        logging.info("Inicio de OT RFN-70 habilitado: %s", self.cfg.workorder_start_enabled)
+        logging.info("Inicio de OT habilitado: %s; modo: %s", self.cfg.workorder_start_enabled, self.cfg.workorder_start_mode)
         logging.info("Cierre de OT en Edge habilitado: %s", self.cfg.workorder_close_enabled)
         self.schedule_auto_update()
         self._refresh_auto_update_summary()
@@ -2272,6 +2317,14 @@ class MaximoDesktopWindow(QMainWindow):
         if show_feedback:
             QMessageBox.information(self, "Configuración", "Configuración guardada correctamente.")
         self.status.showMessage("Configuración guardada y aplicada.", 4000)
+        return True
+
+    def _update_workorder_start_controls(self, *_args):
+        enabled = self.workorder_start_check.isChecked()
+        configured = self.workorder_start_mode_combo.currentData() == "configured"
+        self.workorder_start_mode_combo.setEnabled(enabled)
+        self.workorder_failure_picker.setVisible(configured)
+        self.workorder_failure_picker.setEnabled(enabled and configured)
 
     def _refresh_auto_update_summary(self):
         if self.cfg.auto_update_enabled:
@@ -2549,7 +2602,8 @@ class MaximoDesktopWindow(QMainWindow):
             prompt.setDefaultButton(keep_open)
             prompt.exec()
             if prompt.clickedButton() is save:
-                self.save_settings(show_feedback=False)
+                if self.save_settings(show_feedback=False) is False:
+                    return
             elif prompt.clickedButton() is not discard:
                 return
         if self.ot_sessions:

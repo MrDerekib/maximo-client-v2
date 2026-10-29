@@ -5,12 +5,12 @@
 <div id="notice" role="alert"></div><main></main><div id="dialogs"></div>
 <div id="wait" style="display:none;position:fixed;inset:0;background:#ddd8">Cargando</div>
 <script>
-let state,tab,generation=0,widget;
+let state,tab,generation=0,widget,draft={};
 const persist=()=>sessionStorage.setItem('close-fixture',JSON.stringify(state));
 function resetState(overrides={}){
   state={ot:'4378677',status:'INPRG',duration:'',start:'2026-10-26T10:00:00',end:'',dirty:false,
     routes:0,responses:0,events:[],...overrides};
-  tab='main';persist();render(tab);
+  draft={};tab='main';persist();render(tab);
 }
 function later(action){
   document.getElementById('wait').style.display='block';
@@ -22,21 +22,23 @@ function dateText(iso){
 }
 function saveInput(key,value){
   later(()=>{
-    if(key==='duration')state[key]=value;
+    state.responses++;
+    if(key==='duration')draft[key]=value;
     else {
       const parts=value.match(/^(\d{2})\/(\d{2})\/(\d{2}) (\d{2}:\d{2}:\d{2})$/);
       if(!parts)throw Error('Invalid date in the offline fixture');
-      state[key]=`20${parts[3]}-${parts[2]}-${parts[1]}T${parts[4]}`;
+      draft[key]=`20${parts[3]}-${parts[2]}-${parts[1]}T${parts[4]}`;
     }
     state.dirty=true;state.events.push([key,value]);
   });
 }
 function control(caption,key){
   const id='mx'+(++generation)+'-tb',image=id.replace('-tb','-img'),date=['start','end'].includes(key);
-  const value=date?dateText(state[key]):state[key];
+  const hasDraft=Object.prototype.hasOwnProperty.call(draft,key);
+  const source=hasDraft?draft[key]:state[key],value=date?dateText(source):source;
   return `<p><label for="${id}">${caption}:</label><input id="${id}" ctype="textbox" li="${image}"
     ${((key==='duration'&&!state.durationReadonly)||(['start','end'].includes(key)&&!state.dateReadonly))?'':'readonly'}
-    value="${date&&state.titleOnly?'':value}" title="${value}"
+    value="${date&&state.titleOnly&&!hasDraft?'':value}" title="${value}"
     onblur="if(['duration','start','end'].includes('${key}'))saveInput('${key}',this.value)">
     ${date?`<img id="${image}" alt="Seleccionar fecha y hora" width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onclick="openDate('${key}','${id}')">`:''}</p>`;
 }
@@ -53,7 +55,7 @@ function render(next){
 }
 function saveRecord(){
   if(!state.dirty)return;
-  later(()=>{state.dirty=false;state.responses++;state.events.push(['save']);
+  later(()=>{Object.assign(state,draft);draft={};state.dirty=false;state.responses++;state.events.push(['save']);
     document.getElementById('notice').textContent='BMXAA4205I - El registro ha sido guardado.';});
 }
 window.dijit={byId:id=>widget?.id===id?widget:null};
@@ -78,7 +80,7 @@ function commitDate(key){
   later(()=>{state[key]=iso;state.dirty=true;state.events.push(['date',key,iso]);});
 }
 function route(){
-  state.routes++;state.events.push(['route']);persist();
+  Object.assign(state,draft);draft={};state.dirty=false;state.routes++;state.events.push(['route']);persist();
   if(state.routes<=(state.noOpRoutes||0))return;
   if(state.directIssue){later(()=>{state.status='ISSUE';state.events.push(['close']);});return;}
   if(state.unknownDialog){
@@ -87,16 +89,19 @@ function route(){
   if(state.warning&&!state.warned){
     state.warned=true;persist();document.getElementById('dialogs').innerHTML='<section role="dialog" id="alreadyreported-dialog_inner">Problema ya informado <button onclick="render(tab)">Continuar</button></section>';return;
   }
-  const label=state.wrongChoice?'Salida de almacén':'Cerrar OT';
   document.getElementById('dialogs').innerHTML=`<section role="dialog" id="inputwf-dialog_inner">
-    <label><input name="choice" type="radio" checked>Cancelar OT</label>
-    <label><input id="choice-close" name="choice" type="radio">${label}</label>
+    <label><input id="choice-cancel" name="choice" type="radio" checked value="cancel">Cancelar OT</label>
+    <label><input id="choice-close" name="choice" type="radio" value="close">${state.wrongChoice?'Salida de almacén':'Cerrar OT'}</label>
+    <label><input id="choice-discard" name="choice" type="radio" value="discard">Desechar equipo</label>
+    <label><input id="choice-retain" name="choice" type="radio" value="retain">Retener equipo</label>
     <button onclick="confirmClose()">Aceptar</button><button>Cancelar</button></section>`;
 }
 function confirmClose(){
-  if(!document.getElementById('choice-close').checked)throw Error('Wrong choice');
-  state.events.push(['confirm-close']);persist();
-  later(()=>{if(!state.noConfirmation){state.status=state.resultStatus||'ISSUE';state.events.push(['close']);}});
+  const selected=document.querySelector('#inputwf-dialog_inner input[name=choice]:checked');
+  if(!selected||selected.value==='cancel')throw Error('No action was selected');
+  state.events.push(['confirm-'+selected.value]);persist();
+  const statuses={close:'ISSUE',discard:'DISCARDED',retain:'RETAINED'};
+  later(()=>{if(!state.noConfirmation){state.status=state.resultStatus||statuses[selected.value];state.events.push([selected.value]);}});
 }
 if(sessionStorage.getItem('close-fixture')){
   state=JSON.parse(sessionStorage.getItem('close-fixture'));render(sessionStorage.getItem('close-tab')||'main');

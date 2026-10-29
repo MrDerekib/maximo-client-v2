@@ -1,0 +1,87 @@
+{
+  "date": "2026-10-28",
+  "work_order": "3088915",
+  "status": "APPR",
+  "initial_state_before_sample": {"class": "RFN-20", "failure_rows": 0},
+  "state_at_sample_start": {"class": "LG-01", "failure_rows": 0},
+  "final_fresh_state": {"class": "CD-19", "failure_rows": 0},
+  "workflow_actions": [],
+  "cases": [
+    {
+      "class": "LG-01",
+      "static_route": [
+        {"type": "CLASS", "code": "LG-01", "failurelist_id": 120},
+        {"type": "PROBLEM", "code": "LG-01-01", "failurelist_id": 178}
+      ],
+      "ui_observation": {
+        "selected": {"type": "PROBLEM", "code": "LG-01-01"},
+        "selector_closed_after_selection": true,
+        "created_row": {"type": "PROBLEM", "code": "LG-01-01"}
+      },
+      "cleanup": {"method": "row suppression then Acciones comunes > Guardar", "confirmation": "BMXAA4205I", "fresh_read_zero_rows": true}
+    },
+    {
+      "class": "FGV-20",
+      "static_route": [
+        {"type": "CLASS", "code": "FGV-20", "failurelist_id": 42286},
+        {"type": "PROBLEM", "code": "P-0170", "failurelist_id": 321325},
+        {"type": "CAUSE", "code": "C-0370", "failurelist_id": 321560}
+      ],
+      "ui_observation": {
+        "after_problem": {
+          "type": "CAUSE",
+          "visible_options": [
+            {"code": "C-0001", "description": "Avería imputable"},
+            {"code": "C-0370", "description": "Software y Firmware (Metro Valencia)"},
+            {"code": "C-0400", "description": "Vandalismo"},
+            {"code": "C-0410", "description": "Avería Anulada"},
+            {"code": "C-0420", "description": "Comunicación entre operadores (Metro Valencia)"},
+            {"code": "C-0440", "description": "Incidencia Monética"}
+          ]
+        },
+        "selected": {"type": "CAUSE", "code": "C-0370"},
+        "selector_closed_after_selection": true,
+        "created_rows": [{"type": "PROBLEM", "code": "P-0170"}, {"type": "CAUSE", "code": "C-0370"}]
+      },
+      "cleanup": {"method": "child-to-parent row suppression then Acciones comunes > Guardar", "confirmation": "BMXAA4205I", "fresh_read_zero_rows": true}
+    },
+    {
+      "class": "CD-19",
+      "static_route": [
+        {"type": "CLASS", "code": "CD-19", "failurelist_id": 435},
+        {"type": "CAUSE", "code": "CD-19-0-3", "failurelist_id": 1875}
+      ],
+      "ui_observation": {
+        "selected_directly_from_root": {"type": "CAUSE", "code": "CD-19-0-3"},
+        "selector_remained_open": true,
+        "visible_options": [
+          {"type": "REMEDY", "code": "CD-19-0-3-1", "description": "Cleaning", "dom_id": "mx280_tdrow_[C:0]_ttxt-lb[R:0]"},
+          {"type": "REMEDY", "code": "CD-19-0-3-3", "description": "Repair", "dom_id": "mx280_tdrow_[C:0]_ttxt-lb[R:1]"},
+          {"type": "REMEDY", "code": "CD-19-0-3-4", "description": "Replacement", "dom_id": "mx280_tdrow_[C:0]_ttxt-lb[R:2]"},
+          {"type": "REMEDY", "code": "CD-19-0-3-2", "description": "False alarm", "dom_id": "mx280_tdrow_[C:0]_ttxt-lb[R:3]"}
+        ],
+        "remedy_selected": false
+      },
+      "harness_run": {"raw_outcome": "failed", "reason": "On reconnect the test harness expected zero rows while Maximo had persisted the selected CAUSE row.", "raw_artifact": "%TEMP%\\maximo-cause-check-597741324c2d4183974f5185babe5ed5\\shape-sample-20261028-3.json"},
+      "cleanup": {
+        "source": "stdout captured from cleanup_cd19.py execution",
+        "steps": ["STEP=suppression marked", "STEP=suppression saved"],
+        "save": {"method": "common-actions menu", "confirmed": "BMXAA4205I"},
+        "fresh_final_state": {"wonum": "3088915", "status": "APPR", "class": "CD-19", "rows": []}
+      }
+    }
+  ],
+  "catalogue_crosscheck": {
+    "file": "relaciones_originales.json.gz",
+    "RFN70_known_static_routes": [
+      ["CLASS:RFN-70#278488", "PROBLEM:OTROS-01#278490", "CAUSE:OTROS-02#278492", "REMEDY:OTROS-03#278498"],
+      ["CLASS:RFN-70#278488", "PROBLEM:OTROS-01#278490", "CAUSE:OTROS-02#278492", "REMEDY:OTROS-04#278500"],
+      ["CLASS:RFN-70#278488", "PROBLEM:OTROS-01#278490", "CAUSE:OTROS-02#278492", "REMEDY:OTROS-05#278502"]
+    ],
+    "duplicate_cause_ui_validation": "See validacion_ui_rfn20_duplicado.md: both C-RFN-062 occurrences under P-RFN-139 showed S-RFN-262; static snapshot also contains S-RFN-263, still unresolved for UI automation."
+  },
+  "source_artifacts": {
+    "shape_run": "%TEMP%\\maximo-cause-check-597741324c2d4183974f5185babe5ed5\\shape-sample-20261028-3.json",
+    "cleanup_script": "%TEMP%\\maximo-cause-check-597741324c2d4183974f5185babe5ed5\\cleanup_cd19.py"
+  }
+}

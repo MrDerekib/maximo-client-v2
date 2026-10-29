@@ -210,18 +210,53 @@ class BrowserCloseTests(TestCase):
         dialog.find_element(By.NAME,'duration').send_keys('1')
         dialog.find_element(By.NAME,'confirm').click()
         result=self.poll()
-        self.assertEqual(result,{'ot':'4378677','status':'ISSUE'})
+        self.assertEqual(result,{'ot':'4378677','status':'ISSUE','action':'close'})
         state=self.state()
         self.assertEqual(state['duration'],'1')
         self.assertEqual(state['end'],'2026-10-26T11:00:00')
         events=[e[0] for e in state['events']]
-        self.assertLess(events.index('save'),events.index('route'))
+        self.assertLess(events.index('route'),events.index('confirm-close'))
         self.assertEqual(events.count('confirm-close'),1)
         self.assertIsNone(self.browser._maximo_close_review)
         self.assertEqual(self.browser.execute_script("return sessionStorage.getItem('close-tab')"),'actuals')
         self.poll()
         self.assertEqual(self.state()['routes'],state['routes'])
         self.assertTrue(self.browser.find_element(By.ID,'maximo-desktop-close-ot').get_property('hidden'))
+
+    def test_discard_and_retain_need_a_separate_checkbox_confirmation(self):
+        expected={'discard':'DISCARDED','retain':'RETAINED'}
+        for action,status in expected.items():
+            with self.subTest(action=action):
+                self.browser.execute_script('resetState()')
+                dialog=self.prepare_dialog()
+                dialog.find_element(By.CSS_SELECTOR,f'[name="routeAction"][value="{action}"]').click()
+                self.fill_start()
+                dialog.find_element(By.NAME,'duration').send_keys('1')
+                dialog.find_element(By.NAME,'confirm').click()
+                extra=dialog.find_element(By.ID,'maximo-route-action-confirm')
+                self.assertFalse(extra.get_property('hidden'))
+                execute=dialog.find_element(By.NAME,'routeActionConfirm')
+                self.assertTrue(execute.get_property('disabled'))
+                self.assertEqual(self.state()['routes'],0)
+                self.assertEqual(self.state()['events'],[])
+                dialog.find_element(By.NAME,'routeActionAck').click()
+                self.assertFalse(execute.get_property('disabled'))
+                execute.click()
+                request=self.browser.execute_script(
+                    'return JSON.parse(document.documentElement.dataset.maximoCloseOtRequest)')
+                self.assertEqual(request['route_action'],action)
+                self.assertTrue(request['action_confirmed'])
+                result=self.poll()
+                self.assertEqual(result,{'ot':'4378677','status':status,'action':action})
+
+    def test_backend_rejects_destructive_action_without_explicit_confirmation(self):
+        for action in ('discard','retain','invalid'):
+            with self.subTest(action=action):
+                approval,pending=self.plan(route_action=action)
+                with self.assertRaises(RuntimeError):
+                    self.closer.prepare_close(approval,pending)
+                self.assertEqual(self.state()['routes'],0)
+                self.assertEqual(self.state()['events'],[])
 
     def test_close_button_is_hidden_until_the_work_order_is_in_progress(self):
         self.browser.execute_script("resetState({status:'APPR'})")
@@ -249,46 +284,46 @@ class BrowserCloseTests(TestCase):
         self.assertIn('hora actual',dialog.find_element(By.ID,'maximo-close-error').text)
         self.assertEqual(self.state()['events'],[])
 
-    def test_native_calendar_saves_both_date_and_time_values(self):
+    def test_locale_keyboard_entry_stages_both_date_and_time_values_until_routing(self):
         self.browser.execute_script('resetState({titleOnly:true})')
         approval,pending=self.plan()
         self.assertEqual(pending['snapshot']['start'],'2026-10-26T10:00:00')
         self.closer.prepare_close(approval,pending)
-        self.browser.refresh()
-        self.assertEqual(self.closer.inspect_repair()['end'],'2026-10-26T11:00:00')
+        self.assertEqual(self.state()['end'],'')
+        self.assertEqual(self.browser.execute_script('return draft.end'),'2026-10-26T11:00:00')
         self.assertEqual(self.state()['routes'],0)
-        self.assertIn(['date','end','2026-10-26T11:00:00'],self.state()['events'])
+        self.assertIn(['end','26/10/26 11:00:00'],self.state()['events'])
 
     def test_dates_moving_past_old_end_change_end_first(self):
         self.browser.execute_script("resetState({duration:'1',end:'2026-10-26T11:00:00'})")
         approval,pending=self.plan(start='2026-10-26T12:00:00',end='2026-10-26T13:00:00')
         self.closer.prepare_close(approval,pending)
         events=self.state()['events']
-        date_events=[(i,e) for i,e in enumerate(events) if e[0]=='date']
-        changed=[e[1] for _,e in date_events]
+        date_events=[(i,e) for i,e in enumerate(events) if e[0] in ('start','end')]
+        changed=[e[0] for _,e in date_events]
         self.assertEqual(changed[:2],['end','start'])
-        self.assertEqual(events[date_events[0][0]+1][0],'save')
-        self.assertEqual(self.state()['start'],'2026-10-26T12:00:00')
-        self.assertEqual(self.state()['end'],'2026-10-26T13:00:00')
+        self.assertNotIn('save',events[date_events[0][0]+1:])
+        self.assertEqual(self.browser.execute_script('return draft.start'),'2026-10-26T12:00:00')
+        self.assertEqual(self.browser.execute_script('return draft.end'),'2026-10-26T13:00:00')
 
-    def test_blank_end_is_saved_before_opening_its_date_widget(self):
+    def test_blank_end_is_filled_directly_before_routing(self):
         self.browser.execute_script("resetState({end:''})")
         approval,pending=self.plan(duration='1,25',start='2026-10-26T10:15:00',
                                    end='2026-10-26T11:30:00')
         self.closer.prepare_close(approval,pending)
         events=self.state()['events']
-        date_events=[(i,e) for i,e in enumerate(events) if e[0]=='date']
-        self.assertEqual([e[1] for _,e in date_events],['start','end'])
-        self.assertEqual(events[date_events[0][0]+1][0],'save')
-        self.assertEqual(self.state()['start'],'2026-10-26T10:15:00')
-        self.assertEqual(self.state()['end'],'2026-10-26T11:30:00')
+        date_events=[(i,e) for i,e in enumerate(events) if e[0] in ('start','end')]
+        self.assertEqual([e[0] for _,e in date_events],['start','end'])
+        self.assertNotIn('save',events[date_events[0][0]+1:])
+        self.assertEqual(self.browser.execute_script('return draft.start'),'2026-10-26T10:15:00')
+        self.assertEqual(self.browser.execute_script('return draft.end'),'2026-10-26T11:30:00')
 
     def test_keyboard_entry_does_not_round_start_to_quarters(self):
         self.browser.execute_script("resetState({start:'2026-10-26T14:08:16'})")
         approval,pending=self.plan(start='2026-10-26T11:07:12',end='2026-10-26T12:07:12')
         self.closer.prepare_close(approval,pending)
-        self.assertEqual(self.state()['start'],'2026-10-26T11:07:12')
-        self.assertEqual(self.state()['end'],'2026-10-26T12:07:12')
+        self.assertEqual(self.browser.execute_script('return draft.start'),'2026-10-26T11:07:12')
+        self.assertEqual(self.browser.execute_script('return draft.end'),'2026-10-26T12:07:12')
         self.assertEqual(self.state()['routes'],0)
 
     def test_missing_confirmation_expiry_token_or_wrong_ot_never_writes(self):

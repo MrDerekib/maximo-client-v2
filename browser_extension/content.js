@@ -48,6 +48,14 @@
     return String(element?.value || "").trim();
   }
 
+  function workOrderNumber() {
+    return logic.labeledFieldValue(document, "Orden de trabajo", "mx45-tb");
+  }
+
+  function workOrderStatus() {
+    return logic.labeledFieldValue(document, "Estado", "mx73-tb");
+  }
+
   function requestWorkOrderField() {
     return [...document.querySelectorAll("input[aria-labelledby]")].find(input =>
       visible(input) && input.getAttribute("aria-labelledby").split(/\s+/).some(id =>
@@ -105,7 +113,7 @@
     await waitFor(() => {
       const field = requestWorkOrderField();
       return field && [field.value, field.getAttribute("originalvalue"),
-        field.getAttribute("prekeyvalue")].includes(inputValue("mx45-tb")) ? field : null;
+        field.getAttribute("prekeyvalue")].includes(workOrderNumber()) ? field : null;
     }, "confirmación del número de OT", 5000);
     if (variantCount > 1) {
       const includeTechnicianAndTime = variantIndex === 0 ? "S" : "N";
@@ -138,8 +146,7 @@
   }
 
   async function workorderPage() {
-    await waitFor(() => document.getElementById("mx45-tb") &&
-      document.getElementById("mx73-tb"), "ficha de OT", 45000);
+    await waitFor(() => workOrderNumber() && workOrderStatus(), "ficha de OT", 45000);
     let button = null;
     let buttonText = "Imprimir parte";
     let running = false;
@@ -198,8 +205,8 @@
     }
     function refresh() {
       ensureButton();
-      const ot = inputValue("mx45-tb");
-      const status = inputValue("mx73-tb");
+      const ot = workOrderNumber();
+      const status = workOrderStatus();
       button.hidden = !/^\d{5,12}$/.test(ot);
       button.disabled = running || !logic.canPrintStatus(status);
       button.style.opacity = button.disabled ? "0.6" : "1";
@@ -240,17 +247,20 @@
 
     async function handlePrintClick() {
       ensureButton();
-      const ot = inputValue("mx45-tb");
-      if (running || !logic.canPrintStatus(inputValue("mx73-tb")) || !/^\d{5,12}$/.test(ot)) return;
+      const ot = workOrderNumber();
+      if (running || !logic.canPrintStatus(workOrderStatus()) || !/^\d{5,12}$/.test(ot)) return;
       let jobId;
       running = true;
       button.disabled = true;
       setButtonText("Preparando parte…");
       try {
         const outputFormat = button.dataset.maximoReportAction === "pdf" ? "pdf" : "html";
+        // Session storage survives Maximo's full-page reloads. An explicit
+        // desktop action can override it, including an explicit false value.
         const closeTabs = outputFormat === "html" &&
-          (button.dataset.maximoCloseReportTabs === "true" ||
-            document.documentElement.dataset.maximoCloseReportTabs === "true");
+          (button.dataset.maximoCloseReportTabs ??
+            sessionStorage.getItem("maximoDesktop.closeReportTabs") ??
+            document.documentElement.dataset.maximoCloseReportTabs) === "true";
         delete button.dataset.maximoReportAction;
         delete button.dataset.maximoCloseReportTabs;
         const job = await send("START", { ot, outputFormat, client: repairClient(), closeTabs });

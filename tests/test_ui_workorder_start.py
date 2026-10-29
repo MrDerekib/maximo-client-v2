@@ -6,6 +6,22 @@ from unittest.mock import Mock, patch
 from config import AppConfig
 from tests.test_ui_app_updates import QApplication, MaximoDesktopWindow
 from PySide6.QtWidgets import QMainWindow
+from failure_catalog import default_selection
+
+
+def settings_window():
+    class SettingsWindow(MaximoDesktopWindow):
+        def __init__(self):
+            QMainWindow.__init__(self)
+            self.cfg = AppConfig()
+            self.status = Mock()
+            for name in ('schedule_auto_update', '_refresh_auto_update_summary', '_refresh_app_update_block',
+                         '_refresh_reconciliation_summary', '_refresh_fault_description_summary',
+                         '_update_fault_description_controls', '_refresh_priorities', 'refresh_table'):
+                setattr(self, name, Mock())
+            self.setCentralWidget(self._build_settings_page())
+            self._load_config()
+    return SettingsWindow()
 
 
 def window(enabled=True):
@@ -21,18 +37,7 @@ def window(enabled=True):
 class WorkorderStartUiTests(TestCase):
     def test_settings_load_and_save_the_opt_in_control(self):
         app = QApplication.instance() or QApplication([])
-        class SettingsWindow(MaximoDesktopWindow):
-            def __init__(self):
-                QMainWindow.__init__(self)
-                self.cfg = AppConfig()
-                self.status = Mock()
-                for name in ('schedule_auto_update', '_refresh_auto_update_summary', '_refresh_app_update_block',
-                             '_refresh_reconciliation_summary', '_refresh_fault_description_summary',
-                             '_update_fault_description_controls', '_refresh_priorities', 'refresh_table'):
-                    setattr(self, name, Mock())
-                self.setCentralWidget(self._build_settings_page())
-                self._load_config()
-        ui = SettingsWindow()
+        ui = settings_window()
         try:
             self.assertFalse(ui.workorder_start_check.isChecked())
             self.assertFalse(ui.workorder_close_check.isChecked())
@@ -45,6 +50,38 @@ class WorkorderStartUiTests(TestCase):
             self.assertTrue(save.call_args.args[0].workorder_start_enabled)
             self.assertTrue(save.call_args.args[0].workorder_close_enabled)
             self.assertFalse(ui.settings_dirty())
+        finally:
+            ui.deleteLater()
+            app.processEvents()
+
+    def test_settings_saves_only_start_mode_without_losing_the_default_combination(self):
+        app = QApplication.instance() or QApplication([])
+        ui = settings_window()
+        try:
+            ui.workorder_start_check.setChecked(True)
+            ui.workorder_start_mode_combo.setCurrentIndex(ui.workorder_start_mode_combo.findData('only'))
+            with patch('ui_qt.save_config') as save:
+                self.assertTrue(ui.save_settings(show_feedback=False))
+            self.assertEqual(save.call_args.args[0].workorder_start_mode, 'only')
+            self.assertEqual(save.call_args.args[0].workorder_start_selection, default_selection())
+            self.assertFalse(ui.settings_dirty())
+        finally:
+            ui.deleteLater()
+            app.processEvents()
+
+    def test_incomplete_configured_path_cannot_save_or_replace_previous_config(self):
+        app = QApplication.instance() or QApplication([])
+        ui = settings_window()
+        try:
+            ui.workorder_start_check.setChecked(True)
+            ui.workorder_failure_picker.class_combo.setCurrentIndex(
+                ui.workorder_failure_picker.class_combo.findData('TRANSPORTES|LG-01'))
+            with patch('ui_qt.save_config') as save, patch('ui_qt.QMessageBox.warning') as warning:
+                self.assertFalse(ui.save_settings(show_feedback=False))
+            save.assert_not_called()
+            warning.assert_called_once()
+            self.assertFalse(ui.cfg.workorder_start_enabled)
+            self.assertEqual(ui.cfg.workorder_start_selection, default_selection())
         finally:
             ui.deleteLater()
             app.processEvents()

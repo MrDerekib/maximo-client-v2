@@ -46,6 +46,8 @@ la ejecución desde Python y en el modo de desarrollo.
 | `maximo_client.py`, `updater.py` | Navegación en Maximo, sincronización y enriquecimiento |
 | `db.py`, `search_filters.py` | SQLite, migraciones y filtros |
 | `config.py`, `credential_store.py`, `app_paths.py` | Configuración, credenciales y rutas persistentes |
+| `failure_catalog.py`, `failure_picker.py`, `resources/failure_catalog.json` | Catálogo validado y selección condicional de anomalías |
+| `anomaly_diagnostics.py` | Registro rotativo de incidencias y opciones observadas en Maximo |
 | `priority_importer.py`, `detailed_description.py`, `excel_export.py` | Prioridades, contenido enriquecido y exportación |
 | `managed_install_qt.py`, `update_checker.py`, `update_installer.py` | Instalación y actualización de la aplicación |
 | `maintenance.py` | Retención de exportaciones XLS procesadas |
@@ -67,7 +69,7 @@ actualizan desde versiones anteriores siguen formando parte de la V1.
 
 El script usa `.venv` y crea `release\MaximoDesktop-<versión>`, con la carpeta
 standalone y `MaximoDesktop-v<versión>-windows.zip`. La extensión se empaqueta con
-sus cuatro archivos de ejecución; las pruebas y la documentación quedan en el
+sus archivos de ejecución y el catálogo de anomalías; las pruebas y la documentación quedan en el
 repositorio. `-Force` permite reemplazar la compilación de esa misma versión y
 `-KeepBuild` conserva los archivos intermedios de Nuitka.
 
@@ -106,8 +108,8 @@ excluidos del control de versiones.
 
 ### Inicio opcional de OT
 
-En **Configuración → Acciones de OT en Edge**, activa **Mostrar «Iniciar OT»
-en Edge (flujo RFN-70)** y guarda los cambios. Está desactivado por defecto.
+En **Configuración → Extensión de Edge → Órdenes de trabajo**, activa
+**Mostrar «Iniciar OT» en Edge** y guarda los cambios. Está desactivado por defecto.
 «Abrir OT» y los enlaces del listado siguen abriendo la ficha sin iniciarla.
 
 Al habilitarlo aparece un botón en las nuevas ventanas de Maximo abiertas desde
@@ -115,19 +117,36 @@ MD. Utiliza la sesión abierta y muestra el progreso en el botón. El inicio est
 disponible únicamente en Edge; se ha retirado la acción del menú contextual y
 la ejecución del inicio en segundo plano desde MD.
 
-El flujo solo inicia OT en `APPR`: selecciona la clase `RFN-70` en Informes de
-anomalías (también si está vacía o tiene otro código), y `OTROS-01`, `OTROS-02` y
-`OTROS-03` mediante **Seleccionar códigos de anomalía**, en esa misma pestaña.
-Cada clic en un código avanza al siguiente nivel y el último cierra el diálogo;
-no se pulsan los botones Seleccionar ni Seleccionar y regresar. Después se
-comprueban los tres valores en Soluciones. Si ya eran correctos, no se vuelven
-a seleccionar. El flujo continúa el aviso conocido de problema ya informado y
+En **Al pulsar Iniciar OT** se elige entre:
+
+- **Solo iniciar:** conserva la clase y los códigos actuales.
+- **Iniciar y establecer anomalías:** aplica la clase y ruta predeterminadas.
+  Los desplegables son condicionales: cambiar un padre limpia sus descendientes,
+  y es obligatorio completar una ruta válida. Hay rutas que terminan en un
+  problema o una causa, y clases que comienzan directamente por una causa.
+
+Las instalaciones anteriores conservan `RFN-70 → OTROS-01 → OTROS-02 → OTROS-03`
+como predeterminado. **Elegir anomalías…** junto al botón de Edge permite escoger
+otra combinación, o solo iniciar, para esa ejecución; no cambia la configuración
+de MD. Cancelar el diálogo no modifica la OT.
+
+El flujo solo inicia OT en `APPR`. En modo configurado usa la clase y
+**Seleccionar códigos de anomalía** de Maximo. Si cambia una jerarquía existente,
+primero la suprime desde los controles nativos y confirma su guardado.
+Cada clic avanza al siguiente nivel y la hoja cierra el diálogo; no se pulsan
+los botones Seleccionar ni Seleccionar y regresar. La combinación se verifica
+antes de iniciar. Si ya era correcta, se conserva. Una opción ausente o una
+selección guardada inválida detiene la operación en lugar de usar otra ruta.
+La rama `RFN-20 / P-RFN-139 / C-RFN-062 / S-RFN-263` no se ofrece, según las
+comprobaciones documentadas en `docs/catalogos/anomalias/2026-10-28/`.
+
+El flujo continúa el aviso conocido de problema ya informado y
 acepta **Iniciar orden**. Se detiene al
 confirmar `INPRG`; una OT ya iniciada no vuelve a enrutarse. Un diálogo desconocido
 detiene la operación y muestra su mensaje para revisión.
 
-Antes de empezar, después de cambiar la clase y tras completar el selector se
-guardan los cambios pendientes. La automatización no modifica los campos de
+Después de cambiar la clase y tras completar el selector se
+guardan los cambios. La automatización no modifica los campos de
 Soluciones mediante sus lupas. El guardado espera la respuesta del servidor y su
 confirmación; también contempla el aviso de problema ya informado en ese paso.
 
@@ -139,9 +158,27 @@ Los contenedores de avisos y diálogos que Maximo conserva ocultos no bloquean e
 inicio: se comprueba la visibilidad de sus paneles, tanto en el botón como en la
 automatización. Un aviso visible sigue requiriendo revisión.
 
+### Registro de incidencias de anomalías
+
+Si falla la validación o aplicación de una combinación, se crea una entrada en
+`logs/anomalias_incidencias.jsonl`, dentro de la carpeta de datos de MD (o
+`MaximoDesktop-dev` durante el desarrollo). La entrada conserva la fecha UTC,
+la OT, la combinación solicitada, el nivel esperado, la etapa y el error,
+además de los códigos, tipos y descripciones que se consultaron en Maximo.
+
+Se conservan las opciones observadas antes de filtrar y el resultado filtrado,
+con el filtro y la paginación disponibles. Son capturas de las páginas
+consultadas: una lista parcial o recortada no se presenta como catálogo completo.
+No se recorren páginas adicionales al producirse el error ni se elige otra
+combinación automáticamente.
+
+El registro rota a partir de 1 MiB y conserva tres copias anteriores. No contiene
+credenciales, cookies, URLs de sesión ni HTML de la página. Un fallo al escribir
+el registro no sustituye el error original ni modifica la configuración.
+
 ### Cierre de una reparación desde Edge
 
-En **Configuración → Acciones de OT en Edge**, activa **Mostrar «Cerrar OT» en
+En **Configuración → Extensión de Edge**, activa **Mostrar «Cerrar OT» en
 Edge**. Solo está disponible en una OT en `INPRG`. No hay una acción de cierre
 en el menú contextual de MD ni se cierra una OT al abrir su ficha.
 

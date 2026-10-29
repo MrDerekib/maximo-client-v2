@@ -568,28 +568,27 @@ def open_ot(
                 f"carga de la OT {ot} para activar la selección nativa del lookup",
                 timeout=45,
             )
+        if repair_extension_loaded:
+            # Tab session storage survives Maximo reloads, including the two
+            # reloads used to validate an OT closure. It expires with the tab.
+            driver.execute_script(
+                "window.sessionStorage.setItem('maximoDesktop.closeReportTabs', "
+                "arguments[0] ? 'true' : 'false');",
+                bool(close_after_direct_print),
+            )
+            logging.info("OT %s: cierre de ventanas del parte %s (preferencia de sesión)",
+                         ot, "activado" if close_after_direct_print else "desactivado")
         if report_action:
             start_repair_report(
                 driver, ot, report_action,
                 close_after_direct_print=close_after_direct_print,
             )
-        elif close_after_direct_print:
-            wait_for(
-                driver,
-                lambda browser: (
-                    element if str((element := browser.find_element(By.ID, "mx45-tb")).get_attribute("value") or "").strip()
-                    == str(ot).strip() else False
-                ),
-                f"carga de la OT {ot} para aplicar las preferencias de impresión",
-                timeout=45,
-            )
-            driver.execute_script(
-                "document.documentElement.dataset.maximoCloseReportTabs = 'true';"
-            )
 
         if browser_start_enabled:
             driver._maximo_workorder_start_enabled = True
             driver._maximo_workorder_started = on_workorder_started
+            driver._maximo_workorder_start_mode = getattr(cfg, "workorder_start_mode", "configured")
+            driver._maximo_workorder_start_selection = getattr(cfg, "workorder_start_selection", None)
         if browser_close_enabled:
             driver._maximo_workorder_close_enabled = True
             driver._maximo_workorder_closed = on_workorder_closed

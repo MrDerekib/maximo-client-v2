@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 import sqlite3
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass, asdict, field, fields
 from contextlib import closing
 from pathlib import Path
 
@@ -14,6 +14,7 @@ from app_paths import (
     create_unique_file, ensure_user_directories,
 )
 from credential_store import load_credentials, save_credentials
+from failure_catalog import default_selection
 
 LEGACY_CONFIG_PATH = BASE_DIR / "config.json"
 _legacy_cleanup_attempted = False
@@ -40,6 +41,8 @@ class AppConfig:
     theme: str = "system"
     repair_extension_enabled: bool = False
     workorder_start_enabled: bool = False
+    workorder_start_mode: str = "configured"
+    workorder_start_selection: dict = field(default_factory=default_selection)
     workorder_close_enabled: bool = False
     repair_print_mode: str = "dialog"
     repair_close_tabs_after_direct_print: bool = False
@@ -78,6 +81,10 @@ class AppConfig:
             self.repair_print_mode = "dialog"
         if not isinstance(self.workorder_start_enabled, bool):
             self.workorder_start_enabled = False
+        if self.workorder_start_mode not in ("configured", "only"):
+            self.workorder_start_mode = "invalid"
+        if not isinstance(self.workorder_start_selection, dict):
+            self.workorder_start_selection = {}
         if not isinstance(self.workorder_close_enabled, bool):
             self.workorder_close_enabled = False
         if not isinstance(self.repair_close_tabs_after_direct_print, bool):
