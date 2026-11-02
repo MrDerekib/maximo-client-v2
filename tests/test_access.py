@@ -14,6 +14,36 @@ import updater
 
 
 class AccessTests(unittest.TestCase):
+    def test_pending_repair_lookup_is_clicked_by_webdriver(self):
+        option_id = "lookup_page3_tdrow_[C:1]_ttxt-lb[R:0]"
+        option = Mock()
+        option.is_displayed.return_value = True
+        driver = Mock()
+        driver.execute_script.side_effect = [option_id, None]
+        driver.find_elements.return_value = [option]
+
+        self.assertTrue(client._click_pending_repair_lookup(driver))
+
+        driver.find_elements.assert_called_once_with(client.By.ID, option_id)
+        option.click.assert_called_once_with()
+        self.assertIn("maximoNativeLookupClick", driver.execute_script.call_args.args[0])
+
+    def test_pending_lookup_click_rejects_unexpected_ids(self):
+        driver = Mock()
+        driver.execute_script.return_value = "mx45-tb"
+
+        self.assertFalse(client._click_pending_repair_lookup(driver))
+
+        driver.find_elements.assert_not_called()
+        self.assertIn("delete document.documentElement.dataset.maximoNativeLookupClick",
+                      driver.execute_script.call_args.args[0])
+
+    def test_close_after_direct_print_requires_visible_default_printer(self):
+        self.assertTrue(client._should_close_after_direct_print(True, False, "Office Printer"))
+        self.assertFalse(client._should_close_after_direct_print(True, False, ""))
+        self.assertFalse(client._should_close_after_direct_print(True, True, "Office Printer"))
+        self.assertFalse(client._should_close_after_direct_print(False, False, "Office Printer"))
+
     def test_repair_extension_print_mode_applies_only_to_visible_edge(self):
         with temporary_directory() as directory:
             root = Path(directory)
@@ -86,8 +116,50 @@ class AccessTests(unittest.TestCase):
         with patch.object(client, "wait_for", side_effect=wait):
             client.start_repair_report(driver, "4228010", "pdf")
         driver.execute_script.assert_called_once_with(
-            "arguments[0].dataset.maximoReportAction = arguments[1]; arguments[0].click();",
-            button, "pdf")
+            "arguments[0].dataset.maximoReportAction = arguments[1]; "
+            "arguments[0].dataset.maximoCloseReportTabs = arguments[2] ? 'true' : 'false'; "
+            "arguments[0].click();",
+            button, "pdf", False)
+
+    def test_desktop_direct_print_passes_close_tabs_policy_to_extension(self):
+        driver = Mock()
+        number = Mock()
+        number.get_attribute.return_value = "4228010"
+        status = Mock()
+        status.get_attribute.return_value = "ISSUE"
+        button = Mock()
+        button.is_displayed.return_value = True
+        button.is_enabled.return_value = True
+        driver.find_element.side_effect = lambda _, id: (
+            number if id == "mx45-tb" else status if id == "mx73-tb" else button
+        )
+        with patch.object(client, "wait_for", side_effect=lambda browser, condition, *_args, **_kwargs: condition(browser)):
+            client.start_repair_report(driver, "4228010", "print", close_after_direct_print=True)
+        self.assertTrue(driver.execute_script.call_args.args[3])
+
+    def test_ot_session_preserves_cleanup_policy_across_maximo_reloads(self):
+        cfg = SimpleNamespace(repair_extension_enabled=True, workorder_start_enabled=False,
+                              workorder_close_enabled=False)
+        for requested, printer, expected in [(True, "Office Printer", True),
+                                              (False, "Office Printer", False),
+                                              (True, "", False)]:
+            with self.subTest(requested=requested, printer=printer):
+                driver = Mock()
+                driver.find_element.return_value.get_attribute.return_value = "4384025"
+                driver.find_element.return_value.is_displayed.return_value = True
+                driver.find_element.return_value.is_enabled.return_value = True
+                with patch.object(client, "load_config", return_value=cfg), \
+                     patch.object(client, "create_edge_profile", return_value="test-profile"), \
+                     patch.object(client, "setup_driver", return_value=driver), \
+                     patch.object(client, "default_printer_name", return_value=printer), \
+                     patch.object(client, "login"), patch.object(client, "open_workorders_app"), \
+                     patch.object(client, "_start_ot_action_watcher"), \
+                     patch.object(client, "wait_for", side_effect=lambda d, condition, *_a, **_k: condition(d)):
+                    session = client.open_ot("4384025", close_after_direct_print=requested)
+                self.assertIs(session[0], driver)
+                driver.execute_script.assert_called_once_with(
+                    "window.sessionStorage.setItem('maximoDesktop.closeReportTabs', "
+                    "arguments[0] ? 'true' : 'false');", expected)
 
     def test_desktop_report_stops_before_extension_for_ineligible_status(self):
         driver = Mock()

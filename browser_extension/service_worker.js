@@ -50,13 +50,24 @@ async function readJob() {
   return null;
 }
 
-async function tellSource(job, text) {
+async function tellSource(job, text, type = "STATUS") {
   if (!job) return;
   try {
-    await chrome.tabs.sendMessage(job.sourceTabId, { type: "STATUS", text });
+    await chrome.tabs.sendMessage(job.sourceTabId, { type, text });
   } catch (_) {
     // The source tab may have been closed after submitting the report.
   }
+}
+
+function isBoixeresClient(client) {
+  return String(client || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ").trim().toUpperCase().includes("TMB BOIXERES");
+}
+
+async function closeViewerTab(job) {
+  if (!job.closeTabs || !job.viewerTabId) return;
+  try { await chrome.tabs.remove(job.viewerTabId); }
+  catch (_) { /* The user may already have closed the BIRT tab. */ }
 }
 
 async function handleMessage(message, sender) {
@@ -71,14 +82,26 @@ async function handleMessage(message, sender) {
     if (!["html", "pdf"].includes(outputFormat)) throw new Error("Formato de parte no válido.");
     const job = {
       id: crypto.randomUUID(), ot, outputFormat, sourceTabId: tab.id,
-      viewerTabId: null, outputTabId: null, startedAt: Date.now()
+      viewerTabId: null, outputTabId: null, startedAt: Date.now(),
+      variantIndex: 0,
+      variantCount: outputFormat === "html" && isBoixeresClient(message.client) ? 2 : 1,
+      closeTabs: outputFormat === "html" && message.closeTabs === true
     };
     await chrome.storage.session.set({ [JOB_KEY]: job });
-    return { jobId: job.id, ot };
+    return { jobId: job.id, ot, variantIndex: job.variantIndex, variantCount: job.variantCount };
   }
 
   const job = await readJob();
   if (!job) throw new Error("No hay un parte solicitado o ha caducado la espera.");
+
+  if (message.type === "ACTIVATE_SOURCE") {
+    if (message.jobId !== job.id || tab.id !== job.sourceTabId) {
+      throw new Error("La ficha no pertenece a la OT solicitada.");
+    }
+    const source = await chrome.tabs.update(job.sourceTabId, { active: true });
+    await chrome.windows.update(source.windowId, { focused: true });
+    return { activated: true };
+  }
 
   if (message.type === "CLICK_REPORT_MENU") {
     if (message.jobId !== job.id || tab.id !== job.sourceTabId) {
@@ -148,6 +171,9 @@ async function handleMessage(message, sender) {
       world: "MAIN",
       args: [job.ot],
       func: ot => {
+        // An inactive document can show the inserted value without dispatching
+        // blur, leaving Maximo's server-side parameter empty.
+        if (!document.hasFocus()) return { filled: false, reason: "focus" };
         const visible = element => Boolean(element?.getClientRects().length);
         const field = [...document.querySelectorAll("input[aria-labelledby]")].find(input =>
           visible(input) && input.getAttribute("aria-labelledby").split(/\s+/).some(id =>
@@ -177,10 +203,79 @@ async function handleMessage(message, sender) {
       }
     });
     if (execution?.result?.filled === false)
-      throw new Error("No se encontró el campo «Work order number».");
+      throw new Error(execution.result.reason === "focus"
+        ? "La ficha de OT no tiene el foco; no se introdujo el número del parte."
+        : "No se encontró el campo «Work order number».");
     // Maximo may redraw the form during blur and drop the injected function's
     // return value; the content script verifies the field after this call.
     return { filled: true };
+  }
+
+  if (message.type === "SET_REPAIR_INFO") {
+    if (message.jobId !== job.id || tab.id !== job.sourceTabId || job.variantCount !== 2 ||
+        !["S", "N"].includes(message.value)) {
+      throw new Error("El parámetro de la variante no pertenece a este parte.");
+    }
+    const [execution] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: "MAIN",
+      args: [message.value],
+      func: async value => {
+        const visible = element => Boolean(element?.getClientRects().length);
+        const labelPattern = /incluir nombre y tiempo reparaci[oó]n/i;
+        const controls = [...document.querySelectorAll("input, textarea, select")].filter(visible);
+        const field = controls.find(element => {
+          const labelledBy = (element.getAttribute("aria-labelledby") || "").split(/\s+/);
+          if (labelledBy.some(id => labelPattern.test(document.getElementById(id)?.textContent || "")))
+            return true;
+
+          if ([...document.querySelectorAll("label[for]")].some(label =>
+            label.htmlFor === element.id && labelPattern.test(label.textContent || ""))) return true;
+
+          const row = element.closest("tr, [role='row']");
+          if (row && labelPattern.test(row.innerText || row.textContent || "")) return true;
+
+          const labelId = element.id?.replace(/-tb$/, "-lb");
+          return Boolean(labelId && labelPattern.test(document.getElementById(labelId)?.textContent || ""));
+        });
+        if (!field) return { updated: false, reason: "field" };
+        if (String(field.value || "").trim() === value) return { updated: true, alreadySet: true };
+
+        const lookupId = field.getAttribute("linkedimage");
+        const lookup = lookupId && document.getElementById(lookupId);
+        if (!lookup || !visible(lookup)) return { updated: false, reason: "lookup" };
+        lookup.click();
+
+        const normalize = text => String(text || "").replace(/\s+/g, " ").trim().toUpperCase();
+        const started = Date.now();
+        while (Date.now() - started < 10000) {
+          const choices = [...document.querySelectorAll(
+            "span[id^='lookup_page'][id*='_tdrow_'][id*='_ttxt-lb']"
+          )].filter(option => visible(option) && normalize(option.textContent) === value);
+          if (choices.length === 1) {
+            const option = choices[0];
+            // Mark the exact Maximo link for Selenium. WebDriver can produce a
+            // trusted browser click; synthetic DOM events are ignored here.
+            document.documentElement.dataset.maximoNativeLookupClick = option.id;
+            return { updated: true, pendingNativeClick: true, method: "lookup" };
+          }
+          if (choices.length > 1) return { updated: false, reason: "ambiguous" };
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        return { updated: false, reason: "option" };
+      }
+    });
+    if (execution?.result?.updated !== true) {
+      const reasons = {
+        field: "No se encontró el parámetro «Incluir nombre y tiempo reparación» del informe.",
+        lookup: "No se encontró la lupa del parámetro del parte.",
+        option: "La lupa no mostró una opción «N» reconocible; no se envió el informe.",
+        ambiguous: "La lupa mostró varias opciones «N»; no se envió el informe.",
+      };
+      throw new Error(reasons[execution?.result?.reason] ||
+        "Maximo no confirmó la selección «N» en la lupa; no se envió el informe.");
+    }
+    return { updated: true, maximoChanged: execution?.result?.maximoChanged === true };
   }
 
   if (message.type === "CLICK_REPORT_SUBMIT") {
@@ -228,8 +323,12 @@ async function handleMessage(message, sender) {
     job.viewerTabId = tab.id;
     await chrome.storage.session.set({ [JOB_KEY]: job });
     await tellSource(job, job.outputFormat === "pdf"
-      ? "Parte generado; preparando PDF…" : "Parte generado; preparando impresión…");
-    return { ot: job.ot, jobId: job.id, outputFormat: job.outputFormat };
+      ? "Parte generado; preparando PDF…"
+      : job.variantCount > 1
+        ? `Parte ${job.variantIndex + 1}/2 generado; preparando impresión…`
+        : "Parte generado; preparando impresión…", "PROGRESS");
+    return { ot: job.ot, jobId: job.id, outputFormat: job.outputFormat,
+      variantIndex: job.variantIndex, variantCount: job.variantCount };
   }
 
   if (message.type === "CLAIM_OUTPUT") {
@@ -248,11 +347,31 @@ async function handleMessage(message, sender) {
     if (message.type === "FINISH" && tab.id !== job.outputTabId) {
       throw new Error("La vista de impresión no pertenece al parte solicitado.");
     }
+    if (message.type === "FINISH" && job.variantCount === 2 && job.variantIndex === 0) {
+      await closeViewerTab(job);
+      job.variantIndex = 1;
+      job.viewerTabId = null;
+      job.outputTabId = null;
+      job.startedAt = Date.now();
+      await chrome.storage.session.set({ [JOB_KEY]: job });
+      try {
+        await chrome.tabs.sendMessage(job.sourceTabId, {
+          type: "NEXT_VARIANT", jobId: job.id, variantIndex: 1,
+          variantCount: job.variantCount,
+          text: "Primera copia lista; preparando la variante sin técnico ni tiempo…"
+        });
+      } catch (_) {
+        await chrome.storage.session.remove(JOB_KEY);
+        throw new Error("No se pudo iniciar la segunda variante del parte.");
+      }
+      return { ok: true, nextVariant: true, closeTabs: job.closeTabs };
+    }
+    if (message.type === "FINISH") await closeViewerTab(job);
     await chrome.storage.session.remove(JOB_KEY);
     await tellSource(job, message.type === "FINISH"
       ? "Parte preparado. Comprueba el diálogo o la cola de impresión."
       : `No se pudo preparar el parte: ${message.reason || "error desconocido"}`);
-    return { ok: true };
+    return { ok: true, closeTabs: message.type === "FINISH" && job.closeTabs };
   }
   throw new Error("Mensaje desconocido.");
 }

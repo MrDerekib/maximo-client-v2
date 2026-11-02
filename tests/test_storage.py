@@ -32,6 +32,11 @@ class CredentialStoreTests(unittest.TestCase):
         self.assertEqual(config.AppConfig().theme, "system")
         self.assertEqual(config.AppConfig(theme="dark").theme, "dark")
         self.assertEqual(config.AppConfig(theme="contraste").theme, "system")
+        self.assertFalse(config.AppConfig().repair_close_tabs_after_direct_print)
+        self.assertTrue(config.AppConfig(repair_close_tabs_after_direct_print=True)
+                        .repair_close_tabs_after_direct_print)
+        self.assertFalse(config.AppConfig(repair_close_tabs_after_direct_print="yes")
+                         .repair_close_tabs_after_direct_print)
 
 
 class StorageMigrationTests(unittest.TestCase):
@@ -72,6 +77,7 @@ class StorageMigrationTests(unittest.TestCase):
                 credentials["value"] = (username, password)
 
             patches = (
+                patch.object(config, "_legacy_cleanup_attempted", False),
                 patch.object(config, "BASE_DIR", legacy_root),
                 patch.object(config, "LEGACY_CONFIG_PATH", legacy_config),
                 patch.object(config, "CONFIG_PATH", config_path),

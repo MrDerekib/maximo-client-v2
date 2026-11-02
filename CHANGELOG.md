@@ -1,11 +1,123 @@
 # Historial de cambios
 
-## Sin publicar — Limpieza del proyecto V1
+## 1.1.0 — Inicio y cierre de OT desde Edge y anomalías configurables
+
+- Corregida la carga inicial de los desplegables de anomalías en Maximo,
+  que sustituye el constructor JavaScript Event. La combinación predeterminada
+  aparece completa sin cambiar antes de clase; confirmar permanece deshabilitado
+  hasta disponer de una selección válida.
+- Corregido el bloqueo al intentar Guardar desde un menú deshabilitado tras
+  seleccionar anomalías. Si Maximo ya las ha guardado, se confirma su persistencia
+  recargando la ficha antes de continuar, sin esperar una respuesta de un botón
+  inactivo. La comprobación también se aplica a «Cambiar anomalías».
+- Nuevo botón «Cambiar anomalías» en las OT iniciadas (INPRG). Permite elegir,
+  guardar y verificar otra combinación sin enrutar la OT ni modificar los
+  predeterminados de MD. Comparte la activación con «Iniciar OT» y vuelve a la
+  pestaña de origen. El cambio y la revisión del cierre no se ejecutan a la vez.
+- «Elegir anomalías…» conserva y vuelve a mostrar los desplegables al alternar
+  entre aplicar una combinación y solo iniciar. Una ruta incompleta sigue
+  requiriendo completar sus opciones antes de iniciar con anomalías.
+- El inicio de OT permite conservar las anomalías actuales o aplicar una
+  combinación predeterminada mediante listas condicionales en Configuración.
+  «Elegir anomalías…» en Edge permite cambiarla solo para esa ejecución.
+  El catálogo conserva las relaciones entre clase, problema, causa y resolución;
+  no se ofrecen las combinaciones descartadas en la validación.
+- Las incidencias del flujo de anomalías se guardan en un registro local con
+  la combinación solicitada, el paso fallido y las opciones consultadas en Maximo,
+  incluyendo filtros y paginación. El archivo tiene rotación automática.
+- La impresión conserva la preferencia de cerrar ventanas después de recargar
+  la ficha al cerrar una OT, durante la misma sesión de Edge.
+- El diálogo de cierre mantiene la distribución al cambiar entre las acciones
+  o entre hora de inicio y finalización. Avisa de que cerrar, desechar y retener
+  son acciones irreversibles; el diálogo de justificación de Desechar activo
+  se reconoce como un paso manual del proceso.
+
+- «Imprimir parte» localiza el OT y su estado por las etiquetas de Maximo además
+  de los IDs habituales, para que el botón siga disponible al cambiar a otras
+  pestañas internas de la ficha.
+- El diálogo «Cerrar OT» permite elegir Cerrar, Desechar o Retener equipo.
+  Desechar y Retener exigen una confirmación adicional con casilla antes de
+  ejecutar la acción; el flujo nativo se limita a la opción elegida.
+- La configuración reúne las opciones de acciones de OT y partes de reparación
+  de la extensión bajo una única sección «Extensión de Edge».
+- Las acciones «Iniciar OT» y «Cerrar OT» vuelven a la pestaña de Maximo desde
+  la que se lanzaron. «Iniciar OT» solo aparece en estado APPR y «Cerrar OT»
+  solo aparece cuando la orden ya está iniciada (INPRG).
+- El botón «Imprimir parte» se vuelve a insertar si Maximo reconstruye la página
+  al cambiar de pestaña, evitando tener que recargar la ficha para recuperarlo.
+- El cierre introduce inicio y fin con el formato de Maximo (`dd/MM/yy HH:mm:ss`)
+  y Tab. Los valores se mantienen en la ficha hasta confirmar el enrutado; después
+  se recarga la OT y se verifican en ISSUE antes de dar el proceso por terminado.
+
+- Las acciones «Iniciar OT» y «Cerrar OT» se habilitan por separado en
+  Configuración y se ejecutan únicamente desde las ventanas de Edge abiertas
+  por MD. Retirado el inicio de OT del menú contextual y su ejecución en segundo
+  plano desde la aplicación. «Abrir OT» sigue abriendo únicamente la ficha.
+- Nuevo cierre de reparación desde Edge: revisa las horas en Consumos Actuales,
+  permite indicar el inicio o el final y calcula la otra hora según la duración,
+  sin superar la hora actual. Solo acepta duraciones en tramos de 0,25 h
+  (15 minutos). La revisión exige confirmación explícita;
+  cancelar no modifica los datos. Al confirmar, enruta hasta ISSUE, pendiente de
+  salida del almacén, y verifica duración y fechas tras recargar, sin continuar a CLOSE.
+  Ante un resultado incierto no repite la aceptación final del cierre.
+- «Ahora» completa la finalización con la hora actual. Las fechas se introducen
+  con precisión de minuto; el selector avanza en intervalos de cinco minutos.
+  El diálogo se ha rediseñado para mantener los controles legibles y accesibles
+  en ventanas pequeñas.
+- «Iniciar OT» y «Cerrar OT» comparten posición en la parte inferior derecha; solo
+  se muestra la acción correspondiente al estado, sin reservar espacio para la otra.
+
+- Corregido el falso aviso de diálogo abierto al iniciar una OT: Maximo conserva
+  el contenedor `warndiv` aunque su panel esté oculto. El botón y la automatización
+  comprueban ahora la visibilidad del panel real, sin bloquear por contenedores
+  inactivos ni dejar pasar los avisos que sí están abiertos.
+
+- Corregida la recuperación cuando Maximo reconstruye un diálogo antes de pulsar
+  «Continuar» u otro botón del inicio de OT. Se vuelve a localizar el control y se
+  comprueba el resultado antes de repetir una acción.
+- «Enrutar flujo de trabajo» se reintenta hasta tres veces si no abre ningún
+  diálogo y la OT sigue en APPR. No se vuelve a pulsar mientras Maximo está
+  cargando ni después de iniciar la orden. Los errores técnicos completos se
+  conservan en el log; el botón muestra un mensaje breve.
+
+- El inicio de OT usa «Seleccionar códigos de anomalía» en Informes de anomalías:
+  aplica la ruta elegida, esperando el avance de cada nivel y el cierre automático
+  del diálogo. Soluciones se utiliza para verificar los valores, sin modificar
+  sus tres campos mediante lupas. Los cambios se guardan tras configurar la
+  clase y después de completar el selector; los errores se comunican sin timeout.
+- La opción «Iniciar orden» también se identifica cuando Maximo relaciona el
+  botón de selección con su texto mediante ARIA o la fila contenedora.
+
+- Nuevo inicio opcional de OT en Edge. La combinación predeterminada inicial
+  es RFN-70 / OTROS-01/02/03, modificable desde Configuración. El modo configurado
+  utiliza los selectores nativos para aplicar la ruta elegida antes de iniciar
+  la orden. El progreso se muestra en el botón del navegador.
+- El inicio comprueba el estado real: solo actúa sobre APPR, no vuelve a enrutar
+  una OT ya iniciada y se detiene ante avisos desconocidos. Verifica el resultado
+  guardado antes de actualizar el seguimiento local.
+
+- La preparación de cada parte recupera el foco de la ficha de OT antes de
+  introducir su número. Esto permite validar el campo también en la segunda
+  copia de Boixeres cuando las ventanas del primer parte permanecen abiertas.
+  Se respeta la opción de cerrar o conservar las ventanas.
+
+## 1.0.2 — Partes de reparación y revisión de OT
+
+- Para las OT de TMB BOIXERES, la impresión HTML genera dos copias consecutivas:
+  el parte habitual y una segunda copia sin nombre del técnico ni tiempo de reparación.
+  Se utiliza el parámetro original de Maximo, seleccionado mediante su lupa.
+- Nueva opción para cerrar las ventanas del visor y del parte después de la
+  impresión directa, también entre las dos copias de Boixeres. Con el diálogo
+  de impresión, las ventanas permanecen abiertas para revisar los ajustes o cancelar.
+- La revisión prioritaria de OT muestra en la barra de estado cuántas órdenes
+  se han revisado, el total pendiente y la OT en curso.
 
 - Retirados la interfaz, el instalador y las pruebas exclusivos de Tkinter.
 - Eliminadas las opciones de seguimiento manual y sus recursos obsoletos.
 - El entorno de desarrollo utiliza exclusivamente la `.venv` de este proyecto.
 - La build incluye solo los recursos ejecutables de la extensión, sin sus pruebas ni documentación.
+- Corregido el aislamiento de la prueba de migración para que su resultado
+  no dependa de otras pruebas ejecutadas antes.
 
 ## 1.0.1 — Ajustes para el primer lanzamiento
 

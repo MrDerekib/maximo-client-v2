@@ -3,6 +3,7 @@ import os
 import json
 import time
 import shutil
+import threading
 import pandas as pd
 import logging
 from pathlib import Path
@@ -17,6 +18,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import WebDriverException
 
 PAGE_TIMEOUT = 60
 DOWNLOAD_TIMEOUT = 180
@@ -78,6 +80,70 @@ def wait_for(driver, condition, description, timeout=PAGE_TIMEOUT, cancel_event=
         logging.info("Espera %s: %.2fs", description, time.monotonic() - started)
 
 
+def _click_pending_repair_lookup(driver) -> bool:
+    """Complete a Maximo YORN lookup with a trusted Selenium click when requested."""
+    option_id = driver.execute_script(
+        "return document.documentElement?.dataset.maximoNativeLookupClick || '';"
+    )
+    if not option_id:
+        return False
+    if not (option_id.startswith("lookup_page") and "_tdrow_" in option_id and
+            option_id.endswith("_ttxt-lb[R:0]")):
+        driver.execute_script("delete document.documentElement.dataset.maximoNativeLookupClick;")
+        logging.warning("Maximo solicitó un click nativo con un identificador no permitido: %s", option_id)
+        return False
+
+    options = driver.find_elements(By.ID, option_id)
+    if not options or not options[0].is_displayed():
+        return False
+    options[0].click()
+    driver.execute_script(
+        "if (document.documentElement.dataset.maximoNativeLookupClick === arguments[0]) "
+        "delete document.documentElement.dataset.maximoNativeLookupClick;",
+        option_id,
+    )
+    logging.info("Selección de lookup Maximo confirmada con click WebDriver: %s", option_id)
+    return True
+
+
+def _start_ot_action_watcher(driver) -> None:
+    """Attend explicit report lookups and the optional start action in this session."""
+    if getattr(driver, "_maximo_ot_action_watcher", False):
+        return
+    driver._maximo_ot_action_watcher = True
+
+    def watch():
+        while True:
+            time.sleep(0.5)
+            try:
+                if getattr(driver, "_maximo_workorder_start_enabled", False):
+                    from workorder_start import poll_browser_start
+                    result = poll_browser_start(driver)
+                    callback = getattr(driver, "_maximo_workorder_started", None)
+                    if result and callback:
+                        callback(result)
+                if getattr(driver, "_maximo_workorder_close_enabled", False):
+                    from workorder_close import poll_browser_close
+                    result = poll_browser_close(driver)
+                    callback = getattr(driver, "_maximo_workorder_closed", None)
+                    if result and callback:
+                        callback(result)
+                _click_pending_repair_lookup(driver)
+            except WebDriverException:
+                # A closed Edge session ends the watcher; a transient stale element
+                # is retried on the next pass while the lookup remains open.
+                service = getattr(driver, "service", None)
+                if not getattr(driver, "session_id", None) or (
+                    service is not None and not service.is_connectable()
+                ):
+                    return
+                logging.debug("Acción de OT pendiente de reintento", exc_info=True)
+            except Exception:
+                logging.debug("No se pudo atender la acción de OT", exc_info=True)
+
+    threading.Thread(target=watch, name="maximo-ot-actions", daemon=True).start()
+
+
 def visible_ot_print_preferences():
     """Initial print preview choices for each disposable interactive OT profile."""
     app_state = {
@@ -97,6 +163,10 @@ def default_printer_name() -> str:
     except Exception:
         logging.warning("No se pudo consultar la impresora predeterminada", exc_info=True)
         return ""
+
+
+def _should_close_after_direct_print(requested: bool, headless: bool, printer_name: str) -> bool:
+    return bool(requested and not headless and printer_name)
 
 
 def setup_driver(headless=True, profile_dir=None, download_dir=None, force_repair_extension=False):
@@ -433,7 +503,11 @@ def process_html_table(file_path):
     return df
 
 
-def open_ot(ot: str, headless: bool = False, report_action: str | None = None):
+def open_ot(
+    ot: str, headless: bool = False, report_action: str | None = None,
+    close_after_direct_print: bool = False,
+    on_workorder_started=None, on_workorder_closed=None,
+):
     """
     Abre Maximo, entra en la aplicación de OT favorita y busca una OT concreta.
 
@@ -444,6 +518,12 @@ def open_ot(ot: str, headless: bool = False, report_action: str | None = None):
     """
     if report_action not in (None, "print", "pdf") or (report_action and headless):
         raise ValueError("La acción del parte requiere una ventana visible y un formato válido.")
+    cfg = load_config()
+    browser_start_enabled = not headless and getattr(cfg, "workorder_start_enabled", False)
+    browser_close_enabled = not headless and getattr(cfg, "workorder_close_enabled", False)
+    repair_extension_loaded = not headless and (
+        report_action is not None or getattr(cfg, "repair_extension_enabled", False)
+    )
     profile_dir = create_edge_profile("maximo-ot-")
     logging.info(f"OT {ot}: usando perfil temporal {profile_dir}")
 
@@ -451,6 +531,10 @@ def open_ot(ot: str, headless: bool = False, report_action: str | None = None):
     try:
         options = {"force_repair_extension": True} if report_action else {}
         driver = setup_driver(headless=headless, profile_dir=profile_dir, **options)
+        close_after_direct_print = _should_close_after_direct_print(
+            close_after_direct_print, headless,
+            default_printer_name() if close_after_direct_print and not headless else "",
+        )
         login(driver, headless=headless)
         logging.info("Login OK, abriendo aplicación de órdenes de trabajo favoritas...")
 
@@ -474,8 +558,42 @@ def open_ot(ot: str, headless: bool = False, report_action: str | None = None):
         search_box.send_keys(Keys.RETURN)
         logging.info(f"OT {ot} enviada a Maximo.")
 
+        if repair_extension_loaded or browser_start_enabled or browser_close_enabled:
+            wait_for(
+                driver,
+                lambda browser: (
+                    element if str((element := browser.find_element(By.ID, "mx45-tb")).get_attribute("value") or "").strip()
+                    == str(ot).strip() else False
+                ),
+                f"carga de la OT {ot} para activar la selección nativa del lookup",
+                timeout=45,
+            )
+        if repair_extension_loaded:
+            # Tab session storage survives Maximo reloads, including the two
+            # reloads used to validate an OT closure. It expires with the tab.
+            driver.execute_script(
+                "window.sessionStorage.setItem('maximoDesktop.closeReportTabs', "
+                "arguments[0] ? 'true' : 'false');",
+                bool(close_after_direct_print),
+            )
+            logging.info("OT %s: cierre de ventanas del parte %s (preferencia de sesión)",
+                         ot, "activado" if close_after_direct_print else "desactivado")
         if report_action:
-            start_repair_report(driver, ot, report_action)
+            start_repair_report(
+                driver, ot, report_action,
+                close_after_direct_print=close_after_direct_print,
+            )
+
+        if browser_start_enabled:
+            driver._maximo_workorder_start_enabled = True
+            driver._maximo_workorder_started = on_workorder_started
+            driver._maximo_workorder_start_mode = getattr(cfg, "workorder_start_mode", "configured")
+            driver._maximo_workorder_start_selection = getattr(cfg, "workorder_start_selection", None)
+        if browser_close_enabled:
+            driver._maximo_workorder_close_enabled = True
+            driver._maximo_workorder_closed = on_workorder_closed
+        if repair_extension_loaded or browser_start_enabled or browser_close_enabled:
+            _start_ot_action_watcher(driver)
 
         if headless:
             if driver is not None:
@@ -497,7 +615,9 @@ def open_ot(ot: str, headless: bool = False, report_action: str | None = None):
         raise
 
 
-def start_repair_report(driver, ot: str, action: str):
+def start_repair_report(
+    driver, ot: str, action: str, close_after_direct_print: bool = False,
+):
     """Inicia el flujo de la extensión solo cuando la ficha solicitada está lista."""
     if action not in ("print", "pdf"):
         raise ValueError("Acción de parte desconocida.")
@@ -523,6 +643,8 @@ def start_repair_report(driver, ot: str, action: str):
 
     button = wait_for(driver, ready, f"botón de parte para la OT {ot}", timeout=20)
     driver.execute_script(
-        "arguments[0].dataset.maximoReportAction = arguments[1]; arguments[0].click();",
-        button, action,
+        "arguments[0].dataset.maximoReportAction = arguments[1]; "
+        "arguments[0].dataset.maximoCloseReportTabs = arguments[2] ? 'true' : 'false'; "
+        "arguments[0].click();",
+        button, action, bool(close_after_direct_print and action == "print"),
     )

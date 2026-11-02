@@ -1,0 +1,121 @@
+{
+  "date": "2026-10-28",
+  "ot": "3088915",
+  "outcome": "ok",
+  "initial_state": {
+    "status": "APPR",
+    "class": "RFN-20",
+    "temporary_rows": [
+      {
+        "type": "PROBLEM",
+        "code": "P-RFN-139",
+        "description": "TARJETA INTERFONO"
+      }
+    ]
+  },
+  "selector_path": {
+    "class": "RFN-20",
+    "problem": {
+      "code": "P-RFN-139",
+      "id": "mx277_tdrow_[C:0]_ttxt-lb[R:0]"
+    },
+    "cause_occurrences": [
+      {
+        "occurrence": "R0",
+        "cause": {
+          "code": "C-RFN-062",
+          "type": "CAUSE",
+          "id": "mx277_tdrow_[C:0]_ttxt-lb[R:0]",
+          "targetid": "mx277_tdrow_[C:0]_ttxt-lb[R:0]",
+          "mxevent": "click",
+          "row_text": "C-RFN-062\tCAUSE\tVOLUMEN BAJO"
+        },
+        "remedies": [
+          {
+            "code": "S-RFN-262",
+            "type": "REMEDY",
+            "id": "mx277_tdrow_[C:0]_ttxt-lb[R:0]",
+            "targetid": "mx277_tdrow_[C:0]_ttxt-lb[R:0]",
+            "mxevent": "click",
+            "row_text": "S-RFN-262\tREMEDY\tAJUSTE POTENCIOMETRO VOZ INTERFONO"
+          }
+        ]
+      },
+      {
+        "occurrence": "R1",
+        "cause": {
+          "code": "C-RFN-062",
+          "type": "CAUSE",
+          "id": "mx277_tdrow_[C:0]_ttxt-lb[R:1]",
+          "targetid": "mx277_tdrow_[C:0]_ttxt-lb[R:1]",
+          "mxevent": "click",
+          "row_text": "C-RFN-062\tCAUSE\tVOLUMEN BAJO"
+        },
+        "remedies": [
+          {
+            "code": "S-RFN-262",
+            "type": "REMEDY",
+            "id": "mx277_tdrow_[C:0]_ttxt-lb[R:0]",
+            "targetid": "mx277_tdrow_[C:0]_ttxt-lb[R:0]",
+            "mxevent": "click",
+            "row_text": "S-RFN-262\tREMEDY\tAJUSTE POTENCIOMETRO VOZ INTERFONO"
+          }
+        ]
+      }
+    ]
+  },
+  "static_catalogue_snapshot": {
+    "problem": {
+      "code": "P-RFN-139",
+      "id": 164920
+    },
+    "cause_occurrences": [
+      {
+        "code": "C-RFN-062",
+        "id": 165598,
+        "remedy": {
+          "code": "S-RFN-263",
+          "id": 167710
+        }
+      },
+      {
+        "code": "C-RFN-062",
+        "id": 165600,
+        "remedy": {
+          "code": "S-RFN-262",
+          "id": 167400
+        }
+      }
+    ]
+  },
+  "cleanup": {
+    "saved_via": "Acciones comunes → Guardar",
+    "temporary_rows_remaining_after_each_branch": 0,
+    "final_fresh_session": {
+      "status": "APPR",
+      "class": "RFN-20",
+      "failure_report_rows": 0
+    }
+  },
+  "manual_ui_check": {
+    "date": "2026-10-29",
+    "reviewer": "Joan",
+    "route": {
+      "class": "RFN-20",
+      "problem": "P-RFN-139"
+    },
+    "capture_observations": [
+      "Dos filas C-RFN-062 · CAUSE · VOLUMEN BAJO",
+      "La cadena visible completa termina en S-RFN-262"
+    ],
+    "user_statement_about_s_rfn_263": "esta entrada no la veo",
+    "independent_tests_per_occurrence": "No consta que se abriera por separado cada ocurrencia",
+    "source": "Capturas aportadas por Joan en la conversación"
+  },
+  "interpretation": {
+    "s_rfn_263": "El snapshot original conserva la rama, pero no se ha encontrado en la ruta UI comprobada por automatización y revisión manual",
+    "configuration": "Excluir o marcar como no confirmada la combinación RFN-20 / P-RFN-139 / C-RFN-062 / S-RFN-263 para esta ruta UI",
+    "cause": "No determinada; no atribuir al servidor",
+    "blocks_next_configuration_phase": false
+  }
+}

@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="es"><meta charset="utf-8"><title>Maximo workflow fixture</title>
+<body><nav>
+<a role="tab" href="#" onclick="render('anomaly');return false">Informes de anomalías</a>
+<a role="tab" href="#" onclick="render('solutions');return false">Soluciones</a>
+</nav><a id="toolactions_SAVE-tbb_anchor" href="#" onclick="saveRecord();return false">
+<img id="toolactions_SAVE-tbb_image" alt="Guardar orden de trabajo" width="25" height="25" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="></a>
+<ul><li id="common-save-item"><a id="common-save-action" href="#" onclick="saveRecord();return false">
+<span id="common-save-action_tnode">Guardar orden de trabajo</span></a></li></ul>
+<div role="alert" id="saved-notice"></div><main id="form"></main><div id="dialogs"></div>
+<div id="wait" style="display:none;position:fixed;inset:0;background:#ddd8">Cargando</div>
+<aside id="warndiv" role="alert" aria-hidden="true" style="position:absolute;left:100%;top:0;width:0;height:100%">
+<table id="warndiv_inner" style="display:none;position:fixed;left:10px;top:10px;width:400px;background:white;z-index:10000">
+<tr><td id="warning-message">Mensaje del sistema: aviso anterior</td></tr>
+<tr><td><button onclick="hideWarning()">Aceptar</button></td></tr></table></aside>
+<div id="dijit_Dialog_0" role="dialog" style="display:none">Pegar desde Word</div>
+<script>
+let state, tab, generation = 0;
+const save = () => sessionStorage.setItem('workflow-fixture', JSON.stringify(state));
+function hideWarning() {
+  document.getElementById('warndiv').setAttribute('aria-hidden','true');
+  document.getElementById('warndiv_inner').style.display='none';
+}
+function showWarning(message) {
+  document.getElementById('warning-message').textContent=message;
+  document.getElementById('warndiv').setAttribute('aria-hidden','false');
+  document.getElementById('warndiv_inner').style.display='table';
+}
+function resetState(overrides = {}) {
+  hideWarning();
+  state = {ot:'4314531',status:'APPR',faultclass:'OTHER',problem:'OLD-01',cause:'OLD-02',
+    remedy:'OLD-03',events:[],routes:0,dirty:false,pendingDeletion:false,responses:0,suppressed:{},extraFailureRows:[],...overrides};
+  state.dirty = state.dirty || state.pendingDeletion || state.extraFailureRows.some(row=>row.suppressed);
+  persistFields();
+  document.getElementById('saved-notice').textContent = '';
+  tab = 'solutions'; save(); render(tab);
+}
+function persistFields() {
+  state.persistedFields={faultclass:state.faultclass,problem:state.problem,cause:state.cause,remedy:state.remedy,
+    extraFailureRows:state.extraFailureRows.map(row=>({...row,suppressed:false}))};
+}
+function asyncRender(action) {
+  document.getElementById('wait').style.display = 'block';
+  setTimeout(() => {
+    action(); state.responses++; save(); render(tab);
+    document.getElementById('wait').style.display = 'none';
+  }, 100);
+}
+function control(caption, key, readonly = false) {
+  const id = `mx${++generation}-tb`, image = id.replace('-tb', '-img');
+  return `<p><label for="${id}">${caption}:</label>
+    <input ctype="textbox" id="${id}" li="${image}" ${readonly?'readonly':''} value="${state[key]}">
+    ${['faultclass','problem','cause','remedy'].includes(key)
+      ? `<img id="${image}" alt="Seleccionar valor" width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onclick="lookup('${key}')">` : ''}</p>`;
+}
+function render(nextTab) {
+  tab = nextTab;
+  document.querySelectorAll('a[role=tab]').forEach(a=>a.setAttribute('aria-expanded',
+    ((tab==='anomaly'&&a.textContent.includes('anomal'))||(tab==='solutions'&&a.textContent==='Soluciones'))?'true':'false'));
+  sessionStorage.setItem('workflow-fixture-tab', tab);
+  document.getElementById('toolactions_SAVE-tbb_anchor').setAttribute('aria-disabled', state.saveUnavailable?'true':(state.dirty?'false':'true'));
+  if(state.toolbarSaveUnavailable)document.getElementById('toolactions_SAVE-tbb_anchor').setAttribute('aria-disabled','true');
+  const saveDisabled=state.saveUnavailable||!state.dirty;
+  document.getElementById('common-save-item').setAttribute('aria-disabled',saveDisabled?'true':'false');
+  document.getElementById('common-save-action_tnode').toggleAttribute('disabled',saveDisabled);
+  document.getElementById('common-save-action_tnode').className=saveDisabled?'opacity_20':'';
+  document.getElementById('toolactions_SAVE-tbb_anchor').hidden=Boolean(state.hideAllSaveControls);
+  document.getElementById('common-save-item').hidden=Boolean(state.hideAllSaveControls);
+  document.getElementById('form').innerHTML = control('Orden de trabajo','ot',true)+control('Estado','status',true)+
+    (tab === 'anomaly' ? control('Clase de anomalía','faultclass')+
+      '<button id="mx_bg_button_listfailurecodes-pb" onclick="openFailureCodes()">Seleccionar códigos de anomalía</button>'+failureTable() :
+      control('Síntoma','problem')+control('Causa','cause',true)+control('Resolucion','remedy',true))+
+    '<img id="ROUTEWF_WO-MAIN_-tbb_image" alt="Enrutar flujo de trabajo" width="30" height="30" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onclick="route()">';
+  document.getElementById('dialogs').innerHTML = '';
+}
+function failureTable() {
+  const rows=[['PROBLEM',state.problem],['CAUSE',state.cause],['REMEDY',state.remedy]]
+    .filter(([type,code])=>code).map(([type,code])=>{
+      const suppressed=Boolean(state.suppressed[type]||state.suppressed[`${type}:${code}`]);
+      return `<tr id="failure-${type}-${code}"><td id="failure-${type}-${code}-td[C:0]">${type}</td><td id="failure-${type}-${code}-td[C:1]">${code}</td><td>${code}</td>
+        <td><img id="toggle-${type}-${code}" ctype="toggleimage"
+          title="${suppressed?'Deshacer suprimir':'Marcar fila para suprimir'}" alt="${suppressed?'Deshacer suprimir':'Marcar fila para suprimir'}"
+          src="${suppressed?'btn_undo.gif':'btn_garbage.gif'}" onclick="toggleSuppression('${type}','${code}')"></td></tr>`;
+    }).join('');
+  const extras=(state.extraFailureRows||[]).map(row=>{
+    const suppressed=Boolean(row.suppressed||state.suppressed[`${row.type}:${row.code}`]);
+    return `<tr id="failure-extra-${row.type}-${row.code}"><td id="failure-extra-${row.type}-${row.code}-td[C:0]">${row.type}</td><td id="failure-extra-${row.type}-${row.code}-td[C:1]">${row.code}</td><td>${row.code}</td><td><img id="toggle-extra-${row.type}-${row.code}" ctype="toggleimage" title="${suppressed?'Deshacer suprimir':'Marcar fila para suprimir'}" alt="${suppressed?'Deshacer suprimir':'Marcar fila para suprimir'}" src="${suppressed?'btn_undo.gif':'btn_garbage.gif'}" onclick="toggleSuppression('${row.type}','${row.code}')"></td></tr>`;
+  }).join('');
+  return `<div><div>Códigos de anomalía</div><table summary="Códigos de anomalía"><thead><tr><th>Tipo</th><th>Código de anomalía</th><th>Descripción</th></tr></thead><tbody>${rows}${extras}</tbody></table></div>`;
+}
+function toggleSuppression(type,code='') {
+  const key=code?`${type}:${code}`:type;
+  state.suppressed[key]=!state.suppressed[key];state.dirty=true;state.pendingDeletion=true;
+  state.responses++;state.events.push(['suppress',type,state.suppressed[type]]);save();render(tab);
+}
+function lookup(key, query = '') {
+  state.events.push(['lookup',key]);
+  let codes;
+  if (key === 'faultclass') codes = query === '=RFN-70' ? ['RFN-70'] : ['OTHER'];
+  else if (state.faultclass !== 'RFN-70') codes = [];
+  else if (key === 'problem') codes = ['OTROS-01'];
+  else if (key === 'cause') codes = state.problem === 'OTROS-01' ? ['OTROS-02'] : [];
+  else codes = state.cause === 'OTROS-02' ? ['OTROS-05','OTROS-03'] : [];
+  const prefix = 'lookup_page'+(++generation);
+  document.getElementById('dialogs').innerHTML = `<section role="dialog" id="lookup_PROBLEMCODE-dialog_inner">
+    Seleccionar valor
+    <span mxevent="click" onclick="this.nextElementSibling.hidden=false">Filtro</span>
+    <input hidden id="${prefix}_tfrow_[C:0]_txt-tb" onkeydown="lookupFilterKey(event,'${key}')">
+    ${codes.map((code,i)=>`<p><span id="${prefix}_tdrow_[C:0]_ttxt-lb[R:${i}]" mxevent="click"
+      onclick="selectCode('${key}','${code}')">${code}</span></p>`).join('')}
+    </section>`;
+}
+function lookupFilterKey(event,key) {
+  if(event.key==='Tab')setTimeout(()=>{state.responses++;save()},30);
+  if(event.key==='Enter')setTimeout(()=>{state.responses++;save();lookup(key,event.target.value)},30);
+}
+function selectCode(key, code) {
+  if (key !== 'faultclass' && (state.pendingDeletion || state.forceHierarchyError)) {
+    showWarning('Mensaje del sistema BMXAA4523E - El código de anomalía no se puede cambiar del estado de supresión porque es un nivel inferior de un código de anomalía marcado para supresión.');
+    return;
+  }
+  state.events.push(['select',key,code]);
+  asyncRender(() => {
+    state.dirty = true;
+    if (key === 'faultclass') {
+      state.pendingDeletion = Boolean(state.problem || state.cause || state.remedy);
+      state.problem = state.cause = state.remedy = '';
+    } else if (key === 'problem') {
+      state.pendingDeletion = Boolean(state.cause || state.remedy);
+      state.cause = state.remedy = '';
+    } else if (key === 'cause') {
+      state.pendingDeletion = Boolean(state.remedy);
+      state.remedy = '';
+    }
+    state[key] = code;
+    if(key==='faultclass' && state.autoSaveClass) {
+      state.dirty=false;state.pendingDeletion=false;persistFields();state.events.push(['automatic-save','class']);
+    }
+  });
+}
+const defaultHierarchy = [
+  {type:'PROBLEM',key:'problem',code:'OTROS-01'},
+  {type:'CAUSE',key:'cause',code:'OTROS-02'},
+  {type:'REMEDY',key:'remedy',code:'OTROS-03'}
+];
+function hierarchy() { return state.nativeHierarchy || defaultHierarchy; }
+function openFailureCodes() {
+  state.events.push(['native-open']); save();
+  showFailureCodes(state.nativeInitialStage || 0);
+}
+function showFailureCodes(index) {
+  const levels=hierarchy(), level = levels[index], prefix = 'mx'+(++generation);
+  const allCodes=level.options || (index === levels.length-1 && level.code==='OTROS-03' ? ['OTROS-05','OTROS-03','OTROS-04'] : [level.code]);
+  let codes = state.nativeFilterApplied ? allCodes.filter(code=>code===state.nativeFilterValue.replace(/^=/,'')) :
+    allCodes.slice(0,level.pageSize || allCodes.length);
+  if (state.nativeMissingCode === level.code) codes = codes.filter(code=>code!==level.code).concat('UNEXPECTED');
+  const type = state.nativeWrongType || level.type;
+  document.getElementById('dialogs').innerHTML = `<section role="dialog" id="wolistfailurecodes-dialog_inner">
+    Seleccionar códigos de anomalía <a href="#" title="Abrir Filtro" onclick="event.preventDefault();document.querySelector('input[id*=&quot;_tfrow_&quot;]').hidden=false">⌕</a>
+    <input ${state.nativeFilterApplied?'':'hidden'} value="${state.nativeFilterValue || ''}" id="${prefix}_tfrow_[C:0]_txt-tb"
+      onkeydown="nativeFilterKey(event,${index})">
+    <table><tbody>
+    ${codes.map((code,row)=>`<tr><td id="${prefix}_tdrow_[C:0]-c[R:${row}]"><span mxevent="click"
+      id="${prefix}_tdrow_[C:0]_ttxt-lb[R:${row}]" onclick="selectFailureCode(${index},'${code}')">${code}</span></td>
+      <td id="${prefix}_tdrow_[C:1]-c[R:${row}]"><span>${state.nativeWrongType || level.type}</span></td><td>Descripción</td></tr>`).join('')}
+    </tbody></table>
+    <button onclick="state.events.push(['unexpected-selector-button']);save()">Seleccionar</button>
+    <button onclick="state.events.push(['unexpected-selector-button']);save()">Seleccionar y regresar</button>
+    <button onclick="state.events.push(['unexpected-selector-button']);save()">Cerrar</button></section>`;
+}
+function nativeFilterKey(event,index) {
+  if(event.key==='Tab')setTimeout(()=>{state.nativeFilterValue=event.target.value;state.responses++;save()},30);
+  if(event.key==='Enter')setTimeout(()=>{state.nativeFilterValue=event.target.value;state.nativeFilterApplied=true;state.responses++;save();showFailureCodes(index)},30);
+}
+function selectFailureCode(index, code) {
+  if (state.forceNativeError) {
+    showWarning('BMXAA4523E - Error del selector nativo'); return;
+  }
+  document.getElementById('wait').style.display='block';
+  setTimeout(() => {
+    const level=hierarchy()[index], key=level.key || ({PROBLEM:'problem',CAUSE:'cause',REMEDY:'remedy'}[level.type]);
+    state.events.push(['native-click',level.type,code],['select',key,code]);
+    if (level.type==='PROBLEM') state.cause=state.remedy='';
+    if (level.type==='CAUSE') state.remedy='';
+    state[key]=code; state.dirty=true; state.pendingDeletion=false;state.suppressed={};
+    if(index===hierarchy().length-1 && (state.nativeAutosave||state.nativeSaveDisabledAfterSelection)) {
+      state.dirty=false;
+      if(state.nativeAutosave){persistFields();state.events.push(['automatic-save','codes']);}
+    }
+    state.nativeFilterApplied=false;state.nativeFilterValue='';
+    state.responses++;save(); render(tab);
+    if (index<hierarchy().length-1 && !state.nativeCloseEarly) showFailureCodes(index+1);
+    document.getElementById('wait').style.display='none';
+  }, state.nativeDelayMs || 100);
+}
+function saveRecord() {
+  if (!state.dirty) return;
+  state.events.push(['save']);
+  if (state.saveWarning && !state.saveWarningShown) {
+    state.saveWarningShown = true;
+    state.responses++; save();
+    document.getElementById('dialogs').innerHTML = '<section role="dialog" id="alreadyreported-dialog_inner">El problema ya ha sido informado <button onclick="commitSave()">Continuar</button><button>Cancelar</button></section>';
+  } else commitSave();
+}
+function commitSave() {
+  asyncRender(() => {
+    for(const [type,key] of [['PROBLEM','problem'],['CAUSE','cause'],['REMEDY','remedy']])
+      if(state.suppressed[type]||state.suppressed[`${type}:${state[key]}`])state[key]='';
+    state.extraFailureRows=(state.extraFailureRows||[]).filter(row=>
+      !row.suppressed&&!state.suppressed[`${row.type}:${row.code}`]);
+    state.suppressed={};
+    state.dirty = false; state.pendingDeletion = false; state.responses++;
+    persistFields();
+    document.getElementById('saved-notice').textContent = 'BMXAA4205I - El registro ha sido guardado.';
+  });
+}
+function route() {
+  state.routes++; state.events.push(['route']); save();
+  if (state.routes <= (state.noOpRoutes || 0)) return;
+  if (state.routeDelayMs && !state.routeDelayed) {
+    state.routeDelayed = true;
+    document.getElementById('wait').style.display = 'block';
+    setTimeout(() => {
+      showRouteDialog(); save();
+      document.getElementById('wait').style.display = 'none';
+    }, state.routeDelayMs);
+    return;
+  }
+  showRouteDialog();
+}
+function showRouteDialog() {
+  if (state.unexpected) {
+    document.getElementById('dialogs').innerHTML = '<section role="dialog" id="unknown-dialog_inner">Error inesperado <button onclick="state.events.push([\'unsafe-accept\']);save()">Aceptar</button></section>';
+  } else if (state.routes === 1) {
+    document.getElementById('dialogs').innerHTML = '<section role="dialog" id="alreadyreported-dialog_inner">El problema ya ha sido informado <button onclick="state.events.push([\'continue\']);save();render(tab)">Continuar</button><button>Cancelar</button></section>';
+  } else {
+    const radioMarkup = state.radioMarkup === 'aria' ?
+      '<div><span id="label-cancel">Cancelar orden</span><input id="choice-cancel" name="choice" type="radio" checked aria-labelledby="label-cancel"></div><div><span id="label-start">Iniciar orden</span><input id="choice-start" name="choice" type="radio" aria-labelledby="label-start"></div>' :
+      state.radioMarkup === 'container' ?
+      '<div>Cancelar orden<input id="choice-cancel" name="choice" type="radio" checked></div><div>Iniciar orden<input id="choice-start" name="choice" type="radio"></div>' :
+      '<label for="choice-cancel">Cancelar orden</label><input id="choice-cancel" name="choice" type="radio" checked><label for="choice-start">Iniciar orden</label><input id="choice-start" name="choice" type="radio">';
+    document.getElementById('dialogs').innerHTML = `<section role="dialog" id="inputwf-dialog_inner">Entrada manual
+      ${radioMarkup}
+      <button onclick="confirmStart()">Aceptar</button><button>Cancelar</button></section>`;
+  }
+}
+function confirmStart() {
+  if (!document.getElementById('choice-start').checked) throw Error('Wrong workflow choice');
+  asyncRender(() => { state.status='INPRG'; state.events.push(['start']); });
+}
+if (sessionStorage.getItem('workflow-fixture')) {
+  state=JSON.parse(sessionStorage.getItem('workflow-fixture'));
+  if(state.persistenceModel) {
+    Object.assign(state,state.persistedFields);state.dirty=false;state.pendingDeletion=false;state.suppressed={};
+    state.events.push(['fresh-read']);save();
+  }
+  render(sessionStorage.getItem('workflow-fixture-tab') || 'solutions');
+} else resetState();
+</script></body></html>

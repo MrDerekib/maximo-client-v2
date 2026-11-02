@@ -46,6 +46,8 @@ la ejecución desde Python y en el modo de desarrollo.
 | `maximo_client.py`, `updater.py` | Navegación en Maximo, sincronización y enriquecimiento |
 | `db.py`, `search_filters.py` | SQLite, migraciones y filtros |
 | `config.py`, `credential_store.py`, `app_paths.py` | Configuración, credenciales y rutas persistentes |
+| `failure_catalog.py`, `failure_picker.py`, `resources/failure_catalog.json` | Catálogo validado y selección condicional de anomalías |
+| `anomaly_diagnostics.py` | Registro rotativo de incidencias y opciones observadas en Maximo |
 | `priority_importer.py`, `detailed_description.py`, `excel_export.py` | Prioridades, contenido enriquecido y exportación |
 | `managed_install_qt.py`, `update_checker.py`, `update_installer.py` | Instalación y actualización de la aplicación |
 | `maintenance.py` | Retención de exportaciones XLS procesadas |
@@ -67,7 +69,7 @@ actualizan desde versiones anteriores siguen formando parte de la V1.
 
 El script usa `.venv` y crea `release\MaximoDesktop-<versión>`, con la carpeta
 standalone y `MaximoDesktop-v<versión>-windows.zip`. La extensión se empaqueta con
-sus cuatro archivos de ejecución; las pruebas y la documentación quedan en el
+sus archivos de ejecución y el catálogo de anomalías; las pruebas y la documentación quedan en el
 repositorio. `-Force` permite reemplazar la compilación de esa misma versión y
 `-KeepBuild` conserva los archivos intermedios de Nuitka.
 
@@ -104,9 +106,131 @@ excluidos del control de versiones.
 
 ## Comprobaciones
 
+### Inicio opcional de OT
+
+En **Configuración → Extensión de Edge → Órdenes de trabajo**, activa
+**Mostrar «Iniciar OT» y «Cambiar anomalías» en Edge** y guarda los cambios. Está desactivado por defecto.
+«Abrir OT» y los enlaces del listado siguen abriendo la ficha sin iniciarla.
+
+Al habilitarlo aparece un botón en las nuevas ventanas de Maximo abiertas desde
+MD. Utiliza la sesión abierta y muestra el progreso en el botón. El inicio está
+disponible únicamente en Edge; se ha retirado la acción del menú contextual y
+la ejecución del inicio en segundo plano desde MD.
+
+En **Al pulsar Iniciar OT** se elige entre:
+
+- **Solo iniciar:** conserva la clase y los códigos actuales.
+- **Iniciar y establecer anomalías:** aplica la clase y ruta predeterminadas.
+  Los desplegables son condicionales: cambiar un padre limpia sus descendientes,
+  y es obligatorio completar una ruta válida. Hay rutas que terminan en un
+  problema o una causa, y clases que comienzan directamente por una causa.
+
+Las instalaciones anteriores conservan `RFN-70 → OTROS-01 → OTROS-02 → OTROS-03`
+como predeterminado. **Elegir anomalías…** junto al botón de Edge permite escoger
+otra combinación, o solo iniciar, para esa ejecución; no cambia la configuración
+de MD. Cancelar el diálogo no modifica la OT.
+
+La misma opción **Mostrar «Iniciar OT» y «Cambiar anomalías» en Edge** habilita
+**Cambiar anomalías** cuando la OT ya está en `INPRG`. Abre el selector condicional
+y permite confirmar con **Guardar anomalías**. La aplicación usa los controles
+nativos, guarda y verifica la combinación y vuelve a la pestaña de origen.
+Esta acción no enruta, inicia ni cierra la OT, ni cambia los predeterminados de MD.
+Solo actúa mientras la ficha siga correspondiendo a la misma OT en `INPRG`.
+La revisión del cierre y el cambio de anomalías se bloquean entre sí.
+
+El flujo solo inicia OT en `APPR`. En modo configurado usa la clase y
+**Seleccionar códigos de anomalía** de Maximo. Si cambia una jerarquía existente,
+primero la suprime desde los controles nativos y confirma su guardado.
+Cada clic avanza al siguiente nivel y la hoja cierra el diálogo; no se pulsan
+los botones Seleccionar ni Seleccionar y regresar. La combinación se verifica
+antes de iniciar. Si ya era correcta, se conserva. Una opción ausente o una
+selección guardada inválida detiene la operación en lugar de usar otra ruta.
+La rama `RFN-20 / P-RFN-139 / C-RFN-062 / S-RFN-263` no se ofrece, según las
+comprobaciones documentadas en `docs/catalogos/anomalias/2026-10-28/`.
+
+El flujo continúa el aviso conocido de problema ya informado y
+acepta **Iniciar orden**. Se detiene al
+confirmar `INPRG`; una OT ya iniciada no vuelve a enrutarse. Un diálogo desconocido
+detiene la operación y muestra su mensaje para revisión.
+
+Después de cambiar la clase y tras completar el selector se
+guardan los cambios. La automatización no modifica los campos de
+Soluciones mediante sus lupas. El guardado espera la respuesta del servidor y su
+confirmación; también contempla el aviso de problema ya informado en ese paso.
+Los controles deshabilitados se detectan también en el contenedor del menú.
+Si Guardar está deshabilitado, se recarga la ficha únicamente para comprobar
+que la clase, las filas y los códigos de Soluciones esperados se conservan.
+Solo entonces se continúa; los datos que desaparezcan o no coincidan detienen
+la operación. Si no se localiza ningún control Guardar, no se asume un guardado.
+
+Si la primera pulsación de Enrutar no abre el diálogo, se comprueba de nuevo
+el estado y se reintenta, con un máximo de tres pulsaciones. Los controles que
+Maximo reemplaza durante una actualización se vuelven a localizar sin repetir
+el proceso completo. Si la acción ya tuvo efecto, no se vuelve a enviar.
+Los contenedores de avisos y diálogos que Maximo conserva ocultos no bloquean el
+inicio: se comprueba la visibilidad de sus paneles, tanto en el botón como en la
+automatización. Un aviso visible sigue requiriendo revisión.
+
+### Registro de incidencias de anomalías
+
+Si falla la validación o aplicación de una combinación, se crea una entrada en
+`logs/anomalias_incidencias.jsonl`, dentro de la carpeta de datos de MD (o
+`MaximoDesktop-dev` durante el desarrollo). La entrada conserva la fecha UTC,
+la OT, la combinación solicitada, el nivel esperado, la etapa y el error,
+además de los códigos, tipos y descripciones que se consultaron en Maximo.
+
+Se conservan las opciones observadas antes de filtrar y el resultado filtrado,
+con el filtro y la paginación disponibles. Son capturas de las páginas
+consultadas: una lista parcial o recortada no se presenta como catálogo completo.
+No se recorren páginas adicionales al producirse el error ni se elige otra
+combinación automáticamente.
+
+El registro rota a partir de 1 MiB y conserva tres copias anteriores. No contiene
+credenciales, cookies, URLs de sesión ni HTML de la página. Un fallo al escribir
+el registro no sustituye el error original ni modifica la configuración.
+
+### Cierre de una reparación desde Edge
+
+En **Configuración → Extensión de Edge**, activa **Mostrar «Cerrar OT» en
+Edge**. Solo está disponible en una OT en `INPRG`. No hay una acción de cierre
+en el menú contextual de MD ni se cierra una OT al abrir su ficha.
+
+El botón consulta **Horas totales de reparación** en Consumos Actuales y las
+fechas **Inicio real** y **Finalización real** en Orden de trabajo. Abre una
+revisión que pide el inicio real, mostrando el que figura en Maximo como
+referencia, y permite introducir o corregir la duración. La duración
+admite únicamente múltiplos positivos de `0,25 h` (15 minutos); `0,75` son 45
+minutos y `1,25` son 75 minutos. No se redondean valores no válidos.
+La finalización se calcula a partir del inicio y de la duración, y no puede ser
+posterior a la hora actual. Esta condición se comprueba también antes de guardar.
+
+Cancelar esta revisión no cambia los datos. **Confirmar cierre** guarda la
+duración y fechas escribiéndolas con el teclado en los campos de Maximo y pulsando
+Tab para validarlos. Antes de enrutar se recarga la ficha y se comprueba que se han guardado
+los tres valores. Si los datos cambiaron desde la revisión, la confirmación ha
+caducado o Maximo muestra un error, se detiene sin intentar el cierre.
+
+La operación termina en `ISSUE`, pendiente de salida del almacén. Nunca se sigue
+enrutando una OT que ya está en ISSUE ni se busca el estado CLOSE. El botón de
+enrutar tiene hasta tres intentos si no aparece ningún diálogo. La aceptación
+final de «Cerrar OT» se envía una sola vez; si su resultado no se puede confirmar,
+se pide revisar el estado en Maximo. El cierre es irreversible y debe probarse
+con una OT preparada expresamente para ello.
+
+### Pruebas
+
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 node --test browser_extension/tests/workflow.test.js
+```
+
+Las pruebas de navegador son opcionales y utilizan exclusivamente la página HTML
+local de `tests/fixtures`, sin autenticarse ni modificar Maximo:
+
+```powershell
+$env:MAXIMO_BROWSER_TESTS = "1"
+.\.venv\Scripts\python.exe -m unittest tests.test_workorder_start -v
+Remove-Item Env:MAXIMO_BROWSER_TESTS
 ```
 
 Las pruebas de Qt se ejecutan sin mostrar ventanas y con almacenamiento aislado.

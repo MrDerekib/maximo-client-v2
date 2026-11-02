@@ -1,7 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { pageKind, containsOt, canPrintStatus } = require("../workflow_logic.js");
+const { pageKind, containsOt, canPrintStatus, isBoixeresClient,
+  clientFromWorkorder } = require("../workflow_logic.js");
 
 test("only the Maximo WO page and the repair report windows are handled", () => {
   assert.equal(pageKind("https://eam.indraweb.net/maximo/ui/?event=loadapp"), "workorder");
@@ -26,11 +27,33 @@ test("a repair report remains available after warehouse closes the OT", () => {
   assert.equal(canPrintStatus(""), false);
 });
 
+test("Boixeres client recognition ignores case, accents, and repeated spaces", () => {
+  assert.equal(isBoixeresClient("TMB BOIXERES"), true);
+  assert.equal(isBoixeresClient("  tmb   boixerès  "), true);
+  assert.equal(isBoixeresClient("TMB"), false);
+});
+
+test("the exact mx47-tb field takes priority, with a Cliente row fallback", () => {
+  assert.equal(clientFromWorkorder({ getElementById: id =>
+    id === "mx47-tb" ? { value: "TMB BOIXERES" } : null }), "TMB BOIXERES");
+  assert.equal(clientFromWorkorder({ getElementById: () => null }), "");
+  const label = {
+    innerText: "Cliente:",
+    getClientRects: () => [1],
+    closest: () => ({ innerText: "Cliente: TMB BOIXERES" })
+  };
+  assert.equal(clientFromWorkorder({ getElementById: () => null,
+    querySelectorAll: () => [label] }), "Cliente: TMB BOIXERES");
+});
+
 function chromeHarness() {
   const session = new Map();
   const sent = [];
   const executions = [];
   const downloads = [];
+  const removedTabs = [];
+  const activatedTabs = [];
+  const focusedWindows = [];
   let updatedListener;
   global.chrome = {
     storage: { session: {
@@ -39,20 +62,55 @@ function chromeHarness() {
       async remove(key) { session.delete(key); }
     } },
     tabs: {
+      async update(tabId, properties) {
+        activatedTabs.push({ tabId, properties });
+        return { id: tabId, windowId: 10 };
+      },
       async sendMessage(tabId, message) { sent.push({ tabId, message }); },
+      async remove(tabId) { removedTabs.push(tabId); },
       onUpdated: { addListener(listener) { updatedListener = listener; } }
     },
+    windows: { async update(windowId, properties) { focusedWindows.push({ windowId, properties }); } },
     downloads: { async download(options) { downloads.push(options); return 1; } },
     scripting: { async executeScript(options) {
       executions.push(options);
-      return [{ result: { clicked: true, filled: true, buttonId: "mx654-pb", submitted: true } }];
+      return [{ result: { clicked: true, filled: true, buttonId: "mx654-pb", submitted: true,
+        updated: true, maximoChanged: true } }];
     } },
     runtime: { onMessage: { addListener() {} } }
   };
   delete require.cache[require.resolve("../service_worker.js")];
   return { ...require("../service_worker.js"), session, sent, executions,
-    downloads, updated: (...args) => updatedListener(...args) };
+    downloads, removedTabs, activatedTabs, focusedWindows,
+    updated: (...args) => updatedListener(...args) };
 }
+
+test("the source is activated for both Boixeres variants with either cleanup setting", async () => {
+  for (const closeTabs of [false, true]) {
+    const { handleMessage, activatedTabs, focusedWindows, removedTabs } = chromeHarness();
+    const source = { tab: { id: 1 } };
+    const viewer = { tab: { id: 2, openerTabId: 1 } };
+    const output = { tab: { id: 3, openerTabId: 2 } };
+    const { jobId } = await handleMessage({ type: "START", ot: "4228010",
+      client: "TMB BOIXERES", closeTabs }, source);
+    await handleMessage({ type: "ACTIVATE_SOURCE", jobId }, source);
+    await handleMessage({ type: "CLAIM_VIEWER" }, viewer);
+    await handleMessage({ type: "CLAIM_OUTPUT" }, output);
+    await handleMessage({ type: "FINISH", jobId }, output);
+    await handleMessage({ type: "ACTIVATE_SOURCE", jobId }, source);
+    assert.deepEqual(activatedTabs, [
+      { tabId: 1, properties: { active: true } },
+      { tabId: 1, properties: { active: true } }
+    ]);
+    assert.deepEqual(focusedWindows, [
+      { windowId: 10, properties: { focused: true } },
+      { windowId: 10, properties: { focused: true } }
+    ]);
+    assert.deepEqual(removedTabs, closeTabs ? [2] : []);
+    await assert.rejects(handleMessage({ type: "ACTIVATE_SOURCE", jobId }, output), /no pertenece/);
+    await assert.rejects(handleMessage({ type: "ACTIVATE_SOURCE", jobId: "stale" }, source), /no pertenece/);
+  }
+});
 
 test("Maximo's report menu is clicked in the page's JavaScript world", async () => {
   const { handleMessage, executions } = chromeHarness();
@@ -154,6 +212,7 @@ test("the request fills the OT and clicks Enviar in separate page-script calls",
   global.PointerEvent = class { constructor(type) { this.type = type; } };
   global.KeyboardEvent = class { constructor(type) { this.type = type; } };
   global.document = {
+    hasFocus: () => true,
     execCommand: (command, _showUi, value) => {
       assert.equal(command, "insertText");
       field.value = value;
@@ -177,6 +236,23 @@ test("the request fills the OT and clicks Enviar in separate page-script calls",
     global.MouseEvent = previousMouseEvent;
     global.PointerEvent = previousPointerEvent;
     global.KeyboardEvent = previousKeyboardEvent;
+  }
+});
+
+test("an inactive source cannot report a visible OT as successfully filled", async () => {
+  const { handleMessage, executions } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const { jobId } = await handleMessage({ type: "START", ot: "4228010" }, source);
+  await handleMessage({ type: "FILL_REPORT_OT", jobId }, source);
+  const previousDocument = global.document;
+  global.document = { hasFocus: () => false };
+  try {
+    const result = executions[0].func("4228010");
+    assert.deepEqual(result, { filled: false, reason: "focus" });
+    chrome.scripting.executeScript = async () => [{ result }];
+    await assert.rejects(handleMessage({ type: "FILL_REPORT_OT", jobId }, source), /no tiene el foco/);
+  } finally {
+    global.document = previousDocument;
   }
 });
 
@@ -210,6 +286,131 @@ test("the source, viewer and HTML output form one print job", async () => {
   assert.equal(session.has(JOB_KEY), false);
   assert.equal(sent.at(-1).tabId, 1);
   assert.match(sent.at(-1).message.text, /Parte preparado/);
+});
+
+test("TMB BOIXERES HTML jobs advance from the standard part to the stripped variant", async () => {
+  const { handleMessage, session, sent, removedTabs, JOB_KEY } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const firstViewer = { tab: { id: 2, openerTabId: 1 } };
+  const firstOutput = { tab: { id: 3, openerTabId: 2 } };
+  const secondViewer = { tab: { id: 4, openerTabId: 1 } };
+  const secondOutput = { tab: { id: 5, openerTabId: 4 } };
+  const started = await handleMessage({ type: "START", ot: "4228010", outputFormat: "html",
+    client: "TMB BOIXERES" }, source);
+  assert.equal(started.variantCount, 2);
+  assert.equal((await handleMessage({ type: "CLAIM_VIEWER" }, firstViewer)).variantIndex, 0);
+  await handleMessage({ type: "CLAIM_OUTPUT" }, firstOutput);
+  assert.deepEqual(await handleMessage({ type: "FINISH", jobId: started.jobId }, firstOutput),
+    { ok: true, nextVariant: true, closeTabs: false });
+  assert.equal(session.get(JOB_KEY).variantIndex, 1);
+  assert.equal(session.get(JOB_KEY).viewerTabId, null);
+  assert.equal(sent.at(-1).message.type, "NEXT_VARIANT");
+  assert.equal((await handleMessage({ type: "CLAIM_VIEWER" }, secondViewer)).variantIndex, 1);
+  await handleMessage({ type: "CLAIM_OUTPUT" }, secondOutput);
+  await handleMessage({ type: "FINISH", jobId: started.jobId }, secondOutput);
+  assert.equal(session.has(JOB_KEY), false);
+  assert.equal(sent.at(-1).message.type, "STATUS");
+  assert.deepEqual(removedTabs, [], "manual-dialog jobs leave both BIRT tabs open");
+});
+
+test("direct-print cleanup closes the BIRT tab only when enabled", async () => {
+  const { handleMessage, removedTabs, session, JOB_KEY } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const viewer = { tab: { id: 2, openerTabId: 1 } };
+  const output = { tab: { id: 3, openerTabId: 2 } };
+  const started = await handleMessage({ type: "START", ot: "4228010", outputFormat: "html",
+    closeTabs: true }, source);
+  await handleMessage({ type: "CLAIM_VIEWER" }, viewer);
+  await handleMessage({ type: "CLAIM_OUTPUT" }, output);
+  assert.deepEqual(await handleMessage({ type: "FINISH", jobId: started.jobId }, output),
+    { ok: true, closeTabs: true });
+  assert.deepEqual(removedTabs, [2]);
+  assert.equal(session.has(JOB_KEY), false);
+});
+
+test("direct Boixeres printing closes each BIRT tab between both variants", async () => {
+  const { handleMessage, removedTabs, session, JOB_KEY } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const firstViewer = { tab: { id: 2, openerTabId: 1 } };
+  const firstOutput = { tab: { id: 3, openerTabId: 2 } };
+  const secondViewer = { tab: { id: 4, openerTabId: 1 } };
+  const secondOutput = { tab: { id: 5, openerTabId: 4 } };
+  const started = await handleMessage({ type: "START", ot: "4228010", outputFormat: "html",
+    client: "TMB BOIXERES", closeTabs: true }, source);
+  await handleMessage({ type: "CLAIM_VIEWER" }, firstViewer);
+  await handleMessage({ type: "CLAIM_OUTPUT" }, firstOutput);
+  assert.deepEqual(await handleMessage({ type: "FINISH", jobId: started.jobId }, firstOutput),
+    { ok: true, nextVariant: true, closeTabs: true });
+  assert.deepEqual(removedTabs, [2]);
+  await handleMessage({ type: "CLAIM_VIEWER" }, secondViewer);
+  await handleMessage({ type: "CLAIM_OUTPUT" }, secondOutput);
+  assert.deepEqual(await handleMessage({ type: "FINISH", jobId: started.jobId }, secondOutput),
+    { ok: true, closeTabs: true });
+  assert.deepEqual(removedTabs, [2, 4]);
+  assert.equal(session.has(JOB_KEY), false);
+});
+
+test("PDF jobs stay single even for TMB BOIXERES", async () => {
+  const { handleMessage } = chromeHarness();
+  const job = await handleMessage({ type: "START", ot: "4228010", outputFormat: "pdf",
+    client: "TMB BOIXERES" }, { tab: { id: 1 } });
+  assert.equal(job.variantCount, 1);
+});
+
+test("repair report variants set Maximo's include-technician parameter in the page context", async () => {
+  const { handleMessage, executions } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const { jobId, variantCount } = await handleMessage({ type: "START", ot: "4228010",
+    outputFormat: "html", client: "TMB BOIXERES" }, source);
+  assert.equal(variantCount, 2);
+  assert.deepEqual(await handleMessage({ type: "SET_REPAIR_INFO", jobId, value: "N" }, source),
+    { updated: true, maximoChanged: true });
+  assert.equal(executions[0].world, "MAIN");
+  assert.deepEqual(executions[0].args, ["N"]);
+});
+
+test("repair parameter uses Maximo's YORN lookup to choose N", async () => {
+  const { handleMessage, executions } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const { jobId } = await handleMessage({ type: "START", ot: "4228010",
+    outputFormat: "html", client: "TMB BOIXERES" }, source);
+  await handleMessage({ type: "SET_REPAIR_INFO", jobId, value: "N" }, source);
+
+  let lookupOpened = false;
+  const field = {
+    id: "mx396-ta", value: "S", title: "S", attributes: { linkedimage: "mx396-img" },
+    getClientRects: () => [1], getAttribute(name) { return this.attributes[name] || null; },
+    closest() { return null; }
+  };
+  const option = {
+    id: "lookup_page3_tdrow_[C:1]_ttxt-lb[R:0]",
+    textContent: "N", innerText: "N", getClientRects: () => [1],
+    focus() {}, scrollIntoView() {}, click() {}
+  };
+  const popup = { contains: element => element === field ? false : true,
+    getClientRects: () => [1], querySelectorAll: () => [option] };
+  const lookup = { getClientRects: () => [1], click() { lookupOpened = true; } };
+  const label = { htmlFor: "mx396-ta", textContent: "Incluir nombre y tiempo reparacion:" };
+  const previousDocument = global.document;
+  global.document = {
+    querySelectorAll(selector) {
+      if (selector === "input, textarea, select") return [field];
+      if (selector === "label[for]") return [label];
+      if (selector.startsWith("span[id^='lookup_page']")) return lookupOpened ? [option] : [];
+      return [];
+    },
+    getElementById(id) { return id === "mx396-img" ? lookup : null; },
+    documentElement: { dataset: {} }
+  };
+  try {
+    assert.deepEqual(await executions[0].func("N"), {
+      updated: true, pendingNativeClick: true, method: "lookup"
+    });
+    assert.equal(lookupOpened, true);
+    assert.equal(global.document.documentElement.dataset.maximoNativeLookupClick, option.id);
+  } finally {
+    global.document = previousDocument;
+  }
 });
 
 test("PDF output requests Save As for BIRT's native PDF from the correct viewer", async () => {

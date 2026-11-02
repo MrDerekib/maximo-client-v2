@@ -21,7 +21,52 @@
     return ["ISSUE", "CLOSE"].includes(String(status || "").trim().toUpperCase());
   }
 
-  const logic = { pageKind, containsOt, canPrintStatus };
+  function labeledFieldValue(documentRoot, caption, fallbackId) {
+    const normalize = value => String(value || "").normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ")
+      .replace(/[:：]\s*$/, "").trim().toLocaleLowerCase();
+    const visible = element => element &&
+      (!element.getClientRects || element.getClientRects().length > 0) &&
+      (!element.getAttribute || element.getAttribute("aria-hidden") !== "true");
+
+    const matchingLabel = [...(documentRoot?.querySelectorAll?.("label[for]") || [])]
+      .find(label => visible(label) && normalize(label.textContent) === normalize(caption));
+    const labeled = matchingLabel && documentRoot.getElementById(matchingLabel.htmlFor);
+    if (visible(labeled) && String(labeled.value || "").trim())
+      return String(labeled.value).trim();
+
+    const ariaLabeled = [...(documentRoot?.querySelectorAll?.("input[aria-labelledby], textarea[aria-labelledby]") || [])]
+      .find(field => visible(field) && (field.getAttribute("aria-labelledby") || "").split(/\s+/)
+        .some(id => normalize(documentRoot.getElementById(id)?.textContent) === normalize(caption)));
+    if (visible(ariaLabeled) && String(ariaLabeled.value || "").trim())
+      return String(ariaLabeled.value).trim();
+
+    const fallback = fallbackId && documentRoot?.getElementById?.(fallbackId);
+    return visible(fallback) ? String(fallback.value || "").trim() : "";
+  }
+
+  function isBoixeresClient(client) {
+    return String(client || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ").trim().toUpperCase().includes("TMB BOIXERES");
+  }
+
+  function clientFromWorkorder(documentRoot) {
+    const fieldValue = String(documentRoot?.getElementById("mx47-tb")?.value || "").trim();
+    if (fieldValue) return fieldValue;
+
+    const labels = [...(documentRoot?.querySelectorAll?.("td, span, label, div") || [])]
+      .filter(element => (!element.getClientRects || element.getClientRects().length) &&
+        /^cliente\s*:?$/i.test((element.innerText || element.textContent || "")
+          .replace(/\s+/g, " ").trim()));
+    for (const label of labels) {
+      const row = label.closest?.("tr");
+      if (row) return String(row.innerText || row.textContent || "").trim();
+    }
+    return "";
+  }
+
+  const logic = { pageKind, containsOt, canPrintStatus, labeledFieldValue,
+    isBoixeresClient, clientFromWorkorder };
   root.MaximoPartLogic = logic;
   if (typeof module !== "undefined" && module.exports) module.exports = logic;
 })(typeof globalThis !== "undefined" ? globalThis : this);

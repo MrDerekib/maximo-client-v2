@@ -65,6 +65,8 @@ $nuitkaArguments = @(
     "--include-data-file=$projectRoot\browser_extension\content.js=browser_extension/content.js",
     "--include-data-file=$projectRoot\browser_extension\service_worker.js=browser_extension/service_worker.js",
     "--include-data-file=$projectRoot\browser_extension\workflow_logic.js=browser_extension/workflow_logic.js",
+    "--include-data-file=$projectRoot\browser_extension\start_options.js=browser_extension/start_options.js",
+    "--include-data-file=$projectRoot\resources\failure_catalog.json=resources/failure_catalog.json",
     "--include-data-dir=$projectRoot\ui_assets=ui_assets",
     "--windows-icon-from-ico=$projectRoot\icon.ico",
     "--windows-console-mode=disable",
