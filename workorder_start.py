@@ -43,6 +43,7 @@ VISIBLE_DIALOGS_SCRIPT = """
 
 class WorkorderStarter:
     route_dialog_timeout = 8
+    tab_activation_timeout = 8
     active_status = 'APPR'
     operation = 'inicio'
 
@@ -449,16 +450,47 @@ class WorkorderStarter:
             f"opción {code} ({expected_type}) tras filtrar")
 
     def tab(self, title):
-        self.idle()
-        self.check_ot()
         def find():
             return next((e for e in self.driver.find_elements(By.CSS_SELECTOR, "a[role=tab]")
                          if e.is_displayed() and normalized(e.text) == normalized(title)), None)
         def active():
             tab = find()
             return tab is not None and tab.get_attribute('aria-expanded') == 'true'
-        self.click_fresh(find, f"pestaña {title}", completed=active)
-        self.wait(lambda d: active(), f"activación de {title}")
+        def activated(d):
+            self.reject_dialogs()
+            return active()
+        for attempt in range(1, 4):
+            self.idle()
+            self.check_ot()
+            self.reject_dialogs()
+            self.click_fresh(find, f"pestaña {title}", completed=active)
+            try:
+                WebDriverWait(self.driver, min(self.tab_activation_timeout, self.timeout / 3),
+                              poll_frequency=0.25,
+                              ignored_exceptions=(StaleElementReferenceException,)).until(activated)
+                break
+            except TimeoutException as exc:
+                # Navigation is repeatable; routing and its final confirmation are not.
+                # Never retry while Maximo is loading or a dialog requires attention.
+                self.idle()
+                self.check_ot()
+                self.reject_dialogs()
+                if active():
+                    break
+                try:
+                    tabs = self.driver.execute_script("""
+                        return [...document.querySelectorAll('a[role=tab]')]
+                          .filter(e => e.getClientRects().length)
+                          .map(e => ({title:e.textContent.trim(),active:e.getAttribute('aria-expanded')}));
+                    """)
+                except WebDriverException:
+                    tabs = 'no disponibles'
+                logging.warning('OT %s: sin activación de %s durante %s (intento %s/3); pestañas=%s',
+                                self.ot, title, self.operation, attempt, tabs)
+                if attempt == 3:
+                    raise RuntimeError(f"Tiempo agotado: activación de {title} tras tres intentos. "
+                                       f"No se continuará el {self.operation} de la OT.") from exc
+                self.progress(f'OT {self.ot}: reintentando pestaña {title} ({attempt+1}/3)…')
         self.idle()
         self.wait(lambda d: self.field("Estado"), f"ficha en {title}")
         self.check_ot()

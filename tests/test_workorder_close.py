@@ -115,6 +115,66 @@ class BrowserCloseTests(TestCase):
     def state(self):
         return self.browser.execute_script('return state')
 
+    def intercept_actuals_navigation(self, behavior):
+        self.browser.execute_script("""
+            const link=[...document.querySelectorAll('a[role=tab]')]
+              .find(e=>e.textContent==='Consumos Actuales');
+            const behavior=arguments[0];
+            window.actualsClicks=0;
+            link.onclick=function(){
+                window.actualsClicks++;
+                if(behavior==='ignore-first' && window.actualsClicks===1)return false;
+                if(behavior==='ignore-all')return false;
+                if(behavior==='dialog'){
+                    document.getElementById('dialogs').innerHTML=
+                      '<section role="dialog" id="navigation-warning">Revisa los datos</section>';
+                    return false;
+                }
+                if(behavior==='slow'){
+                    document.getElementById('wait').style.display='block';
+                    setTimeout(()=>{
+                        render('actuals');
+                        document.getElementById('wait').style.display='none';
+                    },600);
+                }
+                else render('actuals');
+                return false;
+            };
+        """, behavior)
+
+    def test_read_retries_an_ignored_tab_click_without_writing_or_routing(self):
+        self.intercept_actuals_navigation('ignore-first')
+        self.closer.tab_activation_timeout=0.1
+        with self.assertLogs(level='WARNING') as logs:
+            snapshot=self.closer.inspect_repair()
+        self.assertEqual(snapshot['ot'],'4378677')
+        self.assertEqual(self.browser.execute_script('return window.actualsClicks'),2)
+        self.assertIn('Consumos Actuales',logs.output[0])
+        self.assertEqual(self.state()['events'],[])
+        self.assertEqual(self.state()['routes'],0)
+
+    def test_tab_timeout_stops_after_three_clicks_without_writing_or_routing(self):
+        self.intercept_actuals_navigation('ignore-all')
+        self.closer.tab_activation_timeout=0.1
+        with self.assertLogs(level='WARNING'),self.assertRaisesRegex(RuntimeError,'tras tres intentos'):
+            self.closer.inspect_repair()
+        self.assertEqual(self.browser.execute_script('return window.actualsClicks'),3)
+        self.assertEqual(self.state()['events'],[])
+        self.assertEqual(self.state()['routes'],0)
+
+    def test_tab_navigation_does_not_retry_a_dialog_or_a_slow_response(self):
+        self.closer.tab_activation_timeout=0.1
+        self.intercept_actuals_navigation('dialog')
+        with self.assertRaisesRegex(RuntimeError,'Revisa los datos'):
+            self.closer.inspect_repair()
+        self.assertEqual(self.browser.execute_script('return window.actualsClicks'),1)
+        self.browser.execute_script('resetState()')
+        self.intercept_actuals_navigation('slow')
+        self.closer.inspect_repair()
+        self.assertEqual(self.browser.execute_script('return window.actualsClicks'),1)
+        self.assertEqual(self.state()['events'],[])
+        self.assertEqual(self.state()['routes'],0)
+
     def plan(self,**overrides):
         snapshot=self.closer.inspect_repair()
         pending={'snapshot':snapshot,'created':time.monotonic(),'approved':True,'token':'offline'}
