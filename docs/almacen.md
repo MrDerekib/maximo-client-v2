@@ -41,6 +41,8 @@ en este modo aislado. Usa este lanzador para mantener ese aislamiento.
   selecciona solo las filas visibles y muestra un estado parcial si procede.
   Se muestra un contador y «Limpiar selección». Cambiar filtros limpia la selección;
   ordenar mantiene las OTs elegidas. El selector se oculta al desactivar almacén.
+  La tabla usa un dibujo consistente de las marcas y el resaltado para evitar los
+  defectos del estilo nativo de Windows 11. Al desactivar almacén restaura el dibujo anterior.
 - Se congelan los identificadores y datos al abrir la revisión. Ordenar o filtrar
   después no cambia el lote. Esta fase no comprueba estados en el servidor.
 - Una sola simulación activa, secuencial y en un hilo aparte; UI disponible.

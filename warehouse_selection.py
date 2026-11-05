@@ -1,22 +1,49 @@
 """Checkboxes mirror Qt's row selection without changing the table's data columns."""
 from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QModelIndex, QObject, QPersistentModelIndex, QTimer, Qt
-from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QStyledItemDelegate, QStyle, QStyleOptionViewItem, QWidget
+from PySide6.QtGui import QPainter, QPalette
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QStyledItemDelegate, QStyle, QStyleFactory, QStyleOptionButton, QStyleOptionViewItem, QWidget
 
 
 class VisibleRowsCheckBox(QCheckBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.indicator_style = QStyleFactory.create('Fusion')
+        self.indicator_style.setParent(self)
+
+    def paintEvent(self, event):
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        painter = QPainter(self)
+        self.indicator_style.drawControl(QStyle.CE_CheckBox, option, painter, self)
+        painter.end()
+
     def nextCheckState(self):
         # Partial is a display state, not an extra step for the user.
         self.setCheckState(Qt.Unchecked if self.checkState() == Qt.Checked else Qt.Checked)
 
 
 class SelectionIndicatorDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.item_style = QStyleFactory.create('Fusion')
+        self.item_style.setParent(self)
+
+    def paint(self, painter, option, index):
+        # Windows 11's native item drawing can override the stylesheet's
+        # selection colors and lose the check mark. Paint only this table's
+        # cells consistently, keeping the app's fonts, colors and item roles.
+        view_option = QStyleOptionViewItem(option)
+        self.initStyleOption(view_option, index)
+        view_option.showDecorationSelected = True
+        view_option.palette.setCurrentColorGroup(QPalette.Active)
+        self.item_style.drawControl(QStyle.CE_ItemViewItem, view_option, painter, view_option.widget)
+
     def indicator_rect(self, table, index):
         option = QStyleOptionViewItem()
         option.initFrom(table.viewport())
         self.initStyleOption(option, index)
         option.rect = table.visualRect(index)
-        return table.style().subElementRect(QStyle.SE_ItemViewItemCheckIndicator, option, table.viewport())
+        return self.item_style.subElementRect(QStyle.SE_ItemViewItemCheckIndicator, option, table.viewport())
 
 
 class WarehouseSelection(QObject):
@@ -31,7 +58,7 @@ class WarehouseSelection(QObject):
         self._anchor = QPersistentModelIndex()
         self._selected_rows = set()
         self.delegate = SelectionIndicatorDelegate(table)
-        table.setItemDelegateForColumn(0, self.delegate)
+        self.original_delegate = table.itemDelegate()
         self.bar = QWidget()
         layout = QHBoxLayout(self.bar)
         layout.setContentsMargins(0, 2, 0, 2)
@@ -66,6 +93,7 @@ class WarehouseSelection(QObject):
         if self.enabled == enabled:
             return
         self.enabled = enabled
+        self.table.setItemDelegate(self.delegate if enabled else self.original_delegate)
         self.bar.setVisible(enabled)
         self.table.setCornerButtonEnabled(not enabled)
         self.all_checkbox.setVisible(enabled)

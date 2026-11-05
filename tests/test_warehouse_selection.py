@@ -2,9 +2,9 @@
 from unittest import TestCase
 from unittest.mock import Mock
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QMainWindow, QStyleFactory, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from config import AppConfig
 from warehouse_selection import WarehouseSelection
@@ -124,6 +124,7 @@ class WarehouseSelectionTests(TestCase):
         self.assertTrue(self.host.selector.all_checkbox.isHidden())
         self.assertEqual(self.host.table.item(1, 0).data(Qt.CheckStateRole), None)
         self.assertFalse(self.host.table.selectionModel().selectedRows())
+        self.assertIs(self.host.table.itemDelegate(), self.host.selector.original_delegate)
 
     def test_empty_table_has_no_select_all_action(self):
         self.host.table.setRowCount(0)
@@ -159,3 +160,27 @@ class WarehouseSelectionTests(TestCase):
         MaximoDesktopWindow._toggle_priority_filter(self.host, True)
         self.assertFalse(self.checked_ots())
         self.host._apply_priority_filter.assert_called_once()
+
+    def test_selected_cells_have_a_solid_background_with_windows11_and_fusion(self):
+        old_style = self.app.style().objectName()
+        old_sheet = self.app.styleSheet()
+        try:
+            for style in ('windows11', 'Fusion'):
+                if style.lower() not in {name.lower() for name in QStyleFactory.keys()}:
+                    continue
+                with self.subTest(style=style):
+                    self.app.setStyle(style)
+                    self.app.setStyleSheet('QTableWidget { selection-background-color: #dbeafe; '
+                                          'selection-color: #172033; }')
+                    self.host.selector.clear_selection()
+                    self.host.table.item(0, 4).setText('')
+                    self.click_checkbox(0)
+                    self.app.processEvents()
+                    image = self.host.table.viewport().grab().toImage()
+                    rect = self.host.table.visualRect(self.host.table.model().index(0, 4))
+                    for point in (rect.topLeft()+QPoint(2, 2), rect.center(), rect.bottomRight()-QPoint(2, 2)):
+                        self.assertEqual(image.pixelColor(point).name(), '#dbeafe')
+                    self.assertEqual(self.checked_ots(), {'DEMO-0'})
+        finally:
+            self.app.setStyle(old_style or 'Fusion')
+            self.app.setStyleSheet(old_sheet)
