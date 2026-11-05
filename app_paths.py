@@ -38,6 +38,11 @@ DEVELOPMENT_MODE = os.environ.get("MAXIMO_DESKTOP_DEV", "").strip().lower() in {
     "1", "true", "yes", "on",
 }
 APP_FOLDER_NAME = "MaximoDesktop-dev" if DEVELOPMENT_MODE else "MaximoDesktop"
+WAREHOUSE_DEVELOPMENT_MODE = DEVELOPMENT_MODE and os.environ.get(
+    "MAXIMO_DESKTOP_WAREHOUSE_DEV", ""
+).strip().lower() in {"1", "true", "yes", "on"}
+if WAREHOUSE_DEVELOPMENT_MODE:
+    APP_FOLDER_NAME = "MaximoDesktop-almacen"
 
 if os.name == "nt":
     _local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))

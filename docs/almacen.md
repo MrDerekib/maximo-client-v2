@@ -1,0 +1,62 @@
+# Prototipo aislado de almacén
+
+Estado: interfaz y procesamiento **simulado**, sin transporte a Maximo.
+
+- Rama temporal `feature/almacen`, creada desde `dev` en `a165605`.
+- Carpeta de trabajo independiente `maximo-client-almacen`; la carpeta habitual
+  `maximo-client-ui` permanece en `dev`.
+- No se cambia la versión, el proceso de impresión ni los flujos de técnico.
+- No se fusionará con `dev` ni `main` hasta validar con almacén.
+
+## Probar
+
+Desde esta carpeta, con su propio entorno `.venv` y `requirements.txt`:
+
+```powershell
+.\run_warehouse_dev.ps1
+```
+
+La demostración usa seis OTs ficticias y no lee credenciales ni base de datos.
+Activa «Mostrar acciones de almacén», selecciona filas con Ctrl/Mayús y abre el
+menú contextual. La revisión permite elegir un recorrido correcto o incidencias.
+
+```powershell
+.\run_warehouse_dev.ps1 -FullApp
+```
+
+Abre la app completa con datos en `%LOCALAPPDATA%\MaximoDesktop-almacen`, separados
+de producción y del desarrollo habitual. En Configuración, activa las funciones
+de almacén y guarda. Las acciones de lote siguen siendo exclusivamente simuladas.
+Los enlaces de OT en esta app completa sí abren la ficha real para revisión manual,
+con las credenciales configuradas allí; no ejecutan la acción de almacén.
+No se registra el protocolo de enlaces ni se comprueban releases automáticamente
+en este modo aislado. Usa este lanzador para mantener ese aislamiento.
+
+## Comportamiento
+
+- Individual y múltiple comparten revisión y reporte; botón secundario sobre una
+  fila ya seleccionada conserva el lote. Se excluyen filas ocultas y duplicados.
+- Se congelan los identificadores y datos al abrir la revisión. Ordenar o filtrar
+  después no cambia el lote. Esta fase no comprueba estados en el servidor.
+- Una sola simulación activa, secuencial y en un hilo aparte; UI disponible.
+- El tick verde solo significa «Simulación correcta», nunca operación real.
+- Fallos ordinarios permiten seguir. Un resultado incierto detiene las siguientes
+  OTs y nunca repite la confirmación. Detener termina primero la OT en curso.
+- Cerrar/Escape durante el trabajo solicita detener y conserva el reporte abierto.
+- Los reportes JSON, marcados `simulation: true`, quedan en
+  `logs/almacen-simulaciones`. No se modifica el seguimiento local de las OTs.
+
+## Pendiente de la cuenta de almacén
+
+Capturar el DOM y recorrido completo de recepción y salida; confirmar estado
+inicial/final y diálogos adicionales; validar permisos, errores y persistencia.
+Después se podrá implementar el transporte real reutilizando sesión y navegación.
+Las reglas reales de verificación deben aprobarse antes de habilitar operaciones.
+
+## Descartar o continuar
+
+Para seguir trabajando en lo actual, usa `maximo-client-ui`, que permanece en `dev`.
+El trabajo experimental se conserva únicamente en `feature/almacen` y su carpeta.
+Si se abandona, basta con retirar ese worktree y rama tras revisar si se desea
+conservar algo. Sus datos de prueba están en una carpeta separada; no se necesitan
+migraciones inversas ni cambios en la instalación distribuida.

@@ -44,6 +44,7 @@ class AppConfig:
     workorder_start_mode: str = "configured"
     workorder_start_selection: dict = field(default_factory=default_selection)
     workorder_close_enabled: bool = False
+    warehouse_enabled: bool = False
     repair_print_mode: str = "dialog"
     repair_close_tabs_after_direct_print: bool = False
     filters: dict | None = None
@@ -87,6 +88,8 @@ class AppConfig:
             self.workorder_start_selection = {}
         if not isinstance(self.workorder_close_enabled, bool):
             self.workorder_close_enabled = False
+        if not isinstance(self.warehouse_enabled, bool):
+            self.warehouse_enabled = False
         if not isinstance(self.repair_close_tabs_after_direct_print, bool):
             self.repair_close_tabs_after_direct_print = False
         if self.filters is None:

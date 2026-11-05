@@ -23,10 +23,11 @@ from PySide6.QtWidgets import (
     QTextBrowser, QStyle, QVBoxLayout, QWidget, QWidgetAction,
 )
 
-from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DEVELOPMENT_MODE, DOWNLOAD_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR, PROFILES_PATH, UPDATE_CACHE_DIR
+from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DEVELOPMENT_MODE, DOWNLOAD_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR, PROFILES_PATH, UPDATE_CACHE_DIR, WAREHOUSE_DEVELOPMENT_MODE
 from config import AppConfig, credentials_configured, load_config, save_config
 from failure_catalog import resolve_selection
 from failure_picker import FailurePathPicker
+from warehouse_ui import WarehouseWindowMixin
 from db import (
     apply_started_workorder, apply_closed_repair,
     clear_current_priority_snapshot, current_priority_ots, current_priority_snapshots,
@@ -317,6 +318,8 @@ class LocalOpenBridge(QObject):
     def __init__(self, development=False, initial_uri=""):
         super().__init__()
         suffix = "-dev" if development else ""
+        if development and WAREHOUSE_DEVELOPMENT_MODE:
+            suffix += "-almacen"
         self.server_name = f"MaximoDesktop{suffix}"
         self.server = None
         self.is_primary = False
@@ -710,7 +713,7 @@ class AdvancedFiltersDialog(QDialog):
         }
 
 
-class MaximoDesktopWindow(QMainWindow):
+class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
     columns = ("Estado en Maximo", "OT", "Descripción", "Nº de serie", "Fecha", "Cliente", "Tipo de trabajo", "Seguimiento", "Planta", "Última vez visto", "Avería")
     default_column_widths = (180, 110, 340, 145, 135, 140, 180, 130, 105, 140, 340)
     max_column_widths = (180, 140, 600, 240, 160, 220, 220, 240, 160, 1200, 700)
@@ -778,7 +781,8 @@ class MaximoDesktopWindow(QMainWindow):
         self.schedule_auto_update()
         # La consulta no bloquea el inicio; si hay una versión nueva, ofrece
         # instalarla una sola vez por sesión.
-        QTimer.singleShot(1200, lambda: self.check_app_updates(automatic=True))
+        if not WAREHOUSE_DEVELOPMENT_MODE:
+            QTimer.singleShot(1200, lambda: self.check_app_updates(automatic=True))
 
     def _build_ui(self):
         root = QWidget()
@@ -1339,11 +1343,21 @@ class MaximoDesktopWindow(QMainWindow):
         self.path_details.setVisible(False)
         paths_layout.addWidget(self.path_details)
 
+        self.warehouse_card = QGroupBox("Funciones de almacén · En pruebas")
+        warehouse_layout = QVBoxLayout(self.warehouse_card)
+        self.warehouse_check = QCheckBox("Mostrar acciones de almacén")
+        warehouse_layout.addWidget(self.warehouse_check)
+        warehouse_hint = QLabel("Habilita acciones individuales y por selección múltiple. "
+                               "Por ahora solo se simulan: no se realizan entradas ni salidas en Maximo.")
+        warehouse_hint.setWordWrap(True)
+        warehouse_hint.setObjectName("filterHint")
+        warehouse_layout.addWidget(warehouse_hint)
+
         for card in (self.access_card, self.app_updates_card,
                      self.appearance_card, self.paths_card):
             self.settings_sections[0].addWidget(card)
         for card in (self.maintenance_card, self.fault_descriptions_card,
-                     self.priorities_card, self.edge_extension_card):
+                     self.priorities_card, self.edge_extension_card, self.warehouse_card):
             self.settings_sections[1].addWidget(card)
         body.addLayout(self.settings_columns)
         body.addStretch()
@@ -1747,7 +1761,11 @@ class MaximoDesktopWindow(QMainWindow):
         row = self.table.indexAt(position).row()
         if row < 0: return
         column = self.table.indexAt(position).column()
-        self.table.selectRow(row); self.table.setCurrentCell(row, column); ot = self.selected_ot(row)
+        if getattr(self.cfg, 'warehouse_enabled', False):
+            self.prepare_warehouse_context_selection(self.table.indexAt(position))
+        else:
+            self.table.selectRow(row); self.table.setCurrentCell(row, column)
+        ot = self.selected_ot(row)
         menu = QMenu(self); menu.addAction("Copiar valor", lambda: QApplication.clipboard().setText(self.table.currentItem().text()))
         menu.addAction("Copiar OT", lambda: QApplication.clipboard().setText(ot))
         menu.addAction("Copiar número de serie", lambda: QApplication.clipboard().setText(self.table.item(row, 3).text()))
@@ -1767,6 +1785,8 @@ class MaximoDesktopWindow(QMainWindow):
             pdf_action.setToolTip(reason)
         if self.table.item(row, 0).text() == "○ No activo":
             menu.addAction("Eliminar registro local…", lambda: self.delete_inactive(ot))
+        if getattr(self.cfg, 'warehouse_enabled', False):
+            self.add_warehouse_actions(menu)
         menu.exec(self.table.viewport().mapToGlobal(position))
 
     def delete_inactive(self, ot):
@@ -2207,6 +2227,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.workorder_failure_picker.set_selection(self.cfg.workorder_start_selection)
         self._update_workorder_start_controls()
         self.workorder_close_check.setChecked(self.cfg.workorder_close_enabled)
+        self.warehouse_check.setChecked(self.cfg.warehouse_enabled)
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
         self.repair_close_tabs_check.setChecked(self.cfg.repair_close_tabs_after_direct_print)
         self.repair_mode_combo.setEnabled(self.cfg.repair_extension_enabled)
@@ -2261,6 +2282,7 @@ class MaximoDesktopWindow(QMainWindow):
             or (self.workorder_start_mode_combo.currentData() or "invalid") != self.cfg.workorder_start_mode
             or self.workorder_failure_picker.selection() != self.cfg.workorder_start_selection
             or self.workorder_close_check.isChecked() != self.cfg.workorder_close_enabled
+            or self.warehouse_check.isChecked() != self.cfg.warehouse_enabled
             or self.repair_mode_combo.currentData() != self.cfg.repair_print_mode
             or self.repair_close_tabs_check.isChecked() != self.cfg.repair_close_tabs_after_direct_print
             or self.fault_batch_spin.value() != self.cfg.fault_description_batch_size
@@ -2290,6 +2312,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.cfg.workorder_start_mode = start_mode or "invalid"
         self.cfg.workorder_start_selection = start_selection
         self.cfg.workorder_close_enabled = self.workorder_close_check.isChecked()
+        self.cfg.warehouse_enabled = self.warehouse_check.isChecked()
         self.cfg.repair_print_mode = self.repair_mode_combo.currentData()
         self.cfg.repair_close_tabs_after_direct_print = self.repair_close_tabs_check.isChecked()
         self.cfg.fault_description_batch_size = self.fault_batch_spin.value()
@@ -2591,6 +2614,12 @@ class MaximoDesktopWindow(QMainWindow):
             event.accept()
             return
         event.ignore()
+        if WarehouseWindowMixin.warehouse_is_running(self):
+            for dialog in self._warehouse_dialogs:
+                if dialog.is_running():
+                    dialog.request_stop()
+                    dialog.show(); dialog.raise_()
+            return
         if self._closing:
             return
         if self.settings_dirty():
@@ -2733,7 +2762,7 @@ def main():
     bridge.uri_received.connect(window.handle_deep_link)
     bridge.activate_requested.connect(window.activate_window)
     try:
-        registered = register_protocol_handler(DEVELOPMENT_MODE)
+        registered = False if WAREHOUSE_DEVELOPMENT_MODE else register_protocol_handler(DEVELOPMENT_MODE)
         if registered:
             logging.info("Protocolo local de OT registrado para el usuario actual.")
     except OSError:
