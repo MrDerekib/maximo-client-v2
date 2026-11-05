@@ -28,6 +28,7 @@ from config import AppConfig, credentials_configured, load_config, save_config
 from failure_catalog import resolve_selection
 from failure_picker import FailurePathPicker
 from warehouse_ui import WarehouseWindowMixin
+from warehouse_selection import WarehouseSelection
 from db import (
     apply_started_workorder, apply_closed_repair,
     clear_current_priority_snapshot, current_priority_ots, current_priority_snapshots,
@@ -964,6 +965,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             header.resizeSection(column, width)
         self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
         self._column_widths = self._current_column_widths()
+        self._warehouse_selector = WarehouseSelection(self.table, self)
+        self._warehouse_selector.set_enabled(self.cfg.warehouse_enabled)
+        outer.addWidget(self._warehouse_selector.bar)
         outer.addWidget(self.table, 1)
         return page
 
@@ -1682,9 +1686,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
         self._apply_priority_filter()
         self._update_list_summary()
+        if getattr(self, '_warehouse_selector', None) is not None:
+            self._warehouse_selector.set_enabled(self.cfg.warehouse_enabled)
+            self._warehouse_selector.refresh()
 
     def _toggle_priority_filter(self, _checked):
         """Shows or hides existing table rows without querying SQLite or rebuilding cells."""
+        if getattr(self, '_warehouse_selector', None) is not None and self.cfg.warehouse_enabled:
+            self._warehouse_selector.clear_selection()
         self._apply_priority_filter()
         self._update_list_summary()
 
@@ -1698,6 +1707,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         finally:
             self.table.setUpdatesEnabled(True)
         self.table.viewport().update()
+        if getattr(self, '_warehouse_selector', None) is not None:
+            self._warehouse_selector.refresh()
 
     def _refresh_priority_indicators(self):
         """Refreshes priority markers and visibility after local priority changes."""
@@ -2228,6 +2239,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._update_workorder_start_controls()
         self.workorder_close_check.setChecked(self.cfg.workorder_close_enabled)
         self.warehouse_check.setChecked(self.cfg.warehouse_enabled)
+        if getattr(self, '_warehouse_selector', None) is not None:
+            self._warehouse_selector.set_enabled(self.cfg.warehouse_enabled)
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
         self.repair_close_tabs_check.setChecked(self.cfg.repair_close_tabs_after_direct_print)
         self.repair_mode_combo.setEnabled(self.cfg.repair_extension_enabled)

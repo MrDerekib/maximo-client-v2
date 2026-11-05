@@ -17,7 +17,8 @@ Desde esta carpeta, con su propio entorno `.venv` y `requirements.txt`:
 ```
 
 La demostración usa seis OTs ficticias y no lee credenciales ni base de datos.
-Activa «Mostrar acciones de almacén», selecciona filas con Ctrl/Mayús y abre el
+Activa «Mostrar acciones de almacén», marca las casillas o selecciona filas con
+Ctrl/Mayús y abre el
 menú contextual. La revisión permite elegir un recorrido correcto o incidencias.
 
 ```powershell
@@ -36,6 +37,10 @@ en este modo aislado. Usa este lanzador para mantener ese aislamiento.
 
 - Individual y múltiple comparten revisión y reporte; botón secundario sobre una
   fila ya seleccionada conserva el lote. Se excluyen filas ocultas y duplicados.
+- Las casillas reflejan la misma selección que Ctrl/Mayús. La casilla de cabecera
+  selecciona solo las filas visibles y muestra un estado parcial si procede.
+  Se muestra un contador y «Limpiar selección». Cambiar filtros limpia la selección;
+  ordenar mantiene las OTs elegidas. El selector se oculta al desactivar almacén.
 - Se congelan los identificadores y datos al abrir la revisión. Ordenar o filtrar
   después no cambia el lote. Esta fase no comprueba estados en el servidor.
 - Una sola simulación activa, secuencial y en un hilo aparte; UI disponible.
