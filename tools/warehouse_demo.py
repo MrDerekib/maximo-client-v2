@@ -14,6 +14,7 @@ from config import AppConfig
 from ui_qt import apply_application_theme
 from warehouse_ui import WarehouseWindowMixin
 from warehouse_selection import WarehouseSelection
+from warehouse import warehouse_status_code
 
 
 class WarehouseDemo(WarehouseWindowMixin, QMainWindow):
@@ -43,7 +44,7 @@ class WarehouseDemo(WarehouseWindowMixin, QMainWindow):
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         for row in range(6):
             values = ('Ficticia', f'DEMO-{row+1:03}', f'Equipo de prueba {row+1}', f'SN-DEMO-{row+1}',
-                      '', 'Cliente de prueba', 'REPARACION', 'WAPPR' if row < 4 else 'ISSUE')
+                      '', 'Cliente de prueba', 'REPARACION', 'PDTE CONFIRMAR' if row < 4 else 'DAR SALIDA')
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         self.table.resizeColumnsToContents()
@@ -53,8 +54,8 @@ class WarehouseDemo(WarehouseWindowMixin, QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.state_filter = QComboBox()
         self.state_filter.addItem('Todos los estados', '')
-        self.state_filter.addItem('Pendientes de recepción · WAPPR', 'WAPPR')
-        self.state_filter.addItem('Pendientes de salida · ISSUE', 'ISSUE')
+        self.state_filter.addItem('Pendientes de recepción · PDTE CONFIRMAR', 'WAPPR')
+        self.state_filter.addItem('Pendientes de salida · DAR SALIDA', 'ISSUE')
         self.state_filter.currentIndexChanged.connect(self._filter_rows)
         layout.addWidget(self.state_filter)
         layout.addWidget(self._warehouse_selector.bar)
@@ -70,7 +71,7 @@ class WarehouseDemo(WarehouseWindowMixin, QMainWindow):
         self._warehouse_selector.clear_selection()
         status = self.state_filter.currentData()
         for row in range(self.table.rowCount()):
-            self.table.setRowHidden(row, bool(status) and self.table.item(row, 7).text() != status)
+            self.table.setRowHidden(row, bool(status) and warehouse_status_code(self.table.item(row, 7).text()) != status)
         self._warehouse_selector.refresh()
 
     def show_context_menu(self, point):

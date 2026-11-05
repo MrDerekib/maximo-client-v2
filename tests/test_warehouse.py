@@ -48,6 +48,34 @@ class WarehouseSimulationTests(TestCase):
         self.assertEqual([result.status for result in results], ['failed', 'success'])
         self.assertIn('No se ha consultado Maximo', results[0].detail)
 
+    def test_md_labels_and_edge_codes_are_equivalent_for_the_matching_action(self):
+        for action, states in (('receive', ('WAPPR', 'PDTE CONFIRMAR', ' pdte\u00a0 confirmar ')),
+                               ('dispatch', ('ISSUE', 'DAR SALIDA', ' dar   salida '))):
+            for state in states:
+                with self.subTest(action=action, state=state):
+                    result, = run_simulation([WarehouseItem('123', status=state)], action, delay=0)
+                    self.assertEqual(result.status, 'success')
+                    self.assertEqual(result.item.status, state)
+
+    def test_equivalences_do_not_allow_wrong_actions_or_unknown_states(self):
+        for action, state in (('receive', 'DAR SALIDA'), ('dispatch', 'PDTE CONFIRMAR'),
+                              ('receive', 'APPR'), ('dispatch', 'CLOSE'),
+                              ('receive', ''), ('dispatch', 'UNKNOWN')):
+            with self.subTest(action=action, state=state):
+                result, = run_simulation([WarehouseItem('123', status=state)], action, delay=0)
+                self.assertEqual(result.status, 'failed')
+                self.assertEqual(result.completed_steps, 1)
+
+    def test_report_preserves_original_md_status_label(self):
+        with temporary_directory() as folder:
+            for action, state in (('receive', 'PDTE CONFIRMAR'), ('dispatch', 'DAR SALIDA')):
+                with self.subTest(action=action):
+                    results = run_simulation([WarehouseItem('123', status=state)], action, delay=0)
+                    path = save_simulation_report(folder, 'status-equivalence', action, 'success', results)
+                    result, = json.loads(path.read_text(encoding='utf-8'))['results']
+                    self.assertEqual(result['status'], 'success')
+                    self.assertEqual(result['item']['status'], state)
+
     def test_uncertain_confirmation_continues_next_item_without_replay(self):
         events = []
         results = run_simulation(items(), 'receive', 'incidents', delay=0,

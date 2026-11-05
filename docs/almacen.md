@@ -45,6 +45,10 @@ en este modo aislado. Usa este lanzador para mantener ese aislamiento.
   defectos del estilo nativo de Windows 11. Al desactivar almacén restaura el dibujo anterior.
 - Se congelan los identificadores y datos al abrir la revisión. Ordenar o filtrar
   después no cambia el lote. Esta fase no comprueba estados en el servidor.
+- Para validar el estado del listado, `PDTE CONFIRMAR` equivale a `WAPPR` y
+  `DAR SALIDA` a `ISSUE`. Se conserva el texto original en la tabla y el reporte.
+  La demostración usa las etiquetas de MD; estas equivalencias no autorizan acciones
+  sobre estados distintos ni sustituyen la futura comprobación en Maximo.
 - Una sola simulación activa, secuencial y en un hilo aparte; UI disponible.
 - El tick verde solo significa «Simulación correcta», nunca operación real.
 - Los fallos y resultados inciertos se conservan en el reporte para revisión manual

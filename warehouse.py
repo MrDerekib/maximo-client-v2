@@ -22,6 +22,13 @@ ACTIONS = {
 STEPS = ('Abrir ficha', 'Comprobar OT y estado', 'Seleccionar acción',
          'Confirmar acción', 'Verificar resultado')
 SCENARIOS = {'success': 'Todas correctas', 'incidents': 'Incluir fallo y resultado incierto'}
+LIST_STATUS_CODES = {'PDTE CONFIRMAR': 'WAPPR', 'DAR SALIDA': 'ISSUE'}
+
+
+def warehouse_status_code(value):
+    """Compare known MD labels and Edge codes without changing the source value."""
+    status = ' '.join(str(value or '').split()).upper()
+    return LIST_STATUS_CODES.get(status, status)
 
 
 @dataclass(frozen=True)
@@ -81,10 +88,12 @@ def run_simulation(items, action, scenario='success', *, stop=None, progress=Non
                 progress(index, result)
                 if delay:
                     time.sleep(delay)
-                if step_index == 1 and item.status.strip().upper() != ACTIONS[action].initial_status:
+                if step_index == 1 and warehouse_status_code(item.status) != ACTIONS[action].initial_status:
+                    expected = ' / '.join([ACTIONS[action].initial_status, *(
+                        label for label, code in LIST_STATUS_CODES.items() if code == ACTIONS[action].initial_status)])
                     result = replace(result, status='failed', detail=(
                         f'Estado del listado: {item.status or "sin indicar"}. '
-                        f'La simulación requiere {ACTIONS[action].initial_status}. '
+                        f'La simulación requiere {expected}. '
                         'No se ha consultado Maximo.'))
                     break
                 if scenario == 'incidents' and index % 4 == 1 and step_index == 2:
