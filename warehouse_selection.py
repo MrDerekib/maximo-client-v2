@@ -1,6 +1,6 @@
 """Checkboxes mirror Qt's row selection without changing the table's data columns."""
-from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QModelIndex, QObject, QPersistentModelIndex, QTimer, Qt
-from PySide6.QtGui import QPainter, QPalette
+from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QModelIndex, QObject, QPointF, QPersistentModelIndex, QRectF, QTimer, Qt
+from PySide6.QtGui import QColor, QPainter, QPalette, QPen, QPolygonF
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QStyledItemDelegate, QStyle, QStyleFactory, QStyleOptionButton, QStyleOptionViewItem, QWidget
 
 
@@ -14,7 +14,25 @@ class VisibleRowsCheckBox(QCheckBox):
         option = QStyleOptionButton()
         self.initStyleOption(option)
         painter = QPainter(self)
-        self.indicator_style.drawControl(QStyle.CE_CheckBox, option, painter, self)
+        if self.isEnabled() and self.checkState() != Qt.Unchecked:
+            painter.setRenderHint(QPainter.Antialiasing)
+            side = min(16, self.width() - 2, self.height() - 2)
+            box = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor('#1976d2'))
+            painter.drawRoundedRect(box, 3, 3)
+            painter.setPen(QPen(QColor('white'), 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            point = lambda x, y: QPointF(box.left() + side*x, box.top() + side*y)
+            if self.checkState() == Qt.PartiallyChecked:
+                painter.drawLine(point(0.26, 0.5), point(0.74, 0.5))
+            else:
+                painter.drawPolyline(QPolygonF([point(0.23, 0.51), point(0.43, 0.71), point(0.77, 0.30)]))
+            if self.hasFocus():
+                painter.setPen(QPen(QColor('#93c5fd'), 1))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(box.adjusted(-1, -1, 1, 1), 4, 4)
+        else:
+            self.indicator_style.drawControl(QStyle.CE_CheckBox, option, painter, self)
         painter.end()
 
     def nextCheckState(self):
