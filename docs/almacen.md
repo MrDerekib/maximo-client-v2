@@ -40,8 +40,9 @@ en este modo aislado. Usa este lanzador para mantener ese aislamiento.
   después no cambia el lote. Esta fase no comprueba estados en el servidor.
 - Una sola simulación activa, secuencial y en un hilo aparte; UI disponible.
 - El tick verde solo significa «Simulación correcta», nunca operación real.
-- Fallos ordinarios permiten seguir. Un resultado incierto detiene las siguientes
-  OTs y nunca repite la confirmación. Detener termina primero la OT en curso.
+- Los fallos y resultados inciertos se conservan en el reporte para revisión manual
+  y el lote continúa con la siguiente OT, sin repetir la confirmación de la OT incierta.
+  Detener termina primero la OT en curso y deja las siguientes sin procesar.
 - Cerrar/Escape durante el trabajo solicita detener y conserva el reporte abierto.
 - Los reportes JSON, marcados `simulation: true`, quedan en
   `logs/almacen-simulaciones`. No se modifica el seguimiento local de las OTs.

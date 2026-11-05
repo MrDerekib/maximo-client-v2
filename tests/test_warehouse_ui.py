@@ -117,9 +117,10 @@ class WarehouseUiTests(TestCase):
                 with patch('warehouse_ui.run_simulation', side_effect=fast):
                     dialog.start_simulation()
                     self.wait_for(lambda: dialog.report_path is not None and not dialog.is_running())
-                self.assertEqual([r.status for r in dialog.results], ['success', 'failed', 'uncertain', 'stopped'])
-                self.assertEqual(dialog.progress_bar.value(), 3)
-                self.assertIn('1 sin procesar', dialog.summary.text())
+                self.assertEqual([r.status for r in dialog.results], ['success', 'failed', 'uncertain', 'success'])
+                self.assertEqual(dialog.progress_bar.value(), 4)
+                self.assertIn('0 sin procesar', dialog.summary.text())
+                self.assertIn('1 pendientes de verificar', dialog.summary.text())
                 self.assertFalse(dialog.start_button.isEnabled())
                 data = json.loads(Path(dialog.report_path).read_text(encoding='utf-8'))
                 self.assertTrue(data['simulation'])

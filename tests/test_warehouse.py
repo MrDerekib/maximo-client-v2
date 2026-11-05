@@ -48,14 +48,16 @@ class WarehouseSimulationTests(TestCase):
         self.assertEqual([result.status for result in results], ['failed', 'success'])
         self.assertIn('No se ha consultado Maximo', results[0].detail)
 
-    def test_uncertain_confirmation_stops_remaining_items_without_replay(self):
+    def test_uncertain_confirmation_continues_next_item_without_replay(self):
         events = []
         results = run_simulation(items(), 'receive', 'incidents', delay=0,
                                  progress=lambda index, result: events.append((index, result)))
-        self.assertEqual([result.status for result in results], ['success', 'failed', 'uncertain', 'stopped'])
+        self.assertEqual([result.status for result in results], ['success', 'failed', 'uncertain', 'success'])
         self.assertEqual(sum(index == 2 and result.step.startswith('Confirmar acción')
                              for index, result in events), 1)
-        self.assertFalse(any(index == 3 and result.status == 'running' for index, result in events))
+        self.assertEqual(sum(index == 3 and result.step.startswith('Confirmar acción')
+                             for index, result in events), 1)
+        self.assertEqual(results[2].status, 'uncertain')
 
     def test_stop_is_applied_between_items_and_never_interrupts_current_confirmation(self):
         stop = Event()

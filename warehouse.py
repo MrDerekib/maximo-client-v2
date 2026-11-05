@@ -61,8 +61,8 @@ def freeze_items(items):
 def run_simulation(items, action, scenario='success', *, stop=None, progress=None, delay=0.18):
     """Sequential, non-network simulation; never retries a submitted confirmation.
 
-    An uncertain result stops the batch. Ordinary simulated failures allow the next
-    item to run. Cancellation is checked between OTs, not during confirmation.
+    Failures and uncertain results remain in the report while the next item runs.
+    Cancellation is checked between OTs, not during confirmation.
     """
     if action not in ACTIONS or scenario not in SCENARIOS:
         raise ValueError('Acción o escenario de simulación no válido.')
@@ -70,13 +70,11 @@ def run_simulation(items, action, scenario='success', *, stop=None, progress=Non
     stop = stop if stop is not None else Event()
     progress = progress or (lambda index, result: None)
     results = []
-    uncertain = False
     for index, item in enumerate(items):
         result = WarehouseResult(item)
-        if stop.is_set() or uncertain:
-            result = replace(result, status='stopped', step='Sin procesar', detail=(
-                'Lote detenido por un resultado pendiente de verificar.' if uncertain
-                else 'Detenido antes de comenzar esta OT.'))
+        if stop.is_set():
+            result = replace(result, status='stopped', step='Sin procesar',
+                             detail='Detenido antes de comenzar esta OT.')
         else:
             for step_index, step in enumerate(STEPS):
                 result = replace(result, status='running', step=step + ' (simulación)')
@@ -96,7 +94,6 @@ def run_simulation(items, action, scenario='success', *, stop=None, progress=Non
                 if scenario == 'incidents' and index % 4 == 2 and step_index == 4:
                     result = replace(result, status='uncertain',
                                      detail='Timeout simulado después de confirmar. No se repite la acción.')
-                    uncertain = True
                     break
                 result = replace(result, completed_steps=step_index + 1)
             if result.status == 'running':
