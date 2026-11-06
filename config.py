@@ -15,6 +15,8 @@ from app_paths import (
 )
 from credential_store import load_credentials, save_credentials
 from failure_catalog import default_selection
+from release_notes import STATE_FILENAME, initialize_history
+import version
 
 LEGACY_CONFIG_PATH = BASE_DIR / "config.json"
 _legacy_cleanup_attempted = False
@@ -233,6 +235,10 @@ def load_config() -> AppConfig:
         cfg = AppConfig(**{key: value for key, value in data.items() if key in allowed})
     else:
         cfg = AppConfig()
+        try:
+            initialize_history(CONFIG_PATH.parent / STATE_FILENAME, version.APP_VERSION)
+        except OSError:
+            logging.warning('No se pudo inicializar el historial de novedades.', exc_info=True)
         save_config(cfg)
     cfg.username, cfg.password = load_credentials()
     return cfg

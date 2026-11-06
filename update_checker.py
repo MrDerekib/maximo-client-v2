@@ -24,6 +24,7 @@ class LatestRelease:
     checked_at: str  # ISO string
     asset_url: str = ""
     asset_digest: str = ""
+    notes: str = ""
 
 
 
@@ -65,7 +66,8 @@ def fetch_latest_release(timeout_sec: int = 5) -> LatestRelease:
     checked_at = datetime.now().isoformat(timespec="minutes")
     return LatestRelease(tag=tag, html_url=html_url, checked_at=checked_at,
                          asset_url=str(zip_asset.get("browser_download_url") or ""),
-                         asset_digest=str(zip_asset.get("digest") or ""))
+                         asset_digest=str(zip_asset.get("digest") or ""),
+                         notes=data['body'][:100_000] if isinstance(data.get('body'), str) else '')
 
 
 def download_release_asset(release: LatestRelease, destination: Path, timeout_sec: int = 30,

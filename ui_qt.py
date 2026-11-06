@@ -44,6 +44,8 @@ from managed_install_qt import ManagedInstallError, redirect_to_managed_install
 from priority_importer import read_priority_files
 from deep_links import parse_ot_uri, register_protocol_handler
 from excel_export import write_workorders_xlsx
+from release_notes import STATE_FILENAME, cache_release_notes, installed_release_notes, mark_notes_seen, same_version, should_show_notes
+from release_notes_ui import ReleaseNotesDialog
 import version
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -778,7 +780,7 @@ class MaximoDesktopWindow(QMainWindow):
         self.schedule_auto_update()
         # La consulta no bloquea el inicio; si hay una versión nueva, ofrece
         # instalarla una sola vez por sesión.
-        QTimer.singleShot(1200, lambda: self.check_app_updates(automatic=True))
+        QTimer.singleShot(1200, self._startup_release_updates)
 
     def _build_ui(self):
         root = QWidget()
@@ -2343,6 +2345,36 @@ class MaximoDesktopWindow(QMainWindow):
         else:
             logging.info("Actualización automática UI desactivada.")
 
+    def _startup_release_updates(self):
+        """Show installed-version notes before offering another update."""
+        if self._closing:
+            return
+        try:
+            self._show_installed_release_notes()
+        except Exception:
+            logging.exception('No se pudieron mostrar las novedades de la versión instalada.')
+        if not self._closing:
+            self.check_app_updates(automatic=True)
+
+    def _show_installed_release_notes(self):
+        if self._closing or DEVELOPMENT_MODE or not distributed_executable():
+            return
+        path = CONFIG_PATH.parent / STATE_FILENAME
+        if not should_show_notes(path, version.APP_VERSION):
+            return
+        url = self.cfg.latest_release_url if same_version(self.cfg.latest_release_tag, version.APP_VERSION) else ''
+        notes = installed_release_notes(path, version.APP_VERSION, fallback_url=url)
+        if notes.markdown:
+            logging.info('Mostrando novedades de %s (fuente: %s).', notes.version, notes.source)
+            dialog = ReleaseNotesDialog(notes, self, ACTIVE_COLORS)
+            dialog.exec()
+        else:
+            logging.warning('No hay notas locales de %s; se omite el aviso vacío.', version.APP_VERSION)
+        try:
+            mark_notes_seen(path, version.APP_VERSION)
+        except OSError:
+            logging.warning('No se pudo guardar el historial de novedades.', exc_info=True)
+
     def _fetch_latest_release_with_retry(self):
         """Consulta GitHub con el mismo margen de reintento que la app estable."""
         last_error = None
@@ -2409,6 +2441,11 @@ class MaximoDesktopWindow(QMainWindow):
             self.cfg.latest_release_tag = latest.tag
             self.cfg.latest_release_url = latest.html_url
             self.cfg.latest_release_checked_at = latest.checked_at
+            if latest.notes and not DEVELOPMENT_MODE and distributed_executable():
+                try:
+                    cache_release_notes(CONFIG_PATH.parent / STATE_FILENAME, latest.tag, latest.notes, latest.html_url)
+                except OSError:
+                    logging.warning('No se pudieron conservar las notas de la release.', exc_info=True)
             save_config(self.cfg)
             newer = bool(latest.tag and is_newer(latest.tag, version.APP_VERSION))
             self._refresh_app_update_block()
