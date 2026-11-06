@@ -28,7 +28,7 @@ from config import AppConfig, credentials_configured, load_config, save_config
 from failure_catalog import resolve_selection
 from failure_picker import FailurePathPicker
 from warehouse_ui import WarehouseWindowMixin
-from warehouse_selection import WarehouseSelection
+from workorder_selection import WorkorderSelection, prepare_row_context_selection
 from db import (
     apply_started_workorder, apply_closed_repair,
     clear_current_priority_snapshot, current_priority_ots, current_priority_snapshots,
@@ -965,9 +965,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             header.resizeSection(column, width)
         self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
         self._column_widths = self._current_column_widths()
-        self._warehouse_selector = WarehouseSelection(self.table, self)
-        self._warehouse_selector.set_enabled(self.cfg.warehouse_enabled)
-        outer.addWidget(self._warehouse_selector.bar)
+        self._workorder_selector = WorkorderSelection(self.table, self)
+        self._workorder_selector.set_enabled(True)
+        outer.addWidget(self._workorder_selector.bar)
         outer.addWidget(self.table, 1)
         return page
 
@@ -1095,10 +1095,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         settings_header_layout = QHBoxLayout(settings_header_host)
         settings_header_layout.setContentsMargins(0, 0, 0, 0)
         self.settings_header = self._page_header("Configuración", "Ajustes de la aplicación y de las órdenes de trabajo.")
-        self.settings_header.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-        settings_header_layout.addStretch(1)
+        self.settings_header.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         settings_header_layout.addWidget(self.settings_header)
-        settings_header_layout.addStretch(1)
         layout.addWidget(settings_header_host)
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
         self.settings_scroll = scroll
@@ -1106,16 +1104,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         content_layout = QHBoxLayout(content); content_layout.setContentsMargins(0, 0, 0, 20)
         self.settings_center = QWidget()
         self.settings_center.setMaximumWidth(1280)
-        self.settings_center.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-        content_layout.addStretch(1)
+        self.settings_center.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         content_layout.addWidget(self.settings_center, 0, Qt.AlignTop)
-        content_layout.addStretch(1)
         body = QVBoxLayout(self.settings_center); body.setContentsMargins(0, 0, 0, 0); body.setSpacing(0)
         self.settings_columns = QBoxLayout(QBoxLayout.LeftToRight)
         self.settings_columns.setContentsMargins(0, 0, 0, 0)
         self.settings_columns.setSpacing(16)
         self.settings_sections = []
-        for title in ("Aplicación", "Órdenes de trabajo"):
+        for title in ("Aplicación y datos", "Órdenes de trabajo"):
             column = QWidget()
             column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
             column_layout = QVBoxLayout(column)
@@ -1351,17 +1347,17 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         warehouse_layout = QVBoxLayout(self.warehouse_card)
         self.warehouse_check = QCheckBox("Mostrar acciones de almacén")
         warehouse_layout.addWidget(self.warehouse_check)
-        warehouse_hint = QLabel("Habilita acciones individuales y por selección múltiple. "
+        warehouse_hint = QLabel("Muestra las acciones de recepción y salida en el menú contextual. "
                                "Por ahora solo se simulan: no se realizan entradas ni salidas en Maximo.")
         warehouse_hint.setWordWrap(True)
         warehouse_hint.setObjectName("filterHint")
         warehouse_layout.addWidget(warehouse_hint)
 
         for card in (self.access_card, self.app_updates_card,
-                     self.appearance_card, self.paths_card):
+                     self.appearance_card, self.maintenance_card,
+                     self.fault_descriptions_card, self.paths_card):
             self.settings_sections[0].addWidget(card)
-        for card in (self.maintenance_card, self.fault_descriptions_card,
-                     self.priorities_card, self.edge_extension_card, self.warehouse_card):
+        for card in (self.edge_extension_card, self.warehouse_card, self.priorities_card):
             self.settings_sections[1].addWidget(card)
         body.addLayout(self.settings_columns)
         body.addStretch()
@@ -1385,9 +1381,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if available <= 0:
             return
         content_width = min(1280, available)
-        self.settings_center.setFixedWidth(content_width)
+        self.settings_center.setMaximumWidth(content_width)
+        self.settings_center.resize(content_width, self.settings_center.height())
         if hasattr(self, "settings_header"):
-            self.settings_header.setFixedWidth(content_width)
+            self.settings_header.setMaximumWidth(content_width)
         self._arrange_settings_cards()
 
     def _arrange_settings_cards(self):
@@ -1686,14 +1683,13 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
         self._apply_priority_filter()
         self._update_list_summary()
-        if getattr(self, '_warehouse_selector', None) is not None:
-            self._warehouse_selector.set_enabled(self.cfg.warehouse_enabled)
-            self._warehouse_selector.refresh()
+        if getattr(self, '_workorder_selector', None) is not None:
+            self._workorder_selector.refresh()
 
     def _toggle_priority_filter(self, _checked):
         """Shows or hides existing table rows without querying SQLite or rebuilding cells."""
-        if getattr(self, '_warehouse_selector', None) is not None and self.cfg.warehouse_enabled:
-            self._warehouse_selector.clear_selection()
+        if getattr(self, '_workorder_selector', None) is not None:
+            self._workorder_selector.clear_selection()
         self._apply_priority_filter()
         self._update_list_summary()
 
@@ -1707,8 +1703,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         finally:
             self.table.setUpdatesEnabled(True)
         self.table.viewport().update()
-        if getattr(self, '_warehouse_selector', None) is not None:
-            self._warehouse_selector.refresh()
+        if getattr(self, '_workorder_selector', None) is not None:
+            self._workorder_selector.refresh()
 
     def _refresh_priority_indicators(self):
         """Refreshes priority markers and visibility after local priority changes."""
@@ -1771,11 +1767,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
     def show_context_menu(self, position):
         row = self.table.indexAt(position).row()
         if row < 0: return
-        column = self.table.indexAt(position).column()
-        if getattr(self.cfg, 'warehouse_enabled', False):
-            self.prepare_warehouse_context_selection(self.table.indexAt(position))
-        else:
-            self.table.selectRow(row); self.table.setCurrentCell(row, column)
+        prepare_row_context_selection(self.table, self.table.indexAt(position))
         ot = self.selected_ot(row)
         menu = QMenu(self); menu.addAction("Copiar valor", lambda: QApplication.clipboard().setText(self.table.currentItem().text()))
         menu.addAction("Copiar OT", lambda: QApplication.clipboard().setText(ot))
@@ -2239,8 +2231,6 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._update_workorder_start_controls()
         self.workorder_close_check.setChecked(self.cfg.workorder_close_enabled)
         self.warehouse_check.setChecked(self.cfg.warehouse_enabled)
-        if getattr(self, '_warehouse_selector', None) is not None:
-            self._warehouse_selector.set_enabled(self.cfg.warehouse_enabled)
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
         self.repair_close_tabs_check.setChecked(self.cfg.repair_close_tabs_after_direct_print)
         self.repair_mode_combo.setEnabled(self.cfg.repair_extension_enabled)

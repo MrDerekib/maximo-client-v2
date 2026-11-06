@@ -64,7 +64,16 @@ class SelectionIndicatorDelegate(QStyledItemDelegate):
         return self.item_style.subElementRect(QStyle.SE_ItemViewItemCheckIndicator, option, table.viewport())
 
 
-class WarehouseSelection(QObject):
+def prepare_row_context_selection(table, index):
+    """Keep an existing row selection when opening its context menu."""
+    if table.selectionModel().isRowSelected(index.row()):
+        table.selectionModel().setCurrentIndex(index, QItemSelectionModel.NoUpdate)
+    else:
+        table.selectionModel().select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+        table.selectionModel().setCurrentIndex(index, QItemSelectionModel.NoUpdate)
+
+
+class WorkorderSelection(QObject):
     def __init__(self, table, parent=None):
         super().__init__(parent or table)
         self.table = table

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
 from config import AppConfig
 from ui_qt import apply_application_theme
 from warehouse_ui import WarehouseWindowMixin
-from warehouse_selection import WarehouseSelection
+from workorder_selection import WorkorderSelection, prepare_row_context_selection
 from warehouse import warehouse_status_code
 
 
@@ -28,8 +28,8 @@ class WarehouseDemo(WarehouseWindowMixin, QMainWindow):
         title = QLabel('Funciones de almacén · Datos ficticios')
         title.setStyleSheet('font-size: 24px; font-weight: 600')
         layout.addWidget(title)
-        hint = QLabel('Activa las funciones, marca casillas o selecciona filas con Ctrl/Mayús '
-                      'y usa el botón secundario. Ninguna acción de esta demostración accede a Maximo.')
+        hint = QLabel('Marca casillas o selecciona filas con Ctrl/Mayús. Activa las acciones de almacén '
+                      'para usarlas en el menú contextual. Ninguna acción de esta demostración accede a Maximo.')
         hint.setWordWrap(True); layout.addWidget(hint)
         self.warehouse_check = QCheckBox('Mostrar acciones de almacén')
         self.warehouse_check.toggled.connect(self._warehouse_enabled)
@@ -48,9 +48,10 @@ class WarehouseDemo(WarehouseWindowMixin, QMainWindow):
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         self.table.resizeColumnsToContents()
-        self._warehouse_selector = WarehouseSelection(self.table, self)
-        self._warehouse_selector.counter.ensurePolished()
-        self.warehouse_check.setPalette(self._warehouse_selector.counter.palette())
+        self._workorder_selector = WorkorderSelection(self.table, self)
+        self._workorder_selector.set_enabled(True)
+        self._workorder_selector.counter.ensurePolished()
+        self.warehouse_check.setPalette(self._workorder_selector.counter.palette())
         self.table.horizontalHeader().setStretchLastSection(True)
         self.state_filter = QComboBox()
         self.state_filter.addItem('Todos los estados', '')
@@ -58,27 +59,26 @@ class WarehouseDemo(WarehouseWindowMixin, QMainWindow):
         self.state_filter.addItem('Pendientes de salida · DAR SALIDA', 'ISSUE')
         self.state_filter.currentIndexChanged.connect(self._filter_rows)
         layout.addWidget(self.state_filter)
-        layout.addWidget(self._warehouse_selector.bar)
+        layout.addWidget(self._workorder_selector.bar)
         layout.addWidget(self.table, 1)
         layout.addWidget(QLabel('Recepción: DEMO-001 a DEMO-004 · Salida: DEMO-005 y DEMO-006'))
         self.setCentralWidget(root)
 
     def _warehouse_enabled(self, enabled):
         self.cfg.warehouse_enabled = enabled
-        self._warehouse_selector.set_enabled(enabled)
 
     def _filter_rows(self):
-        self._warehouse_selector.clear_selection()
+        self._workorder_selector.clear_selection()
         status = self.state_filter.currentData()
         for row in range(self.table.rowCount()):
             self.table.setRowHidden(row, bool(status) and warehouse_status_code(self.table.item(row, 7).text()) != status)
-        self._warehouse_selector.refresh()
+        self._workorder_selector.refresh()
 
     def show_context_menu(self, point):
         index = self.table.indexAt(point)
         if not index.isValid():
             return
-        self.prepare_warehouse_context_selection(index)
+        prepare_row_context_selection(self.table, index)
         menu = QMenu(self)
         if self.cfg.warehouse_enabled:
             self.add_warehouse_actions(menu)

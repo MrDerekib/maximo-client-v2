@@ -11,7 +11,7 @@ from unittest.mock import patch
 import app_paths
 from config import AppConfig
 from tests.test_support import temporary_directory
-from warehouse import WarehouseItem, freeze_items, run_simulation, save_simulation_report
+from warehouse import ACTIONS, RECEIPT_ACTIONS, WarehouseItem, freeze_items, run_simulation, save_simulation_report
 
 
 def items(count=4, status='WAPPR'):
@@ -56,6 +56,23 @@ class WarehouseSimulationTests(TestCase):
                     result, = run_simulation([WarehouseItem('123', status=state)], action, delay=0)
                     self.assertEqual(result.status, 'success')
                     self.assertEqual(result.item.status, state)
+
+    def test_all_receipt_choices_keep_the_requested_action_and_require_pending_reception(self):
+        expected = {
+            'receive': 'Confirmar recepción', 'reject_receive': 'Rechazar recepción',
+            'receive_sat_internal': 'Confirmar y enviar a SAT Interno',
+            'receive_sat_external': 'Confirmar y enviar a SAT Externo',
+        }
+        self.assertEqual(set(RECEIPT_ACTIONS), set(expected))
+        with temporary_directory() as folder:
+            for action, label in expected.items():
+                for status in ('PDTE CONFIRMAR', 'WAPPR', 'DAR SALIDA', 'CLOSE'):
+                    with self.subTest(action=action, status=status):
+                        self.assertEqual(ACTIONS[action].native_label, label)
+                        results = run_simulation([WarehouseItem('DEMO-1', status=status)], action, delay=0)
+                        self.assertEqual(results[0].status, 'success' if status in ('PDTE CONFIRMAR', 'WAPPR') else 'failed')
+                        report = save_simulation_report(folder, 'receipt-choice', action, 'success', results)
+                        self.assertEqual(json.loads(report.read_text(encoding='utf-8'))['action'], action)
 
     def test_equivalences_do_not_allow_wrong_actions_or_unknown_states(self):
         for action, state in (('receive', 'DAR SALIDA'), ('dispatch', 'PDTE CONFIRMAR'),

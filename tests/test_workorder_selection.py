@@ -7,14 +7,14 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QMainWindow, QStyleFactory, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from config import AppConfig
-from warehouse_selection import WarehouseSelection
+from workorder_selection import WorkorderSelection, prepare_row_context_selection
 from warehouse_ui import WarehouseWindowMixin
 
 
 class SelectionHost(WarehouseWindowMixin, QMainWindow):
     def __init__(self):
         super().__init__()
-        self.cfg = AppConfig(warehouse_enabled=True)
+        self.cfg = AppConfig()
         self.table = QTableWidget(4, 8)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -22,7 +22,7 @@ class SelectionHost(WarehouseWindowMixin, QMainWindow):
             for column in range(8):
                 value = f'DEMO-{row}' if column == 1 else 'WAPPR' if column == 7 else 'Dato'
                 self.table.setItem(row, column, QTableWidgetItem(value))
-        self.selector = WarehouseSelection(self.table, self)
+        self.selector = WorkorderSelection(self.table, self)
         root = QWidget(); layout = QVBoxLayout(root)
         layout.addWidget(self.selector.bar); layout.addWidget(self.table)
         self.setCentralWidget(root)
@@ -30,7 +30,7 @@ class SelectionHost(WarehouseWindowMixin, QMainWindow):
         self.selector.set_enabled(True)
 
 
-class WarehouseSelectionTests(TestCase):
+class WorkorderSelectionTests(TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -77,7 +77,7 @@ class WarehouseSelectionTests(TestCase):
         self.click_body(0)
         self.click_body(2, Qt.ControlModifier)
         self.assertEqual(self.checked_ots(), {'DEMO-0', 'DEMO-2'})
-        self.host.prepare_warehouse_context_selection(self.host.table.model().index(2, 1))
+        prepare_row_context_selection(self.host.table, self.host.table.model().index(2, 1))
         self.assertEqual(self.checked_ots(), {'DEMO-0', 'DEMO-2'})
         self.click_body(0)
         self.click_body(2, Qt.ShiftModifier)
@@ -151,15 +151,27 @@ class WarehouseSelectionTests(TestCase):
         self.assertFalse(table.selectionModel().selectedRows())
         self.assertFalse(self.checked_ots())
 
-    def test_priority_filter_toggle_clears_the_warehouse_selection(self):
+    def test_priority_filter_toggle_clears_selection_without_warehouse_enabled(self):
         from tests.test_ui_app_updates import MaximoDesktopWindow
-        self.host._warehouse_selector = self.host.selector
+        self.host._workorder_selector = self.host.selector
         self.host._apply_priority_filter = Mock()
         self.host._update_list_summary = Mock()
         self.click_checkbox(0); self.click_checkbox(2)
         MaximoDesktopWindow._toggle_priority_filter(self.host, True)
         self.assertFalse(self.checked_ots())
         self.host._apply_priority_filter.assert_called_once()
+
+    def test_warehouse_actions_can_toggle_without_changing_general_selection(self):
+        from PySide6.QtWidgets import QMenu
+        self.click_checkbox(0); self.click_checkbox(2)
+        for enabled in (True, False, True, False):
+            self.host.cfg.warehouse_enabled = enabled
+            menu = QMenu()
+            self.host.add_warehouse_actions(menu)
+            self.assertEqual(bool(menu.actions()), enabled)
+            self.assertTrue(self.host.selector.enabled)
+            self.assertFalse(self.host.selector.bar.isHidden())
+            self.assertEqual(self.checked_ots(), {'DEMO-0', 'DEMO-2'})
 
     def test_selected_cells_have_a_solid_background_with_windows11_and_fusion(self):
         old_style = self.app.style().objectName()

@@ -17,8 +17,12 @@ class WarehouseAction:
 
 ACTIONS = {
     'receive': WarehouseAction('Confirmar recepción', 'Confirmar recepción', 'WAPPR'),
+    'reject_receive': WarehouseAction('Rechazar recepción', 'Rechazar recepción', 'WAPPR'),
+    'receive_sat_internal': WarehouseAction('Confirmar y enviar a SAT Interno', 'Confirmar y enviar a SAT Interno', 'WAPPR'),
+    'receive_sat_external': WarehouseAction('Confirmar y enviar a SAT Externo', 'Confirmar y enviar a SAT Externo', 'WAPPR'),
     'dispatch': WarehouseAction('Dar salida del almacén', 'Dar salida activo del almacén', 'ISSUE'),
 }
+RECEIPT_ACTIONS = ('receive', 'reject_receive', 'receive_sat_internal', 'receive_sat_external')
 STEPS = ('Abrir ficha', 'Comprobar OT y estado', 'Seleccionar acción',
          'Confirmar acción', 'Verificar resultado')
 SCENARIOS = {'success': 'Todas correctas', 'incidents': 'Incluir fallo y resultado incierto'}

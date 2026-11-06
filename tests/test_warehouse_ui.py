@@ -12,8 +12,9 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QTableWidget, QT
 from config import AppConfig
 from tests.test_support import temporary_directory
 from tests.test_ui_workorder_start import settings_window
-from warehouse import WarehouseItem
+from warehouse import ACTIONS, RECEIPT_ACTIONS, WarehouseItem
 from warehouse_ui import WarehouseBatchDialog, WarehouseWindowMixin
+from workorder_selection import prepare_row_context_selection
 
 
 class Host(WarehouseWindowMixin, QMainWindow):
@@ -66,9 +67,9 @@ class WarehouseUiTests(TestCase):
         host = Host()
         try:
             self.select_rows(host, (0, 1))
-            host.prepare_warehouse_context_selection(host.table.model().index(1, 2))
+            prepare_row_context_selection(host.table, host.table.model().index(1, 2))
             self.assertEqual([item.ot for item in host.warehouse_items()], ['DEMO-0', 'DEMO-1'])
-            host.prepare_warehouse_context_selection(host.table.model().index(3, 2))
+            prepare_row_context_selection(host.table, host.table.model().index(3, 2))
             self.assertEqual([item.ot for item in host.warehouse_items()], ['DEMO-3'])
         finally:
             host.deleteLater(); self.app.processEvents()
@@ -84,8 +85,10 @@ class WarehouseUiTests(TestCase):
             actions = [action for action in menu.actions() if not action.isSeparator()]
             self.assertEqual(len(actions), 2)
             self.assertIn('2 OT', actions[0].text())
+            receipt_actions = actions[0].menu().actions()
+            self.assertEqual(len(receipt_actions), 4)
             host.table.item(0, 1).setText('CHANGED')
-            actions[0].trigger()
+            receipt_actions[0].trigger()
             batch, action = host.open_warehouse_batch.call_args.args
             self.assertEqual([item.ot for item in batch], ['DEMO-0', 'DEMO-2'])
             self.assertEqual(action, 'receive')
@@ -103,6 +106,38 @@ class WarehouseUiTests(TestCase):
             self.assertIsNone(dialog._worker)
         finally:
             dialog.deleteLater(); self.app.processEvents()
+
+    def test_each_receipt_menu_choice_preserves_its_exact_action(self):
+        host = Host()
+        try:
+            self.select_rows(host, (0, 1))
+            host.open_warehouse_batch = Mock()
+            menu = QMenu()
+            host.add_warehouse_actions(menu)
+            root_actions = [action for action in menu.actions() if not action.isSeparator()]
+            for choice, action in zip(root_actions[0].menu().actions(), RECEIPT_ACTIONS):
+                with self.subTest(action=action):
+                    self.assertEqual(choice.text(), ACTIONS[action].label + '…')
+                    choice.trigger()
+                    batch, requested = host.open_warehouse_batch.call_args.args
+                    self.assertEqual(requested, action)
+                    self.assertEqual([item.ot for item in batch], ['DEMO-0', 'DEMO-1'])
+            root_actions[1].trigger()
+            self.assertEqual(host.open_warehouse_batch.call_args.args[1], 'dispatch')
+        finally:
+            host.deleteLater(); self.app.processEvents()
+
+    def test_each_receipt_choice_opens_review_without_starting_it(self):
+        for action in RECEIPT_ACTIONS:
+            with self.subTest(action=action):
+                dialog = WarehouseBatchDialog([WarehouseItem('DEMO-1', status='PDTE CONFIRMAR')], action, Mock())
+                try:
+                    self.assertIn(ACTIONS[action].label, dialog.windowTitle())
+                    self.assertEqual(dialog.action, action)
+                    self.assertFalse(dialog._has_started)
+                    self.assertFalse(dialog.is_running())
+                finally:
+                    dialog.deleteLater(); self.app.processEvents()
 
     def test_worker_reports_all_outcomes_and_keeps_uncertain_item_without_retry(self):
         with temporary_directory() as folder:

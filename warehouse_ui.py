@@ -5,7 +5,7 @@ import logging
 from threading import Event
 from uuid import uuid4
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QHBoxLayout, QHeaderView, QLabel,
@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_paths import LOG_DIR
-from warehouse import ACTIONS, SCENARIOS, STEPS, WarehouseItem, WarehouseResult, freeze_items, run_simulation, save_simulation_report
+from warehouse import ACTIONS, RECEIPT_ACTIONS, SCENARIOS, STEPS, WarehouseItem, WarehouseResult, freeze_items, run_simulation, save_simulation_report
 
 STATUS_LABELS = {
     'pending': 'Pendiente', 'running': 'En proceso', 'success': 'Simulación correcta',
@@ -248,10 +248,12 @@ class WarehouseWindowMixin:
             return
         items = self.warehouse_items()
         menu.addSeparator()
-        for action, spec in ACTIONS.items():
-            label = f'{spec.label} · {len(items)} OT… (simulación)'
-            menu.addAction(label, lambda checked=False, a=action, selection=items:
-                           self.open_warehouse_batch(selection, a))
+        receipt = menu.addMenu(f'Dar entrada · {len(items)} OT (simulación)')
+        for action in RECEIPT_ACTIONS:
+            receipt.addAction(ACTIONS[action].label + '…', lambda checked=False, a=action, selection=items:
+                              self.open_warehouse_batch(selection, a))
+        menu.addAction(f'{ACTIONS["dispatch"].label} · {len(items)} OT… (simulación)',
+                       lambda checked=False, selection=items: self.open_warehouse_batch(selection, 'dispatch'))
 
     def open_warehouse_batch(self, items, action):
         if not getattr(self.cfg, 'warehouse_enabled', False) or getattr(self, '_closing', False):
@@ -267,10 +269,3 @@ class WarehouseWindowMixin:
 
     def warehouse_is_running(self):
         return any(dialog.is_running() for dialog in getattr(self, '_warehouse_dialogs', []))
-
-    def prepare_warehouse_context_selection(self, index):
-        if getattr(self.cfg, 'warehouse_enabled', False) and self.table.selectionModel().isRowSelected(index.row()):
-            self.table.selectionModel().setCurrentIndex(index, QItemSelectionModel.NoUpdate)
-        else:
-            self.table.selectionModel().select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
-            self.table.selectionModel().setCurrentIndex(index, QItemSelectionModel.NoUpdate)
