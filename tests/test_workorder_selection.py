@@ -162,7 +162,6 @@ class WorkorderSelectionTests(TestCase):
         self.assertFalse(self.checked_ots())
         self.host._apply_priority_filter.assert_called_once()
 
-    @patch('warehouse_ui.WAREHOUSE_DEVELOPMENT_MODE', True)
     def test_warehouse_actions_can_toggle_without_changing_general_selection(self):
         from PySide6.QtWidgets import QMenu
         self.click_checkbox(0); self.click_checkbox(2)

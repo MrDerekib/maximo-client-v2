@@ -1,4 +1,4 @@
-"""Warehouse review and progress UI; real transport is opt-in in the isolated app."""
+"""Warehouse review and progress UI; real transport is enabled through application settings."""
 from collections import Counter
 from dataclasses import asdict, replace
 import json
@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QPushButton, QStyle, QTableWidget, QTableWidgetItem, QVBoxLayout, QMessageBox, QLineEdit,
 )
 
-from app_paths import LOG_DIR, WAREHOUSE_DEVELOPMENT_MODE
+from app_paths import LOG_DIR
 from warehouse import ACTIONS, RECEIPT_ACTIONS, STEPS, WarehouseItem, WarehouseResult, freeze_items
 from warehouse_diagnostics import log_exception, sanitize
 
@@ -314,7 +314,7 @@ class WarehouseWindowMixin:
                             for row in rows if not table.isRowHidden(row))
 
     def add_warehouse_actions(self, menu):
-        if not WAREHOUSE_DEVELOPMENT_MODE or not getattr(self.cfg, 'warehouse_enabled', False):
+        if not getattr(self.cfg, 'warehouse_enabled', False):
             return
         items = self.warehouse_items()
         menu.addSeparator()
@@ -329,7 +329,7 @@ class WarehouseWindowMixin:
                        lambda checked=False, selection=items: self.open_warehouse_batch(selection, 'dispatch'))
 
     def open_warehouse_batch(self, items, action):
-        if not WAREHOUSE_DEVELOPMENT_MODE or not getattr(self.cfg, 'warehouse_enabled', False) or getattr(self, '_closing', False):
+        if not getattr(self.cfg, 'warehouse_enabled', False) or getattr(self, '_closing', False):
             return
         dialogs = getattr(self, '_warehouse_dialogs', [])
         active = next((dialog for dialog in dialogs if dialog.is_running()), None)

@@ -1,5 +1,19 @@
 # Historial de cambios
 
+## 1.2.1 — Acciones de almacén en la versión instalada
+
+### Resumen
+
+- Corregida la aparición de las acciones de almacén en el exe al habilitarlas en Configuración.
+
+### Corrección
+
+- Retiradas las restricciones del antiguo prototipo que ocultaban el menú y
+  bloqueaban la revisión de lotes fuera del entorno de desarrollo de almacén.
+  Las acciones se habilitan con «Mostrar acciones de almacén» y «Guardar cambios»;
+  se mantienen la confirmación previa, las comprobaciones de estado y los
+  permisos de la cuenta de Maximo.
+
 ## 1.2.0 — Operaciones de almacén y prioridades de tareas
 
 ### Resumen

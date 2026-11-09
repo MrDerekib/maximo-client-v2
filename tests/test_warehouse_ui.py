@@ -106,7 +106,7 @@ class WarehouseUiTests(TestCase):
                     dialog.deleteLater(); self.app.processEvents()
 
     def setUp(self):
-        patcher = patch('warehouse_ui.WAREHOUSE_DEVELOPMENT_MODE', True)
+        patcher = patch('warehouse_ui.WAREHOUSE_DEVELOPMENT_MODE', False, create=True)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -267,3 +267,30 @@ class WarehouseUiTests(TestCase):
             self.assertIsNone(dialog._worker)
         finally:
             dialog.deleteLater(); self.app.processEvents()
+
+    def test_standard_installation_exposes_enabled_actions_and_opens_review_only(self):
+        host=Host()
+        try:
+            self.select_rows(host,(0,1))
+            with patch('warehouse_ui.WarehouseThread') as worker:
+                for enabled in (False,True):
+                    host.cfg.warehouse_enabled=enabled
+                    menu=QMenu()
+                    host.add_warehouse_actions(menu)
+                    self.assertEqual(bool(menu.actions()),enabled)
+                    if enabled:
+                        receipt=next(action.menu() for action in menu.actions() if action.menu())
+                        receipt.actions()[0].trigger()
+                        self.assertEqual(len(host._warehouse_dialogs),1)
+                        dialog=host._warehouse_dialogs[0]
+                        self.assertTrue(dialog.isVisible())
+                        self.assertEqual([item.ot for item in dialog.items],['DEMO-0','DEMO-1'])
+                        self.assertFalse(dialog._has_started)
+                        self.assertIsNone(dialog._worker)
+                worker.assert_not_called()
+                host.cfg.warehouse_enabled=False
+                host.open_warehouse_batch(host.warehouse_items(),'receive')
+                self.assertEqual(len(host._warehouse_dialogs),1)
+        finally:
+            for dialog in getattr(host,'_warehouse_dialogs',[]):dialog.close()
+            host.deleteLater();self.app.processEvents()
