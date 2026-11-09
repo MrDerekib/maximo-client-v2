@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import config
 from release_notes import (STATE_FILENAME, cache_release_notes, changelog_section, initialize_history,
-                           installed_release_notes, mark_notes_seen, should_show_notes)
+                           installed_release_notes, mark_notes_seen, should_show_notes, summary_section)
 from tests.test_support import temporary_directory
 from update_checker import fetch_latest_release
 
@@ -99,3 +99,33 @@ class ReleaseNotesTests(TestCase):
             response = io.BytesIO(json.dumps({'tag_name': 'v1.1.1', 'body': body}).encode())
             with self.subTest(body=body), patch('update_checker.urllib.request.urlopen', return_value=response):
                 self.assertEqual(fetch_latest_release().notes, expected)
+
+    def test_popup_uses_same_summary_from_local_or_github_notes(self):
+        text='## 1.2.0 — Actual\n\n### Resumen\n\n- Cambio principal.\n\n### Detalle\n\nDetalle largo.\n\n## 1.1.0\nAntiguo.'
+        with temporary_directory() as folder:
+            path=Path(folder)/STATE_FILENAME
+            changelog=Path(folder)/'CHANGELOG.md';changelog.write_text(text,encoding='utf-8')
+            for github in (False,True):
+                if github:cache_release_notes(path,'v1.2.0',changelog_section(text,'1.2.0'),'https://example.test/release')
+                notes=installed_release_notes(path,'1.2.0',changelog)
+                self.assertEqual(notes.markdown,'- Cambio principal.')
+                self.assertEqual(notes.source,'github' if github else 'changelog')
+                self.assertTrue(notes.url.startswith('https://'))
+            self.assertIn('Detalle largo.',changelog.read_text(encoding='utf-8'))
+
+    def test_full_cached_release_uses_bundled_summary_for_popup(self):
+        with temporary_directory() as folder:
+            path=Path(folder)/STATE_FILENAME
+            changelog=Path(folder)/'CHANGELOG.md'
+            changelog.write_text('## 1.2.0\n### Resumen\n- Breve.\n### Detalle\nTexto completo.',encoding='utf-8')
+            cache_release_notes(path,'v1.2.0','Notas completas sin resumen.','https://example.test/full')
+            notes=installed_release_notes(path,'1.2.0',changelog)
+            self.assertEqual(notes.markdown,'- Breve.')
+            self.assertEqual(notes.url,'https://example.test/full')
+            self.assertEqual(notes.source,'changelog')
+
+    def test_summary_ends_at_next_peer_or_parent_heading(self):
+        for heading in ('# Otro','## 1.1.0','### Detalles'):
+            self.assertEqual(summary_section('### Resumen\n- Breve.\n'+heading+'\nOculto.'),'- Breve.')
+        self.assertFalse(summary_section('### Resumen\n\n### Detalles\nCompleto.'))
+        self.assertFalse(summary_section('- Versión antigua sin bloque.'))

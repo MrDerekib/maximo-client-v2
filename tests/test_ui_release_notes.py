@@ -5,6 +5,7 @@ from unittest import TestCase
 from unittest.mock import Mock, patch
 
 from PySide6.QtCore import QUrl
+from PySide6.QtWidgets import QPushButton
 from release_notes import ReleaseNotes
 from release_notes_ui import NotesBrowser, ReleaseNotesDialog
 from tests.test_ui_app_updates import QApplication, MaximoDesktopWindow
@@ -68,3 +69,14 @@ class ReleaseNotesUiTests(TestCase):
                 open_url.assert_called_once()
         finally:
             dialog.deleteLater(); self.app.processEvents()
+
+    def test_full_changes_button_opens_release_without_expanding_popup(self):
+        dialog=ReleaseNotesDialog(ReleaseNotes('v1.2.0','- Resumen.','https://github.com/example/release'))
+        try:
+            button=dialog.findChild(QPushButton,'fullReleaseNotes')
+            self.assertEqual(button.text(),'Ver todos los cambios')
+            with patch('release_notes_ui.webbrowser.open') as open_url:
+                button.click()
+                open_url.assert_called_once_with('https://github.com/example/release')
+            self.assertEqual(dialog.browser.toPlainText().strip(),'Resumen.')
+        finally:dialog.deleteLater();self.app.processEvents()

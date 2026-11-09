@@ -97,16 +97,36 @@ def changelog_section(text, current_version):
     return ''
 
 
+def summary_section(markdown):
+    """Read the explicit Resumen block, ending at the next H1/H2/H3 heading."""
+    heading = re.search(r'^###[ \t]+Resumen[ \t]*\r?$', markdown, re.MULTILINE | re.IGNORECASE)
+    if heading is None:
+        return ''
+    remaining = markdown[heading.end():]
+    following = re.search(r'^#{1,3}[ \t]+', remaining, re.MULTILINE)
+    return remaining[:following.start() if following else len(remaining)].strip()
+
+
 def installed_release_notes(path, current_version, changelog=None, fallback_url=''):
+    url = fallback_url or ('https://github.com/MrDerekib/maximo-client-v2/releases/tag/' +
+                           format_version_tag(current_version))
+    try:
+        text = Path(changelog or PROGRAM_DIR / 'CHANGELOG.md').read_text(encoding='utf-8')
+        local = changelog_section(text, current_version)
+    except (OSError, UnicodeError):
+        local = ''
     cached = _read_state(path)['cached_release']
     if same_version(cached.get('tag'), current_version) and isinstance(cached.get('markdown'), str):
         markdown = cached['markdown'].strip()
         if markdown:
-            url = cached.get('url') if isinstance(cached.get('url'), str) else fallback_url
+            if isinstance(cached.get('url'), str) and cached['url']:
+                url = cached['url']
+            summary = summary_section(markdown)
+            if summary:
+                return ReleaseNotes(format_version_tag(current_version), summary[:MAX_NOTES_CHARS], url, 'github')
+            # An older/full GitHub body must not hide the summary bundled in this version.
+            summary = summary_section(local)
+            if summary:
+                return ReleaseNotes(format_version_tag(current_version), summary[:MAX_NOTES_CHARS], url, 'changelog')
             return ReleaseNotes(format_version_tag(current_version), markdown[:MAX_NOTES_CHARS], url, 'github')
-    try:
-        text = Path(changelog or PROGRAM_DIR / 'CHANGELOG.md').read_text(encoding='utf-8')
-        markdown = changelog_section(text, current_version)
-    except (OSError, UnicodeError):
-        markdown = ''
-    return ReleaseNotes(format_version_tag(current_version), markdown, fallback_url, 'changelog')
+    return ReleaseNotes(format_version_tag(current_version), summary_section(local) or local, url, 'changelog')

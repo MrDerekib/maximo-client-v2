@@ -26,6 +26,11 @@ arranques de esa versión.
 Las notas se toman del cuerpo Markdown de la release de GitHub, conservado al
 consultar actualizaciones. Si no hay una copia para la versión instalada, se usa
 solo su sección de `CHANGELOG.md`, que el script incluye en la distribución.
+El popup muestra únicamente el bloque `### Resumen` de esa versión, hasta el
+siguiente título. «Ver todos los cambios» abre la release con las notas completas.
+El resumen y el detalle se mantienen juntos en `CHANGELOG.md`; al preparar la
+release se utiliza esa misma sección. Si una caché antigua no incluye resumen,
+se prioriza el resumen local; las versiones antiguas sin bloque conservan su visor.
 Esto permite mostrar las notas sin conexión y también al actualizar desde un
 cliente anterior que todavía no guardaba las notas de GitHub. Si no hay notas
 para esa versión se omite el aviso vacío y queda constancia en el log.

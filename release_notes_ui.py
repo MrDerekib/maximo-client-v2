@@ -16,7 +16,7 @@ class ReleaseNotesDialog(QDialog):
                             'border': '#d9e2ec', 'muted': '#627d98'}
         self.setWindowTitle(f'Novedades de Maximo Desktop {notes.version}')
         self.setWindowModality(Qt.WindowModal)
-        self.resize(780, 640)
+        self.resize(740, 520)
         self.setMinimumSize(540, 400)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
@@ -37,7 +37,7 @@ class ReleaseNotesDialog(QDialog):
         layout.addWidget(self.browser, 1)
         buttons = QHBoxLayout()
         if notes.url.startswith(('https://', 'http://')):
-            release = QPushButton('Ver en GitHub')
+            release = QPushButton('Ver todos los cambios', objectName='fullReleaseNotes')
             release.clicked.connect(lambda: webbrowser.open(notes.url))
             buttons.addWidget(release)
         buttons.addStretch()

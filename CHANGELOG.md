@@ -2,6 +2,15 @@
 
 ## 1.2.0 — Operaciones de almacén y prioridades de tareas
 
+### Resumen
+
+- Acciones de almacén individuales y en lote, con progreso y resultado por OT.
+- Selección de varias OTs mediante casillas, Ctrl o Mayús.
+- Búsquedas de varios valores separados por comas.
+- Prioridad para tus acciones: las tareas de fondo pausan y reanudan su cola.
+- Actualizaciones sin duplicados y corrección del bucle de descargas.
+- Novedades al actualizar y mejoras en el cierre de OT y en Configuración.
+
 ### Operaciones de almacén
 
 - Nuevas acciones desde el menú contextual de MD, sobre una OT o una selección
