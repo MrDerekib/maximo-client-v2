@@ -1,4 +1,5 @@
 """Settings must shrink and expand without retaining the previous fixed width."""
+import tests  # Isolate application data before importing product modules.
 from unittest import TestCase
 from PySide6.QtWidgets import QApplication, QBoxLayout
 from tests.test_ui_workorder_start import settings_window

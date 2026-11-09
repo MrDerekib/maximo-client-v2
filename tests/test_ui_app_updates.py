@@ -1,4 +1,5 @@
 """La UI solo debe instalar tras aceptar el cierre y limpiar sus tareas."""
+import tests  # Isolate application data before importing product modules.
 import logging
 import os
 import threading

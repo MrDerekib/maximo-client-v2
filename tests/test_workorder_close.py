@@ -1,3 +1,4 @@
+import tests  # Isolate application data before importing product modules.
 from datetime import datetime, timedelta
 import os
 import sqlite3

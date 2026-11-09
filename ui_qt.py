@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
@@ -28,6 +28,8 @@ from config import AppConfig, credentials_configured, load_config, save_config
 from failure_catalog import resolve_selection
 from failure_picker import FailurePathPicker
 from warehouse_ui import WarehouseWindowMixin
+from task_priorities import coordinator, JobCounter, AUTOMATIC, MANUAL
+from priority_notices import PriorityNotices
 from workorder_selection import WorkorderSelection, prepare_row_context_selection
 from db import (
     apply_started_workorder, apply_closed_repair,
@@ -309,6 +311,15 @@ class BackgroundTask(QRunnable):
         except Exception as exc:  # El detalle completo queda en el log.
             logging.exception("Tarea de interfaz fallida")
             self.signals.failed.emit(str(exc))
+
+
+class CoordinatedTaskThread(QThread):
+    def __init__(self, task, parent):
+        super().__init__(parent)
+        self.task = task
+
+    def run(self):
+        self.task.run()
 
 
 class LocalOpenBridge(QObject):
@@ -728,12 +739,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         self.cfg: AppConfig = load_config()
-        self.update_lock = threading.Lock()
-        self.reconcile_lock = threading.Lock()
-        self.fault_description_lock = threading.Lock()
+        self.update_lock = JobCounter()
+        self.reconcile_lock = JobCounter()
+        self.fault_description_lock = JobCounter()
         self.enrichment_cancel_event = threading.Event()
         self.pool = QThreadPool.globalInstance()
         self._running_tasks = set()
+        self._coordinated_threads = set()
+        self._list_update_pending = False
         self._tasks_idle = threading.Event()
         self._tasks_idle.set()
         self._latest_release = None
@@ -764,6 +777,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.app_download_status.connect(self._set_app_download_status)
         self.workorder_started.connect(self._workorder_started)
         self.workorder_closed.connect(self._workorder_closed)
+        self._priority_coordinator = coordinator
+        self._priority_notices = PriorityNotices(lambda message: show_activity_dialog(message, self),
+                                                 lambda message: self.status.showMessage(message,7000), self)
+        self.destroyed.connect(coordinator.subscribe(self._priority_notices.event_received.emit))
         self.setWindowTitle(f"Maximo Desktop · v{version.APP_VERSION}")
         self.setMinimumSize(1150, 700)
         self.resize(1500, 900)
@@ -909,7 +926,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         toolbar.addWidget(self.client_combo, 1, 0)
         toolbar.addWidget(QLabel("Buscar"), 0, 1)
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Número de serie, OT o descripción…")
+        self.search_edit.setPlaceholderText("OT, nº de serie o descripción · separa varios valores con comas…")
+        self.search_edit.setToolTip("Comas: busca cualquiera de los valores. Espacios: todas las partes dentro del mismo valor.")
         self.search_edit.returnPressed.connect(self.refresh_table)
         toolbar.addWidget(self.search_edit, 1, 1)
         toolbar.addWidget(QLabel("Buscar por"), 0, 2)
@@ -1347,8 +1365,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         warehouse_layout = QVBoxLayout(self.warehouse_card)
         self.warehouse_check = QCheckBox("Mostrar acciones de almacén")
         warehouse_layout.addWidget(self.warehouse_check)
+        self.warehouse_details_check = QCheckBox("Pedir detalles antes de enviar a SAT")
+        self.warehouse_details_check.setToolTip(
+            "Muestra un campo opcional por OT en la revisión del lote. "
+            "Desactivado: se deja Detalles vacío; no se inventa una justificación.")
+        warehouse_layout.addWidget(self.warehouse_details_check)
         warehouse_hint = QLabel("Muestra las acciones de recepción y salida en el menú contextual. "
-                               "Por ahora solo se simulan: no se realizan entradas ni salidas en Maximo.")
+                               "Ejecuta las acciones validadas en segundo plano tras revisar y confirmar las OTs. "
+                               "Las opciones pendientes de validación permanecen deshabilitadas.")
         warehouse_hint.setWordWrap(True)
         warehouse_hint.setObjectName("filterHint")
         warehouse_layout.addWidget(warehouse_hint)
@@ -1686,6 +1710,37 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if getattr(self, '_workorder_selector', None) is not None:
             self._workorder_selector.refresh()
 
+    def warehouse_row_updated(self, ot, tracking):
+        """Refresh a verified operation without rebuilding thousands of unchanged rows."""
+        try:
+            allowed = {str(row[0]): str(row[6] or '') for row in fetch_data(
+                self.search_edit.text(), self.search_field(), "Todos", self.effective_advanced_filters())}
+            choices = self.filter_choices_cache['tracking']
+            if tracking not in choices:
+                choices.append(tracking)
+                choices.sort()
+            row = next((r for r in range(self.table.rowCount())
+                        if self.table.item(r, 1) and self.table.item(r, 1).text() == ot), None)
+            if row is None:
+                if ot in allowed:
+                    self.refresh_table()
+                return
+            sorting = self.table.isSortingEnabled()
+            self.table.setSortingEnabled(False)
+            try:
+                if ot not in allowed:
+                    self.table.removeRow(row)
+                else:
+                    self.table.item(row, 7).setText(allowed[ot])
+            finally:
+                self.table.setSortingEnabled(sorting)
+            self._update_list_summary()
+            if getattr(self, '_workorder_selector', None) is not None:
+                self._workorder_selector.refresh()
+        except Exception:
+            logging.exception('Estado local guardado; no se pudo refrescar la fila de almacén %s', ot)
+            self.status.showMessage('Estado guardado. Actualiza el listado para refrescar la tabla.', 7000)
+
     def _toggle_priority_filter(self, _checked):
         """Shows or hides existing table rows without querying SQLite or rebuilding cells."""
         if getattr(self, '_workorder_selector', None) is not None:
@@ -1801,7 +1856,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if QMessageBox.question(self, "Eliminar registros", f"¿Eliminar todos los registros no activos?\n\nSe eliminarán de la base local.") == QMessageBox.Yes:
             deleted = delete_all_inactive_records(); self.refresh_table(); self._refresh_reconciliation_summary(); self.status.showMessage(f"{deleted} registros no activos eliminados.", 5000)
 
-    def _start_task(self, function, completed, failed=None, progress=None):
+    def _start_task(self, function, completed, failed=None, progress=None, coordinated=False):
         """Mantiene viva la señal de Qt hasta que la tarea responde.
 
         QThreadPool conserva el QRunnable nativo, pero no necesariamente el
@@ -1835,7 +1890,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
         task.signals.completed.connect(on_completed)
         task.signals.failed.connect(on_failed)
-        self.pool.start(task)
+        if coordinated:
+            thread = CoordinatedTaskThread(task, self)
+            self._coordinated_threads.add(thread)
+            thread.finished.connect(lambda: self._coordinated_threads.discard(thread))
+            thread.finished.connect(thread.deleteLater)
+            thread.start()
+        else:
+            self.pool.start(task)
 
     def _credentials_ready(self):
         if credentials_configured(): return True
@@ -1844,9 +1906,15 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         return False
 
     def update_now(self, automatic=False):
+        if getattr(self, '_list_update_pending', False):
+            if not automatic and not self._closing:
+                QMessageBox.information(self, "Actualización", "Ya hay una actualización del listado en curso o pendiente de comenzar.")
+            return
         if self._closing or not self._credentials_ready() or not self.update_lock.acquire(False): return
+        self._list_update_pending = True
         self.status.showMessage("Actualizando listado desde Maximo…" if not automatic else "Actualización automática en curso…")
         def done(result):
+            self._list_update_pending = False
             self.update_lock.release(); new, changed = result; self.refresh_choices(); self.refresh_table(); self._refresh_reconciliation_summary()
             sync_summary = (
                 f"Última sincronización de Maximo ({datetime.now().strftime('%H:%M')}): "
@@ -1861,11 +1929,12 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                 after=lambda summary: self.start_background_fault_descriptions(summary),
             )
         def failed(error):
+            self._list_update_pending = False
             self.update_lock.release()
             if not self._closing:
                 QMessageBox.critical(self, "Actualización", f"No se pudo actualizar:\n{error}")
             self.status.showMessage("La actualización falló.")
-        self._start_task(lambda: run_update(headless=True), done, failed)
+        self._start_task(lambda: run_update(headless=True, job_priority=AUTOMATIC if automatic else MANUAL), done, failed, coordinated=True)
 
     def start_background_reconcile(self, sync_summary=None, after=None):
         if self._closing:
@@ -1874,7 +1943,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             if after:
                 after(sync_summary)
             return
-        if not self.reconcile_lock.acquire(False):
+        if self.reconcile_lock.locked() or not self.reconcile_lock.acquire(False):
             if sync_summary:
                 self.status.showMessage(sync_summary + " · Conciliación ya en curso.")
             if after:
@@ -1899,7 +1968,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             self.status.showMessage(combined_summary)
             if after:
                 after(combined_summary)
-        self._start_task(lambda: reconcile_inactive_tracking(limit=batch), done, failed)
+        self._start_task(lambda: reconcile_inactive_tracking(limit=batch), done, failed, coordinated=True)
 
     def _refresh_fault_description_summary(self):
         if not hasattr(self, "fault_pending_label"):
@@ -1947,12 +2016,15 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         """Enriquece en segundo plano solo las OT activas sin avería local."""
         if self._closing:
             return
+        if self.fault_description_lock.locked():
+            return
         if not (self.cfg.fault_descriptions_enabled or self.cfg.detailed_descriptions_enabled) or not self.update_lock.acquire(False):
             return
         if not self.fault_description_lock.acquire(False):
             self.update_lock.release()
             return
-        self.enrichment_cancel_event.clear()
+        cancel_event = threading.Event()
+        self.enrichment_cancel_event = cancel_event
         self.fault_cancel_button.setEnabled(True)
         batch = self.cfg.fault_description_batch_size
         if sync_summary:
@@ -1961,9 +2033,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             self.status.showMessage(f"Completando información de hasta {batch} OT…")
 
         def done(completed):
-            cancelled = self.enrichment_cancel_event.is_set()
-            self.fault_cancel_button.setEnabled(False)
+            cancelled = cancel_event.is_set()
             self.fault_description_lock.release(); self.update_lock.release()
+            self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
             self.refresh_table(); self._refresh_fault_description_summary()
             detail = (f"Lectura cancelada: {completed} campos guardados" if cancelled else
                       "Información ampliada: sin pendientes nuevas" if not completed else
@@ -1971,8 +2043,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             self.status.showMessage(f"{sync_summary} · {detail}" if sync_summary else detail)
 
         def failed(error):
-            self.fault_cancel_button.setEnabled(False)
             self.fault_description_lock.release(); self.update_lock.release()
+            self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
             logging.warning("Enriquecimiento de averías falló: %s", error)
             self._refresh_fault_description_summary()
             self.status.showMessage(f"{sync_summary} · Información ampliada: error; consulta el log." if sync_summary else "No se pudo completar la información de OT; consulta el log.")
@@ -1980,7 +2052,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._start_task(lambda: enrich_fault_descriptions(
             limit=batch, include_fault=self.cfg.fault_descriptions_enabled,
             include_detail=self.cfg.detailed_descriptions_enabled,
-            cancel_event=self.enrichment_cancel_event), done, failed)
+            cancel_event=cancel_event), done, failed, coordinated=True)
 
     def start_priority_fault_descriptions(self):
         if not self._credentials_ready():
@@ -2002,14 +2074,15 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             self.update_lock.release()
             QMessageBox.information(self, "Información ampliada", "Ya hay una lectura de información ampliada en curso.")
             return
-        self.enrichment_cancel_event.clear()
+        cancel_event = threading.Event()
+        self.enrichment_cancel_event = cancel_event
         self.fault_cancel_button.setEnabled(True)
         self.status.showMessage(f"Completando información de {count} OT…")
 
         def done(completed):
-            cancelled = self.enrichment_cancel_event.is_set()
-            self.fault_cancel_button.setEnabled(False)
+            cancelled = cancel_event.is_set()
             self.fault_description_lock.release(); self.update_lock.release()
+            self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
             self.refresh_table(); self._refresh_fault_description_summary()
             if cancelled:
                 self.status.showMessage(f"Lectura cancelada: {completed} campos guardados.", 7000)
@@ -2018,8 +2091,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                 QMessageBox.information(self, "Información ampliada", f"Lectura completada. Campos obtenidos: {completed}.")
 
         def failed(error):
-            self.fault_cancel_button.setEnabled(False)
             self.fault_description_lock.release(); self.update_lock.release()
+            self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
             self._refresh_fault_description_summary()
             self.status.showMessage("La lectura de información ampliada falló; consulta el detalle.", 7000)
             if not self._closing:
@@ -2028,7 +2101,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._start_task(lambda: enrich_fault_descriptions(
             limit=None, minimum_age_hours=None, include_fault=self.cfg.fault_descriptions_enabled,
             include_detail=self.cfg.detailed_descriptions_enabled,
-            cancel_event=self.enrichment_cancel_event), done, failed)
+            cancel_event=cancel_event, job_priority=MANUAL), done, failed, coordinated=True)
 
     def _show_priority_reconcile_progress(self, completed, total, ot):
         self.status.showMessage(f"Revisión prioritaria: {completed}/{total} OT · {ot}")
@@ -2054,9 +2127,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                 QMessageBox.critical(self, "Mantenimiento", error)
         self._start_task(
             lambda report: reconcile_inactive_tracking(
-                limit=None, minimum_age_hours=None, progress_callback=report,
+                limit=None, minimum_age_hours=None, progress_callback=report, job_priority=MANUAL,
             ),
-            done, failed, progress=self._show_priority_reconcile_progress,
+            done, failed, progress=self._show_priority_reconcile_progress, coordinated=True,
         )
 
     def open_table_cell(self, row, column):
@@ -2106,10 +2179,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             if session: self.ot_sessions.append(session)
             self.status.showMessage(f"OT {ot} abierta en Microsoft Edge.")
         self._start_task(lambda: open_ot(
-            ot, headless=False, close_after_direct_print=close_after_direct_print,
+            ot, headless=False, job_label=f"Abrir OT {ot}", close_after_direct_print=close_after_direct_print,
             on_workorder_started=self.workorder_started.emit,
             on_workorder_closed=self.workorder_closed.emit,
-        ), done)
+        ), done, coordinated=True)
 
     def _workorder_started(self, result):
         if self._closing:
@@ -2149,11 +2222,11 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             if session: self.ot_sessions.append(session)
             self.status.showMessage(f"OT {ot}: parte en preparación en Microsoft Edge.")
         self._start_task(lambda: open_ot(
-            ot, headless=False, report_action=action,
+            ot, headless=False, job_label=f"Preparar parte de OT {ot}", report_action=action,
             close_after_direct_print=close_after_direct_print,
             on_workorder_started=self.workorder_started.emit,
             on_workorder_closed=self.workorder_closed.emit,
-        ), done)
+        ), done, coordinated=True)
 
     def export_current_list(self):
         if not any(not self.table.isRowHidden(row) for row in range(self.table.rowCount())):
@@ -2231,6 +2304,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._update_workorder_start_controls()
         self.workorder_close_check.setChecked(self.cfg.workorder_close_enabled)
         self.warehouse_check.setChecked(self.cfg.warehouse_enabled)
+        self.warehouse_details_check.setChecked(self.cfg.warehouse_ask_sat_details)
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
         self.repair_close_tabs_check.setChecked(self.cfg.repair_close_tabs_after_direct_print)
         self.repair_mode_combo.setEnabled(self.cfg.repair_extension_enabled)
@@ -2286,6 +2360,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             or self.workorder_failure_picker.selection() != self.cfg.workorder_start_selection
             or self.workorder_close_check.isChecked() != self.cfg.workorder_close_enabled
             or self.warehouse_check.isChecked() != self.cfg.warehouse_enabled
+            or self.warehouse_details_check.isChecked() != self.cfg.warehouse_ask_sat_details
             or self.repair_mode_combo.currentData() != self.cfg.repair_print_mode
             or self.repair_close_tabs_check.isChecked() != self.cfg.repair_close_tabs_after_direct_print
             or self.fault_batch_spin.value() != self.cfg.fault_description_batch_size
@@ -2316,6 +2391,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.cfg.workorder_start_selection = start_selection
         self.cfg.workorder_close_enabled = self.workorder_close_check.isChecked()
         self.cfg.warehouse_enabled = self.warehouse_check.isChecked()
+        self.cfg.warehouse_ask_sat_details = self.warehouse_details_check.isChecked()
         self.cfg.repair_print_mode = self.repair_mode_combo.currentData()
         self.cfg.repair_close_tabs_after_direct_print = self.repair_close_tabs_check.isChecked()
         self.cfg.fault_description_batch_size = self.fault_batch_spin.value()
@@ -2655,6 +2731,12 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             if prompt.clickedButton() is not close_sessions:
                 return
         self._closing = True
+        scheduler = getattr(self, '_priority_coordinator', None)
+        if scheduler is not None:
+            scheduler.shutdown()
+        notices = getattr(self, '_priority_notices', None)
+        if notices is not None:
+            notices.close()
         self.enrichment_cancel_event.set()
         self._app_update_cancel.set()
         self._save_window_state()
@@ -2683,7 +2765,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             pending = [label for lock, label in labels if lock.locked()]
             if pending:
                 self.close_progress.emit(pending[0])
-            elif not self._tasks_idle.is_set():
+            elif not self._tasks_idle.is_set() or any(t.isRunning() for t in list(getattr(self, "_coordinated_threads", ()))):
                 self.close_progress.emit("Esperando a que terminen las tareas en segundo plano…")
             else:
                 break

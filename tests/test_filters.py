@@ -1,3 +1,4 @@
+import tests  # Isolate application data before importing product modules.
 import sqlite3
 import unittest
 from contextlib import ExitStack, closing, contextmanager
@@ -37,6 +38,38 @@ class FilterTests(unittest.TestCase):
 
     def ids(self, advanced, client="Todos"):
         return [row[0] for row in db.fetch_data("", "OT", client, advanced)]
+
+    def test_comma_search_returns_multiple_ots_without_duplicates(self):
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.executemany('INSERT INTO maximo (OT,Nº_de_serie,Cliente) VALUES (?,?,?)',[
+                ('4428954','27890090298','TMB'),('4428920','ABC123','OTRO'),('4428818','ZZ99','TMB')])
+            conn.commit()
+        query='4428954, 4428920,, 4428818,4428954, '
+        self.assertEqual({r[0] for r in db.fetch_data(query,'OT','Todos')}, {'4428954','4428920','4428818'})
+        self.assertEqual({r[0] for r in db.fetch_data('2789 298, abc123','Nº_de_serie','Todos')}, {'4428954','4428920'})
+        self.assertEqual([r[0] for r in db.fetch_data('2789 298, abc123','Nº_de_serie','TMB')], ['4428954'])
+
+    def test_search_alternatives_respect_other_filters_and_empty_list_is_not_all(self):
+        self.assertEqual({r[0] for r in db.fetch_data('Radio cabina, Display','Descripción','Todos')}, {'1','2','4'})
+        self.assertEqual({r[0] for r in db.fetch_data('Radio cabina, Display','Descripción','Todos',{'tracking':['RETENIDO']})}, {'2'})
+        self.assertEqual(db.fetch_data(' , , ','OT','Todos'), [])
+        self.assertEqual(len(db.fetch_data('','OT','Todos')),4)
+        self.assertEqual(db.fetch_data("x' OR 1=1 --, inexistente",'OT','Todos'), [])
+
+    def test_warehouse_status_updates_only_the_verified_status_and_next_import_wins(self):
+        import pandas as pd
+        with closing(sqlite3.connect(self.path)) as conn:
+            before=conn.execute('SELECT Activo,Ultima_vez_visto FROM maximo WHERE OT=?',('1',)).fetchone()
+        self.assertTrue(db.apply_warehouse_status('1','SAT EXT','2026-11-06T12:00:00'))
+        with closing(sqlite3.connect(self.path)) as conn:
+            row=conn.execute('SELECT Seguimiento,Ultima_comprobacion_estado,Activo,Ultima_vez_visto FROM maximo WHERE OT=?',('1',)).fetchone()
+        self.assertEqual(row[:2],('SAT EXT','2026-11-06T12:00:00'))
+        self.assertEqual(row[2:],before)
+        frame=pd.DataFrame([('1','Radio cabina','001','2026-01-01','TMB','REP','DAR SALIDA','LAB')])
+        db.update_database_from_df(frame)
+        with closing(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(conn.execute('SELECT Seguimiento FROM maximo WHERE OT=?',('1',)).fetchone()[0],'DAR SALIDA')
+        self.assertFalse(db.apply_warehouse_status('999','CLOSE'))
 
     def test_client_and_tracking(self):
         self.assertEqual(self.ids({"tracking": ["EN TALLER"]}, "TMB"), ["1"])
@@ -224,9 +257,11 @@ class FilterTests(unittest.TestCase):
             try:
                 yield window, ui_qt
             finally:
+                window._column_width_save_timer.stop()
                 window._close_finalized = True
                 window.close()
                 window.deleteLater()
+                FilterTests.qt_app.processEvents()
 
     def test_qt_window_initialization_and_combined_filter(self):
         with self.qt_window() as (window, qt):

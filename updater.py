@@ -1,3 +1,4 @@
+from task_priorities import coordinator, scheduled, AUTOMATIC, MANUAL, ReadYield
 # updater.py
 from maximo_client import (
     setup_driver,
@@ -67,21 +68,35 @@ def _download_export_once(headless, download_root, attempt):
             logging.info("Descarga XLS: intento %d/2 cerrado y limpiado.", attempt)
 
 
+@scheduled("Actualizar listado de Maximo", MANUAL)
 def run_update(headless=True):
     started = time.monotonic()
     try:
         download_root = Path(load_config().download_dir).resolve()
         download_root.mkdir(parents=True, exist_ok=True)
-        for attempt in (1, 2):
+        while True:
             try:
-                file_path = _download_export_once(headless, download_root, attempt)
-                break
-            except ExportDownloadTimeout:
-                if attempt == 2:
-                    raise
-                logging.warning("La descarga XLS falló; se reintentará con una sesión nueva de Edge.")
-        df = _timed("procesar XLS", process_html_table, file_path)
-        new_entries, updated_entries = _timed("sincronizar BD", update_database_from_df, df)
+                coordinator.checkpoint('Descargando listado')
+                with coordinator.interruptible_read():
+                    for attempt in (1, 2):
+                        try:
+                            file_path = _download_export_once(headless, download_root, attempt)
+                            break
+                        except ExportDownloadTimeout:
+                            if attempt == 2: raise
+                            logging.warning('La descarga XLS falló; se reintentará con una sesión nueva de Edge.')
+            except ReadYield:
+                coordinator.checkpoint('Descarga aplazada por acción prioritaria')
+                continue
+            if coordinator.checkpoint('Procesando listado'):
+                Path(file_path).unlink(missing_ok=True)
+                continue
+            df = _timed('procesar XLS', process_html_table, file_path)
+            if coordinator.checkpoint('Guardando listado'):
+                Path(file_path).unlink(missing_ok=True)
+                continue
+            new_entries, updated_entries = _timed('sincronizar BD', update_database_from_df, df)
+            break
         logging.info("Actualización de base de datos completada.")
         cleanup_exports(Path(file_path).parent)
         return new_entries, updated_entries
@@ -89,6 +104,7 @@ def run_update(headless=True):
         logging.info("Actualización total: %.2fs", time.monotonic() - started)
 
 
+@scheduled("Conciliación de OTs", AUTOMATIC)
 def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
                                 minimum_age_hours=INACTIVE_RECONCILIATION_HOURS,
                                 progress_callback=None):
@@ -106,7 +122,15 @@ def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
         driver = setup_driver(headless=True, profile_dir=profile_dir)
         login(driver, headless=True)
         open_workorders_app(driver, headless=True)
+        def retire_browser():
+            nonlocal driver, profile_dir
+            old_driver, old_profile = driver, profile_dir
+            driver, profile_dir = None, None
+            _close_background_browser(old_driver, old_profile)
         for position, (ot, previous_status) in enumerate(candidates, start=1):
+            if coordinator.checkpoint('Conciliación', ot, position-1, len(candidates),
+                    on_pause=retire_browser):
+                driver, profile_dir = _new_background_browser('maximo-reconcile-')
             try:
                 status = read_workorder_status(driver, ot)
                 if apply_reconciled_status(ot, status):
@@ -136,11 +160,13 @@ def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
             if driver is not None:
                 driver.quit()
         finally:
-            cleanup_edge_profile(profile_dir)
+            if profile_dir is not None:
+                cleanup_edge_profile(profile_dir)
     logging.info("Conciliación de OT inactivas completada: %d seguimientos actualizados.", changed)
     return changed
 
 
+@scheduled("Información ampliada", AUTOMATIC)
 def enrich_fault_descriptions(limit=FAULT_DESCRIPTION_LIMIT,
                               minimum_age_hours=FAULT_DESCRIPTION_HOURS,
                               include_fault=True, include_detail=False, cancel_event=None):
@@ -171,9 +197,21 @@ def enrich_fault_descriptions(limit=FAULT_DESCRIPTION_LIMIT,
         driver.set_page_load_timeout(20)
         reset_view = False
         detail_failures = 0
-        for ot in candidates:
+        def retire_browser():
+            nonlocal driver, profile_dir
+            old_driver, old_profile = driver, profile_dir
+            driver, profile_dir = None, None
+            _close_background_browser(old_driver, old_profile)
+        for position, ot in enumerate(candidates, start=1):
             if cancel_event is not None and cancel_event.is_set():
                 break
+            if coordinator.checkpoint('Información ampliada', ot, position-1, len(candidates),
+                    on_pause=retire_browser):
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                driver, profile_dir = _new_background_browser('maximo-fault-')
+                driver.set_page_load_timeout(20)
+                reset_view = False
             if reset_view:
                 # Maximo leaves the Dojo long-description widget in a stale
                 # state after closing it. Refresh before the next OT so the
@@ -224,6 +262,28 @@ def enrich_fault_descriptions(limit=FAULT_DESCRIPTION_LIMIT,
             if driver is not None:
                 driver.quit()
         finally:
-            cleanup_edge_profile(profile_dir)
+            if profile_dir is not None:
+                cleanup_edge_profile(profile_dir)
     logging.info("Información ampliada completada: %d campos leídos.", completed)
     return completed
+
+
+def _close_background_browser(driver, profile):
+    try:
+        if driver is not None: driver.quit()
+    finally:
+        if profile is not None:
+            cleanup_edge_profile(profile)
+
+
+def _new_background_browser(prefix):
+    profile = create_edge_profile(prefix)
+    driver = None
+    try:
+        driver = setup_driver(headless=True, profile_dir=profile)
+        login(driver, headless=True)
+        open_workorders_app(driver, headless=True)
+        return driver, profile
+    except Exception:
+        _close_background_browser(driver, profile)
+        raise

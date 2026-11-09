@@ -1,3 +1,4 @@
+import tests  # Isolate application data before importing product modules.
 import os
 from pathlib import Path
 import time

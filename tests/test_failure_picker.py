@@ -1,4 +1,5 @@
 """Conditional choices in settings cannot retain descendants from another path."""
+import tests  # Isolate application data before importing product modules.
 import os
 from unittest import TestCase
 

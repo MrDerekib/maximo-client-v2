@@ -344,6 +344,18 @@ def clear_current_priority_snapshot(project: str) -> bool:
         conn.close()
 
 
+def apply_warehouse_status(ot: str, status: str, checked_at: str | None = None) -> bool:
+    """Reflect a verified warehouse operation without marking a full sync or locking status."""
+    checked_at = checked_at or datetime.now().isoformat(timespec="seconds")
+    with closing(get_connection()) as conn:
+        cursor = conn.execute(
+            "UPDATE maximo SET Seguimiento=?, Ultima_comprobacion_estado=? WHERE OT=?",
+            (normalize_filter_value(status), checked_at, str(ot).strip()),
+        )
+        conn.commit()
+        return cursor.rowcount == 1
+
+
 def update_database_from_df(df):
     init_db()  # Incluye la migración antes de importar.
     conn = get_connection()
@@ -597,7 +609,9 @@ def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], a
     if search_by not in ("OT", "Nº_de_serie", "Descripción"):
         raise ValueError("Campo de búsqueda no válido")
 
-    filter_words = filter_text.strip().split()
+    # Commas separate alternatives; spaces keep the existing AND-token search.
+    search_groups = list(dict.fromkeys(tuple(part.lower().split())
+                                      for part in filter_text.split(',') if part.strip()))
     columns = "Activo, Ultima_vez_visto, OT, Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo, Seguimiento, Planta" \
         if include_sync else "OT, Descripción, Nº_de_serie, Fecha, Cliente, Tipo_de_trabajo, Seguimiento, Planta"
     if include_fault:
@@ -608,9 +622,13 @@ def fetch_data(filter_text: str, search_by: str, client_filter: Optional[str], a
     params = []
 
     conditions = []
-    if filter_words:
-        conditions.append(" AND ".join([f"LOWER({search_by}) LIKE ?" for _ in filter_words]))
-        params.extend(f"%{word.lower()}%" for word in filter_words)
+    if search_groups:
+        conditions.append('(' + ' OR '.join(
+            '(' + ' AND '.join(f'LOWER({search_by}) LIKE ?' for _ in words) + ')'
+            for words in search_groups) + ')')
+        params.extend(f'%{word}%' for words in search_groups for word in words)
+    elif filter_text.strip():
+        conditions.append('0')  # A list of commas must never select every OT.
 
     if client_filter and client_filter != "Todos" and not advanced.get("clients"):
         conditions.append("FILTER_VALUE(Cliente) = ?")

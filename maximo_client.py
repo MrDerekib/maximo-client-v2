@@ -1,3 +1,4 @@
+from task_priorities import coordinator, scheduled, HIGH, ReadYield
 # maximo_client.py
 import os
 import json
@@ -63,6 +64,8 @@ def wait_for(driver, condition, description, timeout=PAGE_TIMEOUT, cancel_event=
     started = time.monotonic()
 
     def checked_condition(browser):
+        if coordinator.should_yield_read():
+            raise ReadYield('Lectura aplazada por una acción prioritaria.')
         if cancel_event is not None and cancel_event.is_set():
             raise RuntimeError("Lectura de información ampliada cancelada.")
         return condition(browser)
@@ -503,6 +506,7 @@ def process_html_table(file_path):
     return df
 
 
+@scheduled("Abrir OT / preparar parte", HIGH)
 def open_ot(
     ot: str, headless: bool = False, report_action: str | None = None,
     close_after_direct_print: bool = False,

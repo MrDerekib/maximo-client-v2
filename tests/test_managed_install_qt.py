@@ -1,4 +1,5 @@
 """Transiciones de la instalación Qt sin tocar la carpeta real del usuario."""
+import tests  # Isolate application data before importing product modules.
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest import TestCase

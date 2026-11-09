@@ -1,4 +1,5 @@
 """Utilidades de prueba independientes de las restricciones de %TEMP%."""
+import tests  # Isolate application data before importing product modules.
 
 from contextlib import contextmanager
 from pathlib import Path

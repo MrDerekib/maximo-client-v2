@@ -1,3 +1,4 @@
+import tests  # Isolate application data before importing product modules.
 import unittest
 from update_checker import is_newer, format_version_tag
 

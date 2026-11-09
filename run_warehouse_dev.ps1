@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Prototipo aislado de almacén. Por defecto abre la demostración con OTs ficticias.
+Abre Maximo Desktop con datos y cuenta de desarrollo de almacén.
 #>
 param([switch]$FullApp)
 Set-StrictMode -Version Latest
@@ -14,7 +14,7 @@ $oldWarehouse = $env:MAXIMO_DESKTOP_WAREHOUSE_DEV
 try {
     $env:MAXIMO_DESKTOP_DEV = '1'
     $env:MAXIMO_DESKTOP_WAREHOUSE_DEV = '1'
-    $entry = if ($FullApp) { 'ui_qt.py' } else { 'tools\warehouse_demo.py' }
+    $entry = 'ui_qt.py'
     & $python (Join-Path $PSScriptRoot $entry)
     $result = $LASTEXITCODE
 } finally {

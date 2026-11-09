@@ -1,3 +1,4 @@
+import tests  # Isolate application data before importing product modules.
 import tempfile
 import unittest
 from pathlib import Path

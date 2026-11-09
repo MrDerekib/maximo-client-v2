@@ -1,4 +1,5 @@
 """Tests of explicit start semantics and the Maximo asynchronous workflow."""
+import tests  # Isolate application data before importing product modules.
 import os
 import json
 import sqlite3

@@ -1,4 +1,5 @@
 """Warehouse prototype UI, using only local data and no Edge session."""
+import tests  # Isolate application data before importing product modules.
 import json
 from pathlib import Path
 import time
@@ -30,6 +31,166 @@ class Host(WarehouseWindowMixin, QMainWindow):
 
 
 class WarehouseUiTests(TestCase):
+    def test_verified_status_is_persisted_with_action_specific_tracking(self):
+        from warehouse import WarehouseResult
+        from warehouse_ui import WarehouseThread, LOCAL_TRACKING
+        from warehouse_transport import FINAL_STATES
+        for action, tracking in LOCAL_TRACKING.items():
+            with temporary_directory() as folder:
+                worker=WarehouseThread([WarehouseItem('1')],action,Path(folder)/'events.jsonl')
+                changed=[]; finished=[]
+                worker.record_updated.connect(lambda ot,status:changed.append((ot,status)))
+                worker.completed.connect(finished.append)
+                def run(items, action, **kwargs):
+                    rows=tuple(WarehouseResult(items[0],status=status,verified_status=FINAL_STATES[action] if status=='success' else '')
+                               for status in ('success','failed','uncertain','stopped'))
+                    for index,result in enumerate(rows):kwargs['progress'](index,result)
+                    return rows
+                with patch('warehouse_transport.run_live',side_effect=run), patch('db.apply_warehouse_status',return_value=True) as save:
+                    worker.run()
+                save.assert_called_once_with('1',tracking)
+                self.assertEqual(changed,[('1',tracking)])
+                self.assertEqual(finished[0][0].status,'success')
+
+    def test_local_write_error_preserves_remote_success_and_explains_local_failure(self):
+        from warehouse import WarehouseResult
+        from warehouse_ui import WarehouseThread
+        with temporary_directory() as folder:
+            worker=WarehouseThread([WarehouseItem('1')],'receive',Path(folder)/'events.jsonl')
+            changed=[];finished=[]
+            worker.record_updated.connect(lambda *args:changed.append(args));worker.completed.connect(finished.append)
+            def run(items,action,**kwargs):
+                r=WarehouseResult(items[0],status='success',verified_status='APPR')
+                kwargs['progress'](0,r);return (r,)
+            with patch('warehouse_transport.run_live',side_effect=run), patch('db.apply_warehouse_status',side_effect=OSError('disk')):
+                worker.run()
+            self.assertEqual(changed,[])
+            self.assertEqual(finished[0][0].status,'success')
+            self.assertIn('copia local',finished[0][0].detail)
+
+    def test_row_refresh_updates_one_cell_and_removes_it_when_filter_no_longer_matches(self):
+        from tests.test_ui_app_updates import MaximoDesktopWindow
+        host=Host()
+        host.search_edit=Mock();host.search_edit.text.return_value=''
+        host.search_field=Mock(return_value='OT');host.effective_advanced_filters=Mock(return_value={})
+        host.filter_choices_cache={'tracking':[]};host._update_list_summary=Mock();host.refresh_table=Mock()
+        try:
+            untouched=host.table.item(1,2)
+            with patch('ui_qt.fetch_data',return_value=[('DEMO-0','','','','','','SAT EXT','')]):
+                MaximoDesktopWindow.warehouse_row_updated(host,'DEMO-0','SAT EXT')
+            self.assertEqual(host.table.item(0,7).text(),'SAT EXT')
+            self.assertIs(host.table.item(1,2),untouched)
+            host.refresh_table.assert_not_called()
+            with patch('ui_qt.fetch_data',return_value=[('DEMO-0','','','','','','CLOSE','')]):
+                MaximoDesktopWindow.warehouse_row_updated(host,'DEMO-0','SAT EXT')
+            self.assertEqual(host.table.item(0,7).text(),'CLOSE')
+            with patch('ui_qt.fetch_data',return_value=[]):
+                MaximoDesktopWindow.warehouse_row_updated(host,'DEMO-0','SAT EXT')
+            self.assertEqual(host.table.rowCount(),3)
+            self.assertEqual(host.table.item(0,1).text(),'DEMO-1')
+        finally:
+            host.deleteLater();self.app.processEvents()
+
+    def test_sat_details_are_optional_per_ot_and_hidden_by_default(self):
+        items = [WarehouseItem('1'), WarehouseItem('2')]
+        for action in ('receive_sat_external', 'receive_sat_internal'):
+            for enabled in (False, True):
+                dialog = WarehouseBatchDialog(items, action, Mock(), ask_sat_details=enabled)
+                try:
+                    self.assertEqual(set(dialog.details_inputs), {'1','2'} if enabled else set())
+                    if enabled:
+                        dialog.details_inputs['1'].setText('Detalle OT 1')
+                        self.assertEqual(dialog.details_inputs['2'].text(), '')
+                    self.assertFalse(dialog._has_started)
+                finally:
+                    dialog.deleteLater(); self.app.processEvents()
+
+    def setUp(self):
+        patcher = patch('warehouse_ui.WAREHOUSE_DEVELOPMENT_MODE', True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_cancel_confirmation_never_creates_worker(self):
+        from PySide6.QtWidgets import QMessageBox
+        dialog = WarehouseBatchDialog([WarehouseItem('1')], 'receive', Mock())
+        try:
+            self.assertFalse(hasattr(dialog, 'mode'))
+            self.assertFalse(hasattr(dialog, 'scenario'))
+            with patch('warehouse_ui.QMessageBox.question', return_value=QMessageBox.No), patch('warehouse_ui.WarehouseThread') as worker:
+                dialog.start_operation()
+            worker.assert_not_called()
+            self.assertFalse(dialog._has_started)
+        finally:
+            dialog.deleteLater(); self.app.processEvents()
+
+    def test_unvalidated_actions_cannot_open_or_start(self):
+        for action in ('reject_receive',):
+            with self.assertRaises(ValueError):
+                WarehouseBatchDialog([WarehouseItem('1')], action, Mock())
+        host = Host()
+        try:
+            self.select_rows(host, (0,))
+            menu = QMenu(); host.add_warehouse_actions(menu)
+            receipt = next(a.menu() for a in menu.actions() if a.menu())
+            self.assertEqual([a.isEnabled() for a in receipt.actions()], [True, False, True, True])
+            self.assertNotIn('simulación', ' '.join(a.text() for a in menu.actions()))
+        finally:
+            host.deleteLater(); self.app.processEvents()
+
+    def test_progress_and_report_preserve_all_outcomes(self):
+        from dataclasses import replace
+        from warehouse import WarehouseResult
+        from PySide6.QtWidgets import QMessageBox
+        with temporary_directory() as folder:
+            dialog = WarehouseBatchDialog([WarehouseItem(str(i)) for i in range(4)], 'receive', Mock(), report_folder=Path(folder))
+            def run(items, action, **kwargs):
+                results = []
+                for index, status in enumerate(('success','failed','uncertain','success')):
+                    r = WarehouseResult(items[index], status=status, step='Completado', detail=status,
+                        completed_steps=5 if status=='success' else 3, verified_status='APPR' if status=='success' else '')
+                    kwargs['progress'](index,r); results.append(r)
+                return tuple(results)
+            try:
+                with patch('warehouse_ui.QMessageBox.question', return_value=QMessageBox.Yes), patch('warehouse_transport.run_live', side_effect=run), patch('db.apply_warehouse_status',return_value=True):
+                    dialog.start_operation()
+                    self.wait_for(lambda:dialog.report_path is not None and not dialog.is_running())
+                self.assertEqual([r.status for r in dialog.results], ['success','failed','uncertain','success'])
+                self.assertFalse(json.loads(dialog.report_path.read_text(encoding='utf-8'))['simulation'])
+                self.assertEqual(dialog.table.item(0,4).text(),'Operación verificada')
+                self.assertEqual(dialog.progress_bar.value(),4)
+                self.assertFalse(dialog.start_button.isEnabled())
+            finally:
+                dialog.deleteLater();self.app.processEvents()
+
+    def test_close_requests_stop_while_worker_remains_alive(self):
+        dialog = WarehouseBatchDialog([WarehouseItem('1')], 'receive', Mock())
+        worker = Mock(); worker.isRunning.return_value=True
+        dialog._worker=worker
+        try:
+            dialog.reject()
+            worker.stop_requested.set.assert_called_once()
+        finally:
+            worker.isRunning.return_value=False
+            dialog._worker=None
+            dialog.deleteLater();self.app.processEvents()
+
+    def test_optional_details_setting_defaults_off_and_is_saved(self):
+        window = settings_window()
+        try:
+            self.assertFalse(window.cfg.warehouse_ask_sat_details)
+            self.assertFalse(window.warehouse_details_check.isChecked())
+            window.warehouse_details_check.setChecked(True)
+            self.assertTrue(window.settings_dirty())
+            with patch('ui_qt.save_config') as save:
+                window.save_settings(show_feedback=False)
+            self.assertTrue(save.call_args.args[0].warehouse_ask_sat_details)
+        finally:
+            window.deleteLater()
+            self.app.processEvents()
+
+
+
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -106,80 +267,3 @@ class WarehouseUiTests(TestCase):
             self.assertIsNone(dialog._worker)
         finally:
             dialog.deleteLater(); self.app.processEvents()
-
-    def test_each_receipt_menu_choice_preserves_its_exact_action(self):
-        host = Host()
-        try:
-            self.select_rows(host, (0, 1))
-            host.open_warehouse_batch = Mock()
-            menu = QMenu()
-            host.add_warehouse_actions(menu)
-            root_actions = [action for action in menu.actions() if not action.isSeparator()]
-            for choice, action in zip(root_actions[0].menu().actions(), RECEIPT_ACTIONS):
-                with self.subTest(action=action):
-                    self.assertEqual(choice.text(), ACTIONS[action].label + '…')
-                    choice.trigger()
-                    batch, requested = host.open_warehouse_batch.call_args.args
-                    self.assertEqual(requested, action)
-                    self.assertEqual([item.ot for item in batch], ['DEMO-0', 'DEMO-1'])
-            root_actions[1].trigger()
-            self.assertEqual(host.open_warehouse_batch.call_args.args[1], 'dispatch')
-        finally:
-            host.deleteLater(); self.app.processEvents()
-
-    def test_each_receipt_choice_opens_review_without_starting_it(self):
-        for action in RECEIPT_ACTIONS:
-            with self.subTest(action=action):
-                dialog = WarehouseBatchDialog([WarehouseItem('DEMO-1', status='PDTE CONFIRMAR')], action, Mock())
-                try:
-                    self.assertIn(ACTIONS[action].label, dialog.windowTitle())
-                    self.assertEqual(dialog.action, action)
-                    self.assertFalse(dialog._has_started)
-                    self.assertFalse(dialog.is_running())
-                finally:
-                    dialog.deleteLater(); self.app.processEvents()
-
-    def test_worker_reports_all_outcomes_and_keeps_uncertain_item_without_retry(self):
-        with temporary_directory() as folder:
-            dialog = WarehouseBatchDialog([WarehouseItem(f'DEMO-{i}', status='WAPPR') for i in range(4)],
-                                          'receive', Mock(), report_folder=folder)
-            dialog.show()
-            try:
-                dialog.scenario.setCurrentIndex(dialog.scenario.findData('incidents'))
-                from warehouse import run_simulation as simulate
-                def fast(*args, **kwargs):
-                    return simulate(*args, **kwargs, delay=0.01)
-                with patch('warehouse_ui.run_simulation', side_effect=fast):
-                    dialog.start_simulation()
-                    self.wait_for(lambda: dialog.report_path is not None and not dialog.is_running())
-                self.assertEqual([r.status for r in dialog.results], ['success', 'failed', 'uncertain', 'success'])
-                self.assertEqual(dialog.progress_bar.value(), 4)
-                self.assertIn('0 sin procesar', dialog.summary.text())
-                self.assertIn('1 pendientes de verificar', dialog.summary.text())
-                self.assertFalse(dialog.start_button.isEnabled())
-                data = json.loads(Path(dialog.report_path).read_text(encoding='utf-8'))
-                self.assertTrue(data['simulation'])
-                self.assertEqual(dialog.table.item(1, 4).foreground().color().name(), '#dc2626')
-            finally:
-                dialog.close(); dialog.deleteLater(); self.app.processEvents()
-
-    def test_close_or_escape_requests_stop_but_does_not_destroy_running_worker(self):
-        with temporary_directory() as folder:
-            dialog = WarehouseBatchDialog([WarehouseItem(f'DEMO-{i}', status='WAPPR') for i in range(4)],
-                                          'receive', Mock(), report_folder=folder)
-            dialog.show()
-            try:
-                from warehouse import run_simulation as simulate
-                def fast(*args, **kwargs):
-                    return simulate(*args, **kwargs, delay=0.02)
-                with patch('warehouse_ui.run_simulation', side_effect=fast):
-                    dialog.start_simulation()
-                    self.wait_for(lambda: any(r.status == 'running' for r in dialog.results))
-                    dialog.close()
-                    dialog.reject()
-                    self.assertTrue(dialog.isVisible())
-                    self.wait_for(lambda: dialog.report_path is not None and not dialog.is_running())
-                self.assertEqual(dialog.results[0].status, 'success')
-                self.assertTrue(all(r.status == 'stopped' for r in dialog.results[1:]))
-            finally:
-                dialog.close(); dialog.deleteLater(); self.app.processEvents()

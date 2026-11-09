@@ -1,3 +1,4 @@
+import tests  # Isolate application data before importing product modules.
 import shutil
 import sqlite3
 import tempfile

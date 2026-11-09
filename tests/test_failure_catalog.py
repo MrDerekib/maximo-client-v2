@@ -1,3 +1,4 @@
+import tests  # Isolate application data before importing product modules.
 from copy import deepcopy
 import json
 from pathlib import Path

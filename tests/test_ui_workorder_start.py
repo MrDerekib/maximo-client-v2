@@ -1,4 +1,5 @@
 """The UI keeps opening and starting as separate, opt-in actions."""
+import tests  # Isolate application data before importing product modules.
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch

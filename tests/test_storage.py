@@ -1,3 +1,4 @@
+import tests  # Isolate application data before importing product modules.
 import json
 import sqlite3
 import unittest
