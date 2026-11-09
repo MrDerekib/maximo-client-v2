@@ -28,7 +28,7 @@ from config import AppConfig, credentials_configured, load_config, save_config
 from failure_catalog import resolve_selection
 from failure_picker import FailurePathPicker
 from warehouse_ui import WarehouseWindowMixin
-from task_priorities import coordinator, JobCounter, AUTOMATIC, MANUAL
+from task_priorities import coordinator, JobCounter, AUTOMATIC, MANUAL, HIGH
 from priority_notices import PriorityNotices
 from workorder_selection import WorkorderSelection, prepare_row_context_selection
 from db import (
@@ -2181,7 +2181,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             if session: self.ot_sessions.append(session)
             self.status.showMessage(f"OT {ot} abierta en Microsoft Edge.")
         self._start_task(lambda: open_ot(
-            ot, headless=False, job_label=f"Abrir OT {ot}", close_after_direct_print=close_after_direct_print,
+            ot, headless=False, close_after_direct_print=close_after_direct_print,
             on_workorder_started=self.workorder_started.emit,
             on_workorder_closed=self.workorder_closed.emit,
         ), done, coordinated=True)
@@ -2223,12 +2223,15 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         def done(session):
             if session: self.ot_sessions.append(session)
             self.status.showMessage(f"OT {ot}: parte en preparación en Microsoft Edge.")
-        self._start_task(lambda: open_ot(
-            ot, headless=False, job_label=f"Preparar parte de OT {ot}", report_action=action,
-            close_after_direct_print=close_after_direct_print,
-            on_workorder_started=self.workorder_started.emit,
-            on_workorder_closed=self.workorder_closed.emit,
-        ), done, coordinated=True)
+        def prepare_report():
+            with coordinator.job(f"Preparar parte de OT {ot}", HIGH):
+                return open_ot(
+                    ot, headless=False, report_action=action,
+                    close_after_direct_print=close_after_direct_print,
+                    on_workorder_started=self.workorder_started.emit,
+                    on_workorder_closed=self.workorder_closed.emit,
+                )
+        self._start_task(prepare_report, done, coordinated=True)
 
     def export_current_list(self):
         if not any(not self.table.isRowHidden(row) for row in range(self.table.rowCount())):

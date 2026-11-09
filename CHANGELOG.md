@@ -5,9 +5,13 @@
 ### Resumen
 
 - Corregida la aparición de las acciones de almacén en el exe al habilitarlas en Configuración.
+- Abrir una OT en Edge ya no espera a la conciliación ni a otras tareas de fondo.
 
 ### Corrección
 
+- La apertura interactiva de OTs utiliza su propia sesión y no entra en la cola
+  de operaciones de fondo. El doble clic y «Abrir OT» pueden utilizarse mientras
+  se actualiza el listado, se concilia o se completa información.
 - Retiradas las restricciones del antiguo prototipo que ocultaban el menú y
   bloqueaban la revisión de lotes fuera del entorno de desarrollo de almacén.
   Las acciones se habilitan con «Mostrar acciones de almacén» y «Guardar cambios»;

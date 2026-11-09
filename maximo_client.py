@@ -1,4 +1,4 @@
-from task_priorities import coordinator, scheduled, HIGH, ReadYield
+from task_priorities import coordinator, ReadYield
 # maximo_client.py
 import os
 import json
@@ -506,7 +506,6 @@ def process_html_table(file_path):
     return df
 
 
-@scheduled("Abrir OT / preparar parte", HIGH)
 def open_ot(
     ot: str, headless: bool = False, report_action: str | None = None,
     close_after_direct_print: bool = False,

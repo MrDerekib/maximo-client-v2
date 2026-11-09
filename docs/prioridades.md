@@ -19,7 +19,10 @@ se omite. La actualización existente continúa con su prioridad y resultado hab
 
 ## Clasificación
 
-- Alta: operaciones de almacén y apertura/preparación de partes solicitadas desde MD.
+- Alta: operaciones de almacén y preparación de partes solicitadas desde MD.
+- Independiente: abrir una OT por doble clic, menú contextual, enlace o reporte
+  crea su propia sesión interactiva; no espera ni pausa la conciliación, la
+  actualización ni la lectura ampliada. Su hilo sigue controlado por el cierre de MD.
 - Media: actualización manual del listado, conciliación manual y lectura ampliada
   solicitada por el usuario.
 - Automática: actualización programada y su cadena de conciliación e información
@@ -73,3 +76,10 @@ visibles Qt, prioridad con pool independiente lleno, cierre con confirmación ac
 conciliación con sesiones ficticias y candidatas conservadas, cierre durante pausa
 y descarte de XLS anterior a una cesión. No se han ejecutado operaciones de almacén
 ni de técnico para validar estos cambios.
+
+## Apertura interactiva de OT
+
+La apertura interactiva por doble clic, menú contextual, enlace o reporte crea
+su propia sesión de Edge y no espera ni pausa las tareas de fondo. Su hilo y
+su sesión siguen controlados por el cierre ordenado de MD. Preparar un parte
+para imprimir o guardar PDF sigue pasando por el coordinador.

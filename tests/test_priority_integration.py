@@ -268,3 +268,61 @@ class IntegrationTests(TestCase):
                     self.assertEqual(errors,[]);self.assertEqual(calls,[0,1])
                     self.assertEqual([call.args[0] for call in save.call_args_list],files)
                 finally:release.set();a.join(3);b.join(3)
+
+    def test_interactive_ot_opens_while_reconciliation_keeps_its_turn(self):
+        from types import SimpleNamespace
+        from config import AppConfig
+        import maximo_client as client
+        c=Coordinator();h=Harness(c);entered=threading.Event();release=threading.Event();events=[]
+        c.subscribe(events.append)
+        h.cfg=AppConfig();h._credentials_ready=Mock(return_value=True);h._start_task=h.start
+        h.workorder_started=SimpleNamespace(emit=Mock());h.workorder_closed=SimpleNamespace(emit=Mock())
+        driver=Mock()
+        def reconcile():
+            with c.job('Conciliación',AUTOMATIC):
+                c.checkpoint('Conciliación','2966176');entered.set();release.wait(5)
+        try:
+            with patch('ui_qt.coordinator',c),patch.object(client,'coordinator',c), \
+                 patch.object(client,'load_config',return_value=AppConfig()), \
+                 patch.object(client,'create_edge_profile',return_value='interactive-profile'), \
+                 patch.object(client,'setup_driver',return_value=driver), \
+                 patch.object(client,'login'),patch.object(client,'open_workorders_app'), \
+                 patch.object(client,'wait_for',return_value=Mock()):
+                h.start(reconcile,lambda _:None,coordinated=True)
+                self.wait_for(entered.is_set)
+                MaximoDesktopWindow.open_ot_number(h,'4336161')
+                self.wait_for(lambda:len(h.ot_sessions)==1)
+                self.assertFalse(release.is_set())
+                self.assertEqual(c.active.label,'Conciliación');self.assertEqual(c.queue,[])
+                self.assertFalse(h.notices.dialogs)
+                self.assertFalse(any(e['kind'] in ('waiting','paused') for e in events))
+                self.assertEqual(h.ot_sessions[0],(driver,'interactive-profile'))
+                driver.quit.assert_not_called();self.assertEqual(h.errors,[])
+                release.set();self.wait_for(lambda:not h._coordinated_threads)
+        finally:
+            release.set();self.wait_for(lambda:not h._coordinated_threads)
+            h.notices.close();h.deleteLater();self.app.processEvents()
+
+    def test_report_preparation_remains_coordinated(self):
+        from types import SimpleNamespace
+        from config import AppConfig
+        for action in ('print','pdf'):
+            with self.subTest(action=action):
+                c=Coordinator();h=Harness(c);entered=threading.Event();release=threading.Event()
+                h.cfg=AppConfig();h._credentials_ready=Mock(return_value=True);h._start_task=h.start
+                h.workorder_started=SimpleNamespace(emit=Mock());h.workorder_closed=SimpleNamespace(emit=Mock())
+                def reconcile():
+                    with c.job('Conciliación',AUTOMATIC):entered.set();release.wait(5)
+                try:
+                    with patch('ui_qt.coordinator',c),patch('ui_qt.open_ot',return_value=None) as open_ot:
+                        h.start(reconcile,lambda _:None,coordinated=True);self.wait_for(entered.is_set)
+                        MaximoDesktopWindow.open_repair_report(h,'123',action)
+                        self.wait_for(lambda:bool(c.queue))
+                        open_ot.assert_not_called()
+                        release.set();self.wait_for(lambda:not h._coordinated_threads)
+                        open_ot.assert_called_once()
+                        self.assertEqual(open_ot.call_args.kwargs['report_action'],action)
+                        self.assertEqual(h.errors,[])
+                finally:
+                    release.set();self.wait_for(lambda:not h._coordinated_threads)
+                    h.notices.close();h.deleteLater();self.app.processEvents()
