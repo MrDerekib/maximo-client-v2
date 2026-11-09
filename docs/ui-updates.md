@@ -15,6 +15,33 @@ cierra Edge antes de lanzar el aplicador. El aplicador espera la salida del
 proceso, copia el paquete sobre la carpeta instalada y reinicia la aplicación.
 La base local y la configuración permanecen en las carpetas de datos del usuario.
 
+## Novedades tras actualizar
+
+El primer arranque del exe con una versión nueva muestra un diálogo con su
+changelog. Se presenta después de abrir la ventana principal y antes de comprobar
+si existe otra actualización, evitando superponer ambos avisos. Al cerrar el
+diálogo se registra la versión mostrada y no vuelve a aparecer en los siguientes
+arranques de esa versión.
+
+Las notas se toman del cuerpo Markdown de la release de GitHub, conservado al
+consultar actualizaciones. Si no hay una copia para la versión instalada, se usa
+solo su sección de `CHANGELOG.md`, que el script incluye en la distribución.
+Esto permite mostrar las notas sin conexión y también al actualizar desde un
+cliente anterior que todavía no guardaba las notas de GitHub. Si no hay notas
+para esa versión se omite el aviso vacío y queda constancia en el log.
+
+No hay un segundo changelog que mantener. `config/release_notes_state.json` es
+estado generado automáticamente: guarda la versión ya mostrada y una única
+release en caché, fuera de la carpeta actualizable `app`. Un rollback no reduce
+la versión registrada ni provoca que se repitan unas notas ya vistas. La caché
+de notas tiene longitud limitada y se reemplaza en las siguientes consultas.
+
+Las configuraciones nuevas se inicializan con la versión instalada y no reciben
+un aviso de actualización en su primera instalación. Una configuración heredada
+sin historial muestra las notas una vez al estrenar esta función. Python/dev no
+abre el diálogo automático ni marca como leídas las novedades del exe. El visor
+respeta el tema de la app y no carga imágenes ni recursos externos del Markdown.
+
 Si el usuario cancela el cierre, el paquete queda preparado durante esa sesión y
 puede reintentar con «Actualizar ahora». Cancelar la descarga o fallar la
 verificación no inicia la instalación. Si no se puede lanzar el aplicador, la UI

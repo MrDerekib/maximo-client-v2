@@ -61,6 +61,7 @@ $nuitkaArguments = @(
     "--enable-plugin=pyside6",
     "--include-package=lxml",
     "--include-data-file=$projectRoot\icon.ico=icon.ico",
+    "--include-data-file=$projectRoot\CHANGELOG.md=CHANGELOG.md",
     "--include-data-file=$projectRoot\browser_extension\manifest.json=browser_extension/manifest.json",
     "--include-data-file=$projectRoot\browser_extension\content.js=browser_extension/content.js",
     "--include-data-file=$projectRoot\browser_extension\service_worker.js=browser_extension/service_worker.js",
