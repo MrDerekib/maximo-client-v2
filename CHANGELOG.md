@@ -1,5 +1,53 @@
 # Historial de cambios
 
+## 1.2.0 — Operaciones de almacén y prioridades de tareas
+
+### Operaciones de almacén
+
+- Nuevas acciones desde el menú contextual de MD, sobre una OT o una selección
+  múltiple: confirmar recepción, dar salida del almacén y confirmar con envío a
+  SAT interno o externo. Se muestran al activar «Mostrar acciones de almacén»
+  en Configuración y requieren una cuenta con los permisos correspondientes.
+- Los lotes se procesan en segundo plano con revisión y confirmación previa.
+  El diálogo muestra el paso actual, el resultado de cada OT y un resumen final;
+  permite detener el lote después de la OT en curso y abrir las fichas para
+  revisión manual. Los resultados inciertos no repiten automáticamente el envío.
+- El estado se comprueba directamente en Maximo y, tras verificar la operación,
+  se refleja inmediatamente en el listado de MD. Las siguientes actualizaciones
+  siguen tomando Maximo como referencia.
+- Opción para pedir detalles por OT antes de enviar a SAT, desactivada por defecto.
+  Nuevos registros y reportes por lote para diagnosticar incidencias.
+- «Rechazar recepción» permanece deshabilitado hasta validar ese recorrido.
+
+### Selección, búsqueda y configuración
+
+- Casillas para seleccionar varias OTs y seleccionar todas las filas visibles,
+  además de Ctrl y Mayús. La selección múltiple es independiente de las funciones
+  de almacén.
+- Búsquedas de varias OTs, números de serie o descripciones separados por comas.
+  Ejemplo: `4428954, 4428920, 4428818`. Se mantienen las búsquedas parciales,
+  las palabras separadas por espacios y los demás filtros.
+- Opciones de configuración redistribuidas para aprovechar las dos columnas.
+
+### Prioridad para las acciones del usuario
+
+- Las acciones solicitadas desde MD tienen prioridad sobre las tareas automáticas.
+  La conciliación y la lectura de información terminan la OT actual antes de
+  pausar su cola y la reanudan después, conservando el progreso.
+- Aviso visible cuando una acción debe esperar, con la tarea y la OT en curso
+  cuando corresponde. Las confirmaciones y el guardado de datos no se interrumpen.
+- Si ya hay una actualización del listado en curso o pendiente, una nueva petición
+  informa de ello sin duplicarla ni cancelar la existente. Corregido el bucle de
+  pausas y descargas entre actualizaciones de la misma prioridad.
+
+### Novedades y correcciones
+
+- Tras actualizar, el primer arranque muestra las novedades de la versión instalada
+  una sola vez. Usa las notas de la release y dispone del changelog incluido como
+  respaldo sin conexión.
+- El cierre de OT reintenta la navegación cuando Maximo ignora un cambio de pestaña,
+  antes de continuar con la operación.
+
 ## 1.1.0 — Inicio y cierre de OT desde Edge y anomalías configurables
 
 - Corregida la carga inicial de los desplegables de anomalías en Maximo,

@@ -1,7 +1,8 @@
 # Maximo Desktop — desarrollo de almacén
 
-Rama aislada `feature/almacen`, carpeta `maximo-client-almacen`. El desarrollo
-habitual permanece en `maximo-client-ui` y no se fusiona ni se publica este trabajo.
+Las funciones de almacén están integradas en `main` y `dev` desde la versión
+1.2.0. La carpeta `maximo-client-almacen` y su lanzador conservan un entorno
+de pruebas con datos separados del desarrollo habitual en `maximo-client-ui`.
 
 ## Ejecutar
 
