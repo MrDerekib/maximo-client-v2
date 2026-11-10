@@ -1,6 +1,6 @@
 # Historial de cambios
 
-## 1.2.2 — Recuperación de almacén y mejoras de fluidez
+## 1.2.3 — Recuperación de almacén y mejoras de fluidez
 
 ### Resumen
 
