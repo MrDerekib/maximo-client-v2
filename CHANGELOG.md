@@ -1,5 +1,63 @@
 # Historial de cambios
 
+## 1.2.2 — Recuperación de almacén y mejoras de fluidez
+
+### Resumen
+
+- Los lotes de almacén comprueban de nuevo los resultados inciertos sin repetir la operación.
+- Puedes revisar y recuperar operaciones pendientes incluso después de reiniciar MD.
+- Tabla más fluida: menos reconstrucciones al actualizar, limpiar filtros y cambiar de tema.
+- Menor uso de hilos internos de cálculo y más información para diagnosticar incidencias de almacén.
+
+### Recuperación de operaciones de almacén
+
+- Si se pierde la respuesta tras intentar enrutar o confirmar, la OT queda pendiente
+  de verificar y el lote continúa con las siguientes. Al acabar, MD realiza una
+  segunda pasada de consulta desde una sesión independiente, sin reenviar la acción.
+- Nuevo botón «Reverificar pendientes» en el reporte. También puedes acceder desde
+  Configuración → Almacén → «Revisar operaciones pendientes…». Al arrancar, MD ofrece
+  revisar las operaciones que hayan quedado pendientes.
+- Los registros persistentes conservan la acción, la identidad del equipo y el paso
+  alcanzado. Una OT con una operación pendiente queda bloqueada para nuevos envíos
+  hasta resolver su comprobación, evitando reintentos por error.
+- Si la operación ya está verificada en Maximo pero falla el guardado local, la
+  recuperación reintenta únicamente ese guardado. Los resultados correctos del resto
+  del lote se conservan y el reporte original se actualiza cuando se resuelve el caso.
+- Una recepción ya en APPR o una salida ya en CLOSE se identifica como «Ya estaba
+  completada», sin volver a enrutar. Para confirmar una derivación SAT se comprueban
+  tanto el estado como una nueva entrada del historial de la acción correspondiente.
+- Los fallos transitorios de lectura anteriores al intento de enrutar pueden
+  reintentarse una vez. Desde que se intenta enrutar, la recuperación solo consulta
+  el resultado: no repite Enrutar, Aceptar ni la confirmación de detalles SAT.
+- Más evidencias por OT para diagnóstico y recuperación, sin guardar credenciales,
+  tokens ni el texto de los detalles SAT. Los nuevos registros de recuperación se
+  aplican a las operaciones realizadas con esta versión; no importan lotes antiguos.
+
+### Rendimiento y visualización de la tabla
+
+- Los refrescos con datos iguales conservan las celdas, la ordenación y la selección.
+  Cambiar de filtro sigue limpiando la selección aunque devuelva los mismos resultados.
+- Cambiar de tema recolorea la tabla existente y sus iconos sin consultar de nuevo
+  los datos ni reconstruir todas las filas.
+- Cargas de tabla agrupadas para reducir las señales y repintados intermedios.
+  Limpiar filtros y aplicar búsquedas guardadas evitan refrescos redundantes.
+- Las tareas de conciliación e información ampliada no reconstruyen la tabla si
+  terminan sin cambios. Las actualizaciones generales siguen comprobando presencia
+  y última aparición, aunque no haya OTs nuevas.
+- OpenBLAS utiliza un hilo de cálculo por defecto. No limita los hilos de las tareas
+  de MD y respeta una configuración explícita del entorno.
+
+### Validación
+
+- Pruebas locales de pérdida de respuesta, caída tras el clic, recuperación tras
+  reiniciar, errores de guardado local y continuidad de lotes, sin operar sobre Maximo.
+- Suite conjunta: 274 pruebas correctas y 82 pruebas de Edge offline omitidas.
+- Comprobación sintética con 5.000 OTs ficticias: refresco sin cambios de unos 13 ms
+  y limpieza de filtros de unos 424 ms en el equipo de prueba. Los tiempos reales
+  dependen del equipo y de los datos.
+- La recuperación de almacén queda pendiente de validación controlada con operaciones
+  reales. La build empaquetada deberá comprobarse antes de publicar esta release.
+
 ## 1.2.1 — Acciones de almacén en la versión instalada
 
 ### Resumen
