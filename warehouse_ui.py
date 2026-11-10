@@ -11,19 +11,21 @@ from PySide6.QtCore import QEvent, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel,
-    QProgressBar, QPushButton, QStyle, QTableWidget, QTableWidgetItem, QVBoxLayout, QMessageBox, QLineEdit,
+    QProgressBar, QPushButton, QStyle, QTableWidget, QTableWidgetItem, QVBoxLayout, QMessageBox, QLineEdit, QInputDialog,
 )
 
 from app_paths import LOG_DIR
 from warehouse import ACTIONS, RECEIPT_ACTIONS, STEPS, WarehouseItem, WarehouseResult, freeze_items
 from warehouse_diagnostics import log_exception, sanitize
+from warehouse_recovery import RecoveryStore, recovery_item
 
 STATUS_LABELS = {
     'pending': 'Pendiente', 'running': 'En proceso', 'success': 'Operación verificada',
+    'already_done': 'Ya estaba completada',
     'failed': 'Fallida', 'uncertain': 'Pendiente de verificar', 'stopped': 'Sin procesar',
 }
-STATUS_COLORS = {'success': '#15803d', 'failed': '#dc2626', 'uncertain': '#b45309'}
-STATUS_COLORS_DARK = {'success': '#4ade80', 'failed': '#f87171', 'uncertain': '#fbbf24'}
+STATUS_COLORS = {'already_done': '#15803d', 'success': '#15803d', 'failed': '#dc2626', 'uncertain': '#b45309'}
+STATUS_COLORS_DARK = {'already_done': '#4ade80', 'success': '#4ade80', 'failed': '#f87171', 'uncertain': '#fbbf24'}
 LOCAL_TRACKING = {'receive': 'EN TALLER', 'dispatch': 'CLOSE',
                   'receive_sat_internal': 'SAT INT', 'receive_sat_external': 'SAT EXT'}
 
@@ -35,20 +37,23 @@ class WarehouseThread(QThread):
     record_updated = Signal(str, str)
     waiting = Signal(str)
 
-    def __init__(self, items, action, journal_path, parent=None, *, details=None):
+    def __init__(self, items, action, journal_path, parent=None, *, details=None, recoveries=None, previous_results=()):
         super().__init__(parent)
         self.items, self.action = items, action
         self.stop_requested = Event()
         self.journal_path = journal_path
         self.details = dict(details or {})
+        self.recoveries = recoveries
+        self.previous_results = tuple(previous_results)
 
     def run(self):
         try:
-            from warehouse_transport import run_live, FINAL_STATES
+            from warehouse_transport import run_live, reverify_pending, FINAL_STATES
             from db import apply_warehouse_status
             from warehouse_diagnostics import WarehouseJournal
             from version import APP_VERSION
-            recorded = {}
+            recorded = dict(enumerate(self.previous_results))
+            store = RecoveryStore(self.journal_path.parent, origin_report=self.journal_path.stem.removesuffix('-events')+'-result.json')
             self.journal_path.parent.mkdir(parents=True, exist_ok=True)
             with self.journal_path.open('a', encoding='utf-8') as stream:
                 journal = WarehouseJournal(stream, self.journal_path.stem.removesuffix('-events'))
@@ -57,28 +62,60 @@ class WarehouseThread(QThread):
                          'item_count':len(self.items),'ots':[item.ot for item in self.items]})
                 logging.info('Almacén lote %s: %s, %d OT. Diagnóstico: %s',
                              journal.batch_id,self.action,len(self.items),self.journal_path)
+                saved = set()
                 def progress(index, result):
-                    if result.status == 'success':
+                    if result.status in ('success','already_done'):
+                        key = (result.operation_id, result.item.ot, result.verified_status)
                         try:
                             if result.verified_status != FINAL_STATES[self.action]:
                                 raise RuntimeError('Falta el estado final verificado de Maximo.')
-                            tracking = LOCAL_TRACKING[self.action]
-                            if not apply_warehouse_status(result.item.ot, tracking):
-                                raise RuntimeError('La OT no existe en la base de datos local.')
-                            journal({'ot': result.item.ot, 'local_tracking': tracking, 'local_status_saved': True})
-                            self.record_updated.emit(result.item.ot, tracking)
+                            if key not in saved:
+                                if result.operation_id:
+                                    current = store.get(result.item.ot)
+                                    if (not current or current['operation_id'] != result.operation_id or
+                                            current['action'] != self.action or
+                                            current.get('verified_status') != result.verified_status):
+                                        raise RuntimeError('La evidencia pendiente ha cambiado; vuelve a abrir la revisión.')
+                                tracking = LOCAL_TRACKING[self.action]
+                                error = None
+                                for attempt in range(2):
+                                    try:
+                                        journal({'event':'local_sync_attempt','ot':result.item.ot,'attempt':attempt+1,
+                                                 'operation_id':result.operation_id})
+                                        if not apply_warehouse_status(result.item.ot, tracking):
+                                            raise RuntimeError('La OT no existe en la base de datos local.')
+                                        error = None; break
+                                    except Exception as exc:
+                                        error = exc
+                                if error is not None: raise error
+                                journal({'ot': result.item.ot, 'local_tracking': tracking, 'local_status_saved': True,
+                                         'operation_id':result.operation_id})
+                                record = store.get(result.item.ot)
+                                if record and record['operation_id'] == result.operation_id:
+                                    store.update_report(record, replace(result, local_status_saved=True))
+                                    store.complete(record)
+                                saved.add(key)
+                                self.record_updated.emit(result.item.ot, tracking)
+                            result = replace(result, local_status_saved=True)
                         except Exception as exc:
                             log_exception('Operación verificada, pero falló la actualización local de %s', result.item.ot)
                             journal({'event':'local_status_error','ot':result.item.ot,'action':self.action,
-                                     'error_type':type(exc).__name__,'message':sanitize(str(exc))})
-                            result = replace(result, detail=result.detail +
-                                ' Operación verificada en Maximo; no se pudo actualizar la copia local. Actualiza el listado.')
+                                     'error_type':type(exc).__name__,'message':sanitize(str(exc)),
+                                     'operation_id':result.operation_id})
+                            result = replace(result, local_status_saved=False, detail=result.detail +
+                                ' Verificada en Maximo; pendiente de guardar en la copia local de MD. Usa Reverificar para reintentar solo el guardado.')
                     recorded[index] = result
                     self.progress.emit(index, result)
-                results = run_live(self.items, self.action, stop=self.stop_requested,
-                                   progress=progress, journal=journal, details=self.details,
-                                   job_label=ACTIONS[self.action].label, job_waiting=self.waiting.emit,
-                                   job_cancel_event=self.stop_requested)
+                options = dict(stop=self.stop_requested, journal=journal, recovery_store=store,
+                               job_label=('Reverificar: ' if self.recoveries is not None else '')+ACTIONS[self.action].label,
+                               job_waiting=self.waiting.emit, job_cancel_event=self.stop_requested)
+                if self.recoveries is None:
+                    results = run_live(self.items, self.action, progress=progress, details=self.details, **options)
+                else:
+                    positions = {item.ot:index for index,item in enumerate(self.items)}
+                    recovered = reverify_pending(self.recoveries,
+                        progress=lambda index,result: progress(positions[result.item.ot],result), **options)
+                    results = tuple(recorded.get(index, WarehouseResult(item)) for index,item in enumerate(self.items))
                 results = tuple(recorded.get(index, result) for index, result in enumerate(results))
                 journal({'event':'batch_finished','action':self.action,'counts':dict(Counter(r.status for r in results)),
                          'stop_requested':self.stop_requested.is_set()})
@@ -90,7 +127,7 @@ class WarehouseThread(QThread):
 
 class WarehouseBatchDialog(QDialog):
     record_updated = Signal(str, str)
-    def __init__(self, items, action, open_ot, parent=None, report_folder=None, *, ask_sat_details=False):
+    def __init__(self, items, action, open_ot, parent=None, report_folder=None, *, ask_sat_details=False, recovery_only=False):
         super().__init__(parent)
         from warehouse_transport import FINAL_STATES
         if action not in FINAL_STATES:
@@ -103,6 +140,7 @@ class WarehouseBatchDialog(QDialog):
         self.report_path = None
         self._worker = None
         self._has_started = False
+        self.recovery_only = recovery_only
         self.details_inputs = {}
         self.setWindowTitle(f'Almacén · {ACTIONS[action].label}')
         self.resize(1000, 650)
@@ -113,6 +151,8 @@ class WarehouseBatchDialog(QDialog):
         layout.addWidget(title)
         banner = QLabel('Se ejecutarán operaciones reales con la cuenta de almacén. '
                         'Revisa la acción y las OTs antes de confirmar. Se comprobará su estado en Maximo.')
+        if recovery_only:
+            banner.setText('Solo se consultarán resultados pendientes o se reintentará su guardado local. No se ejecutará Enrutar ni Aceptar.')
         banner.setWordWrap(True)
         banner.setObjectName('filterHint')
         layout.addWidget(banner)
@@ -136,7 +176,7 @@ class WarehouseBatchDialog(QDialog):
                     cell.setToolTip('Abrir esta OT en Edge para revisión manual. No ejecuta acciones de almacén.')
                 self.table.setItem(index, column, cell)
         layout.addWidget(self.table, 1)
-        if ask_sat_details and action in ('receive_sat_internal', 'receive_sat_external'):
+        if not recovery_only and ask_sat_details and action in ('receive_sat_internal', 'receive_sat_external'):
             self.table.setColumnCount(7)
             self.table.setHorizontalHeaderItem(6, QTableWidgetItem('Detalles SAT (opcional)'))
             for row, item in enumerate(self.items):
@@ -161,7 +201,10 @@ class WarehouseBatchDialog(QDialog):
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
         buttons = QHBoxLayout()
-        self.start_button = QPushButton('Revisar y ejecutar…', objectName='primary')
+        self.start_button = QPushButton('Reverificar (solo consulta)' if recovery_only else 'Revisar y ejecutar…', objectName='primary')
+        self.recheck_button = QPushButton('Reverificar pendientes')
+        self.recheck_button.setEnabled(False)
+        self.recheck_button.clicked.connect(self.start_reverification)
         self.stop_button = QPushButton('Detener después de esta OT')
         self.stop_button.setEnabled(False)
         self.close_button = QPushButton('Cerrar')
@@ -169,7 +212,7 @@ class WarehouseBatchDialog(QDialog):
         self.stop_button.clicked.connect(self.request_stop)
         self.close_button.clicked.connect(self.close)
         buttons.addStretch()
-        for button in (self.stop_button, self.close_button, self.start_button):
+        for button in (self.recheck_button, self.stop_button, self.close_button, self.start_button):
             buttons.addWidget(button)
         layout.addLayout(buttons)
         self._sync_table_palette()
@@ -184,7 +227,7 @@ class WarehouseBatchDialog(QDialog):
         colors = self._status_colors()
         for row, result in enumerate(self.results):
             if result.status in colors:
-                self.table.item(row, 4).setForeground(QColor(colors[result.status]))
+                self.table.item(row, 4).setForeground(QColor(colors['uncertain' if result.local_status_saved is False else result.status]))
 
     def _status_colors(self):
         return (STATUS_COLORS_DARK if self.current_step.palette().color(QPalette.WindowText).lightness() > 128
@@ -199,26 +242,46 @@ class WarehouseBatchDialog(QDialog):
         return self._worker is not None and self._worker.isRunning()
 
     def start_operation(self):
-        if self._has_started:
+        if self._has_started or self.is_running():
+            return
+        if self.recovery_only:
+            self.start_reverification()
             return
         if QMessageBox.question(self, 'Confirmar operación real',
                 f'{ACTIONS[self.action].label}\n\nOTs: ' + ', '.join(i.ot for i in self.items) +
                 '\n\nSe ejecutará en Maximo. Esta operación puede ser irreversible. ¿Continuar?',
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
+        self._launch_worker()
+
+    def start_reverification(self):
+        if self.is_running(): return
+        try:
+            records = [r for r in RecoveryStore(self.report_folder).pending()
+                       if r['action'] == self.action and r['item']['ot'] in {i.ot for i in self.items}]
+        except Exception as exc:
+            QMessageBox.warning(self, 'Recuperación', str(exc)); return
+        if not records:
+            QMessageBox.information(self, 'Recuperación', 'No hay operaciones pendientes de este lote.'); return
+        self._launch_worker(records)
+
+    def _launch_worker(self, recoveries=None):
         lock = getattr(self.parent(), 'update_lock', None)
         if lock is not None and not lock.acquire(False):
             QMessageBox.information(self, 'Almacén', 'Hay otra tarea de Maximo en curso. Inténtalo al terminar.')
             return
         self._has_started = True
         self.start_button.setEnabled(False)
-        self.start_button.setText('Proceso en curso')
+        self.start_button.setText('Reverificando…' if recoveries is not None else 'Proceso en curso')
+        self.recheck_button.setEnabled(False)
         details = {ot: entry.text().strip() for ot, entry in self.details_inputs.items()}
         for entry in self.details_inputs.values():
             entry.setEnabled(False)
         self.stop_button.setEnabled(True)
+        journal_id = self.batch_id if recoveries is None else self.batch_id+'-recheck-'+uuid4().hex
         self._worker = WarehouseThread(self.items, self.action,
-            self.report_folder / f'{self.batch_id}-events.jsonl', self, details=details)
+            self.report_folder / f'{journal_id}-events.jsonl', self, details=details,
+            recoveries=recoveries, previous_results=self.results if recoveries is not None else ())
         self._worker.progress.connect(self._progress)
         self._worker.waiting.connect(self.current_step.setText)
         self._worker.record_updated.connect(self.record_updated)
@@ -239,15 +302,15 @@ class WarehouseBatchDialog(QDialog):
         self.results[index] = result
         self.table.item(index, 3).setText(result.step)
         outcome = self.table.item(index, 4)
-        outcome.setText(STATUS_LABELS[result.status])
+        outcome.setText('Verificada; guardado pendiente' if result.local_status_saved is False else STATUS_LABELS[result.status])
         if result.status in STATUS_COLORS:
-            outcome.setForeground(QColor(self._status_colors()[result.status]))
-            icon = {'success': QStyle.SP_DialogApplyButton, 'failed': QStyle.SP_DialogCancelButton,
+            outcome.setForeground(QColor(self._status_colors()['uncertain' if result.local_status_saved is False else result.status]))
+            icon = {'success': QStyle.SP_DialogApplyButton, 'already_done': QStyle.SP_DialogApplyButton, 'failed': QStyle.SP_DialogCancelButton,
                     'uncertain': QStyle.SP_MessageBoxWarning}[result.status]
             outcome.setIcon(self.style().standardIcon(icon))
         self.table.item(index, 5).setText(result.detail)
         self.table.item(index, 5).setToolTip(result.detail)
-        processed = sum(r.status in ('success', 'failed', 'uncertain') for r in self.results)
+        processed = sum(r.status in ('success', 'already_done', 'failed', 'uncertain') for r in self.results)
         self.progress_bar.setValue(processed)
         if result.status == 'running':
             self.current_step.setText(f'OT {result.item.ot} · {result.step}')
@@ -258,12 +321,19 @@ class WarehouseBatchDialog(QDialog):
         self.results = list(results)
         counts = Counter(result.status for result in results)
         self.current_step.setText('Proceso finalizado. Revisa el resultado de cada OT.')
-        self.summary.setText(f'{counts["success"]} verificadas · {counts["failed"]} fallidas · '
-                             f'{counts["uncertain"]} pendientes de verificar · {counts["stopped"]} sin procesar.')
+        local_pending = sum(r.local_status_saved is False for r in results)
+        self.summary.setText(f'{counts["success"]} verificadas · {counts["already_done"]} ya completadas · {counts["failed"]} fallidas · '
+                             f'{counts["uncertain"]} pendientes de verificar · {local_pending} guardados pendientes · {counts["stopped"]} sin procesar.')
+        try:
+            self.recheck_button.setEnabled(any(r['action']==self.action and r['item']['ot'] in {i.ot for i in self.items}
+                for r in RecoveryStore(self.report_folder).pending()))
+        except Exception:
+            log_exception('No se pudo leer la recuperación pendiente')
         self.stop_button.setEnabled(False)
         self.start_button.setText('Proceso finalizado')
         self.report_path = self.report_folder / f'{self.batch_id}-result.json'
-        self.summary.setToolTip(f'Reporte: {self.report_path}\nDiagnóstico: {self.report_folder / (self.batch_id + "-events.jsonl")}')
+        diagnostic = self._worker.journal_path if self._worker is not None else self.report_folder / (self.batch_id+'-events.jsonl')
+        self.summary.setToolTip(f'Reporte: {self.report_path}\nDiagnóstico: {diagnostic}')
         try:
             self.report_folder.mkdir(parents=True, exist_ok=True)
             self.report_path.write_text(json.dumps({'simulation': False, 'batch_id': self.batch_id,
@@ -349,3 +419,36 @@ class WarehouseWindowMixin:
 
     def warehouse_is_running(self):
         return any(dialog.is_running() for dialog in getattr(self, '_warehouse_dialogs', []))
+
+    def open_warehouse_recovery(self):
+        if not getattr(self.cfg, 'warehouse_enabled', False) or getattr(self, '_closing', False): return
+        try:
+            records = RecoveryStore().pending()
+        except Exception as exc:
+            QMessageBox.warning(self, 'Recuperación de almacén', str(exc)); return
+        if not records:
+            QMessageBox.information(self, 'Recuperación de almacén', 'No hay operaciones pendientes.'); return
+        groups = {action:[r for r in records if r['action']==action] for action in ACTIONS}
+        groups = {action:values for action,values in groups.items() if values}
+        action = next(iter(groups))
+        if len(groups)>1:
+            labels = {f'{ACTIONS[a].label} · {len(v)} OT':a for a,v in groups.items()}
+            selected,ok = QInputDialog.getItem(self,'Recuperación de almacén','Acción pendiente:',list(labels),0,False)
+            if not ok:return
+            action = labels[selected]
+        dialogs = getattr(self, '_warehouse_dialogs', [])
+        if any(d.is_running() for d in dialogs):
+            QMessageBox.information(self,'Almacén','Espera a que termine la operación activa.');return
+        dialog = WarehouseBatchDialog([recovery_item(r) for r in groups[action]],action,self.open_ot_number,self,recovery_only=True)
+        if hasattr(self,'warehouse_row_updated'):dialog.record_updated.connect(self.warehouse_row_updated)
+        self._warehouse_dialogs = [*dialogs,dialog];dialog.show()
+
+    def offer_warehouse_recovery(self):
+        if not getattr(self.cfg,'warehouse_enabled',False) or getattr(self,'_closing',False):return
+        try:count = len(RecoveryStore().pending())
+        except Exception:
+            log_exception('No se pudo consultar la recuperación de almacén');return
+        if count and QMessageBox.question(self,'Operaciones pendientes',
+            f'Hay {count} operaciones de almacén pendientes de verificar o guardar. ¿Abrir su revisión? No se reenviarán acciones.',
+            QMessageBox.Yes|QMessageBox.No,QMessageBox.No)==QMessageBox.Yes:
+            self.open_warehouse_recovery()
