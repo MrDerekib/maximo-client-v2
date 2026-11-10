@@ -33,6 +33,7 @@ from failure_picker import FailurePathPicker
 from warehouse_ui import WarehouseWindowMixin
 from task_priorities import coordinator, JobCounter, AUTOMATIC, MANUAL, HIGH
 from priority_notices import PriorityNotices
+from update_status import UpdateStatusBar
 from workorder_selection import WorkorderSelection, prepare_row_context_selection
 from db import (
     apply_started_workorder, apply_closed_repair,
@@ -819,7 +820,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.pages.addWidget(self._build_settings_page())
         layout.addWidget(self.pages, 1)
         self.setCentralWidget(root)
-        self.status = QStatusBar()
+        self.status = UpdateStatusBar()
+        self._priority_notices.event_received.connect(self.status.handle_job_event)
         self.status.showMessage("Listo para consultar la base local.")
         self.setStatusBar(self.status)
 
@@ -1979,9 +1981,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             return
         if self._closing or not self._credentials_ready() or not self.update_lock.acquire(False): return
         self._list_update_pending = True
-        self.status.showMessage("Actualizando listado desde Maximo…" if not automatic else "Actualización automática en curso…")
+        self.status.begin_progress()
         def done(result):
             self._list_update_pending = False
+            self.status.finish_progress()
             self.update_lock.release(); new, changed = result; self.refresh_choices(); self.refresh_table(); self._refresh_reconciliation_summary()
             sync_summary = (
                 f"Última sincronización de Maximo ({datetime.now().strftime('%H:%M')}): "
@@ -1997,11 +2000,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             )
         def failed(error):
             self._list_update_pending = False
+            self.status.finish_progress()
             self.update_lock.release()
             if not self._closing:
                 QMessageBox.critical(self, "Actualización", f"No se pudo actualizar:\n{error}")
             self.status.showMessage("La actualización falló.")
-        self._start_task(lambda: run_update(headless=True, job_priority=AUTOMATIC if automatic else MANUAL), done, failed, coordinated=True)
+        self._start_task(lambda progress: run_update(headless=True,
+            job_priority=AUTOMATIC if automatic else MANUAL, progress_callback=progress), done, failed,
+            progress=lambda _completed, _total, phase: self.status.update_progress(phase), coordinated=True)
 
     def start_background_reconcile(self, sync_summary=None, after=None):
         if self._closing:

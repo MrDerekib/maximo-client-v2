@@ -7,6 +7,7 @@
 - Los lotes de almacén comprueban de nuevo los resultados inciertos sin repetir la operación.
 - Puedes revisar y recuperar operaciones pendientes incluso después de reiniciar MD.
 - Tabla más fluida: menos reconstrucciones al actualizar, limpiar filtros y cambiar de tema.
+- La actualización del listado muestra su fase y tiempo transcurrido, recuperando el aviso tras otros mensajes.
 - Menor uso de hilos internos de cálculo y más información para diagnosticar incidencias de almacén.
 
 ### Recuperación de operaciones de almacén
@@ -32,6 +33,18 @@
 - Más evidencias por OT para diagnóstico y recuperación, sin guardar credenciales,
   tokens ni el texto de los detalles SAT. Los nuevos registros de recuperación se
   aplican a las operaciones realizadas con esta versión; no importan lotes antiguos.
+
+### Progreso de actualización
+
+- La actualización manual y automática mantienen un aviso con la fase real y el
+  tiempo transcurrido: inicio de sesión, exportación y descarga, procesamiento y
+  guardado. No se muestra un porcentaje estimado sin datos que lo respalden.
+- Los avisos de otras acciones tienen preferencia temporal; al desaparecer se
+  recupera la fase más reciente de la actualización. También se muestra si está
+  esperando o pausada por una acción prioritaria.
+- Corregida la desaparición del estado a los siete segundos al sustituirlo un
+  aviso temporal del coordinador de tareas. El seguimiento se detiene al completar
+  la actualización o fallar y deja visible su resultado.
 
 ### Rendimiento y visualización de la tabla
 
