@@ -799,6 +799,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._restore_column_widths()
         QTimer.singleShot(0, self._fit_columns_to_viewport)
         self.schedule_auto_update()
+        QTimer.singleShot(1800, self.offer_warehouse_recovery)
         # La consulta no bloquea el inicio; si hay una versión nueva, ofrece
         # instalarla una sola vez por sesión.
         if not WAREHOUSE_DEVELOPMENT_MODE:
@@ -1372,6 +1373,11 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             "Muestra un campo opcional por OT en la revisión del lote. "
             "Desactivado: se deja Detalles vacío; no se inventa una justificación.")
         warehouse_layout.addWidget(self.warehouse_details_check)
+        self.warehouse_recovery_button = QPushButton("Revisar operaciones pendientes…")
+        self.warehouse_recovery_button.clicked.connect(self.open_warehouse_recovery)
+        self.warehouse_recovery_button.setEnabled(self.cfg.warehouse_enabled)
+        self.warehouse_check.toggled.connect(self.warehouse_recovery_button.setEnabled)
+        warehouse_layout.addWidget(self.warehouse_recovery_button)
         warehouse_hint = QLabel("Muestra las acciones de recepción y salida en el menú contextual. "
                                "Ejecuta las acciones validadas en segundo plano tras revisar y confirmar las OTs. "
                                "Las opciones pendientes de validación permanecen deshabilitadas.")

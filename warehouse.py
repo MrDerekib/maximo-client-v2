@@ -16,6 +16,8 @@ ACTIONS = {
     'receive_sat_external': WarehouseAction('Confirmar y enviar a SAT Externo', 'Confirmar y enviar a SAT Externo', 'WAPPR'),
     'dispatch': WarehouseAction('Dar salida del almacén', 'Dar salida activo del almacén', 'ISSUE'),
 }
+FINAL_STATES = {'receive': 'APPR', 'dispatch': 'CLOSE',
+                'receive_sat_external': 'ISSUE', 'receive_sat_internal': 'ISSUE'}
 RECEIPT_ACTIONS = ('receive', 'reject_receive', 'receive_sat_internal', 'receive_sat_external')
 STEPS = ('Abrir ficha', 'Comprobar OT y estado', 'Seleccionar acción',
          'Confirmar acción', 'Verificar resultado')
@@ -45,6 +47,8 @@ class WarehouseResult:
     detail: str = ''
     completed_steps: int = 0
     verified_status: str = ''
+    operation_id: str = ''
+    local_status_saved: bool | None = None
 
 
 def freeze_items(items):

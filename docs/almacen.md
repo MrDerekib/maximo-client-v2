@@ -134,3 +134,11 @@ sustituyen el transporte por mocks y no operan sobre equipos.
 Los trabajos de MD usan el [coordinador de prioridades](prioridades.md): aviso visible
 de espera, cesión al terminar la OT actual y reanudación posterior. Las acciones
 de la extensión permanecen independientes.
+
+## Recuperación ante respuesta incierta
+
+La rama experimental incorpora [recuperación de lotes](almacen-recuperacion.md):
+registro persistente antes de enrutar, segunda pasada de consulta, reverificación
+manual y recuperación del guardado local. No reenvía confirmaciones inciertas.
+La documentación enlazada recoge la cobertura de simulaciones y los límites de
+validación; todavía no se han ejecutado operaciones reales con estos cambios.

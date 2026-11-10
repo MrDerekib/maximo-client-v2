@@ -7,18 +7,18 @@ import re
 import time
 import traceback
 from threading import Event
+from selenium.common.exceptions import WebDriverException, TimeoutException
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 
 import maximo_client as client
-from warehouse import ACTIONS, WarehouseResult, freeze_items
+from warehouse import ACTIONS, FINAL_STATES, WarehouseResult, freeze_items
 from workorder_start import WorkorderStarter, normalized
 from warehouse_diagnostics import sanitize, log_exception
+from warehouse_recovery import RecoveryStore, recovery_item, PendingOperationError
 
-FINAL_STATES = {'receive': 'APPR', 'dispatch': 'CLOSE',
-                'receive_sat_external': 'ISSUE', 'receive_sat_internal': 'ISSUE'}
 SAT_ACTIONS = {'receive_sat_external': 'SAT Externo', 'receive_sat_internal': 'SAT Interno'}
 
 
@@ -218,132 +218,234 @@ class WarehouseSession:
                 self.reader.idle()
 
 
-@scheduled("Operaciones de almacén", HIGH)
-def run_live(items, action, *, stop=None, progress=None, journal=None, details=None, session_factory=WarehouseSession):
-    """Sequential single-submit batches. No final confirmation is ever retried."""
+
+def default_recovery_store():
+    return RecoveryStore()
+
+
+def _close_session(session):
+    if session is not None:
+        try:
+            session.close()
+        except Exception:
+            log_exception('No se pudo cerrar la sesión de almacén')
+
+
+def _identity(session, item):
+    identity = session.identity()
+    if (not isinstance(identity, dict) or not identity.get('Activo') or not identity.get('Planta') or
+            not isinstance(identity.get('Nº de serie'), str)):
+        raise RuntimeError('No se pudo identificar de forma fiable el equipo y su planta.')
+    if item.serial and str(identity.get('Nº de serie') or '').strip() != item.serial.strip():
+        raise RuntimeError('El número de serie de la ficha no coincide con la OT seleccionada.')
+    return identity
+
+
+def _recover_one(record, store, session_factory, journal, stop, attempts=2):
+    item = recovery_item(record); action = record['action']
+    result = WarehouseResult(item, status='uncertain', step='Reverificar resultado',
+                             completed_steps=4, operation_id=record['operation_id'])
+    try:
+        current = store.get(item.ot)
+        if not current or current['operation_id'] != record['operation_id']:
+            return replace(result, detail='El registro pendiente ha cambiado o ya se resolvió. Vuelve a abrir la revisión.')
+        record = current
+    except Exception as exc:
+        return replace(result, detail='No se pudo comprobar el registro pendiente: '+sanitize(str(exc))[:400])
+    if stop.is_set():
+        return replace(result, detail='Reverificación detenida; la operación sigue pendiente.')
+    if record.get('verified_status') == FINAL_STATES[action]:
+        journal({'event':'local_recovery_only','ot':item.ot,'action':action,'operation_id':record['operation_id']})
+        return replace(result, status='success', step='Estado local pendiente', completed_steps=5,
+                       verified_status=record['verified_status'], detail='Resultado ya verificado; solo se reintentará guardar en MD.')
+    for attempt in range(attempts):
+        if stop.is_set():
+            return replace(result, detail='Reverificación detenida; la operación sigue pendiente.')
+        session = None
+        try:
+            coordinator.checkpoint('Reverificación de almacén', item.ot, attempt, attempts)
+            journal({'event':'recheck_started','ot':item.ot,'action':action,'attempt':attempt+1,
+                     'operation_id':record['operation_id'],'confirmation_replayed':False})
+            session = session_factory()
+            actual = session.open(item.ot)
+            identity = _identity(session, item)
+            journal({'event':'recheck_observed','ot':item.ot,'action':action,'actual_state':actual,
+                     'identity':identity,'operation_id':record['operation_id']})
+            if identity != record['identity']:
+                raise RuntimeError('La identidad no coincide con la registrada antes del envío.')
+            if actual != FINAL_STATES[action]:
+                raise RuntimeError(f'Estado actual {actual}; todavía no se confirma {FINAL_STATES[action]}.')
+            final = session.verify(item.ot, FINAL_STATES[action], identity)
+            if final != FINAL_STATES[action]:
+                raise RuntimeError('La consulta no confirmó el estado final solicitado.')
+            if action in SAT_ACTIONS:
+                before = record.get('history_before')
+                if type(before) is not int or before < 0:
+                    raise RuntimeError('Falta la evidencia de historial previa al envío SAT; requiere revisión manual.')
+                after = session.history_count(ACTIONS[action].native_label)
+                journal({'event':'recheck_history','ot':item.ot,'action':action,'before':before,'after':after})
+                if after <= before:
+                    raise RuntimeError('No hay una nueva entrada de la acción SAT solicitada.')
+            store.update(record, 'verified', verified_status=final)
+            journal({'event':'recheck_verified','ot':item.ot,'action':action,'actual_state':final,
+                     'operation_id':record['operation_id'],'confirmation_replayed':False})
+            return replace(result, status='success', step='Operación verificada', completed_steps=5,
+                           verified_status=final, detail=f'Reverificada desde una sesión independiente: {final}.')
+        except Exception as exc:
+            message = sanitize(str(exc)).split('Stacktrace:')[0][:600]
+            journal({'event':'recheck_pending','ot':item.ot,'action':action,'attempt':attempt+1,
+                     'error_type':type(exc).__name__,'message':message,'operation_id':record['operation_id']})
+            result = replace(result, detail=message+' No se ha repetido la operación.')
+        finally:
+            _close_session(session)
+    return result
+
+
+@scheduled('Reverificar operaciones de almacén', HIGH)
+def reverify_pending(records, *, recovery_store=None, stop=None, progress=None, journal=None,
+                     session_factory=WarehouseSession):
+    store = recovery_store or default_recovery_store()
+    stop, progress = stop or Event(), progress or (lambda i,r: None)
+    journal = journal or (lambda e: logging.info('Almacén recuperación: %s', json.dumps(e,ensure_ascii=False)))
+    results=[]
+    for index, record in enumerate(records):
+        progress(index, WarehouseResult(recovery_item(record), status='running', step='Reverificando sin reenviar',
+                                       operation_id=record['operation_id'], completed_steps=4))
+        result = _recover_one(record, store, session_factory, journal, stop)
+        results.append(result); progress(index,result)
+    return tuple(results)
+
+
+@scheduled('Operaciones de almacén', HIGH)
+def run_live(items, action, *, stop=None, progress=None, journal=None, details=None,
+             session_factory=WarehouseSession, recovery_store=None, auto_recheck=True):
+    """Retry reads before routing; after any possible effect, only query the result."""
     if action not in FINAL_STATES:
         raise ValueError('Esta acción todavía no está validada para ejecución real.')
-    items = freeze_items(items)
-    details = {str(ot): str(text).strip() for ot, text in (details or {}).items()}
-    stop, progress = stop or Event(), progress or (lambda i, r: None)
-    journal = journal or (lambda entry: logging.info('Almacén: %s', json.dumps(entry, ensure_ascii=False)))
-    results, session = [], None
+    items=freeze_items(items);store=recovery_store or default_recovery_store()
+    details={str(ot):str(text).strip() for ot,text in (details or {}).items()}
+    stop,progress=stop or Event(),progress or (lambda i,r:None)
+    journal=journal or (lambda e:logging.info('Almacén: %s',json.dumps(e,ensure_ascii=False)))
+    results=[]; session=None
     try:
-        for index, item in enumerate(items):
-            def retire_session():
+        for index,item in enumerate(items):
+            def retire():
                 nonlocal session
-                if session is not None:
-                    try: session.close()
-                    finally: session = None
-            coordinator.checkpoint(ACTIONS[action].label, item.ot, index, len(items), on_pause=retire_session)
-            started = time.monotonic()
-            stage_started = started
-            result, submitted, routed = WarehouseResult(item), False, False
+                old=session;session=None;_close_session(old)
+            coordinator.checkpoint(ACTIONS[action].label,item.ot,index,len(items),on_pause=retire)
+            started=time.monotonic();result=WarehouseResult(item);submitted=routed=False;record=None
             journal({'event':'ot_started','ot':item.ot,'action':action,'position':index+1,'total':len(items),
                      'cached_status':item.status,'expected_initial_state':ACTIONS[action].initial_status,
                      'expected_final_state':FINAL_STATES[action],'has_details':bool(details.get(item.ot,''))})
-            def step(name, count):
-                nonlocal result, stage_started
-                now = time.monotonic()
+            def step(name,count):
+                nonlocal result
+                result=replace(result,status='running',step=name,completed_steps=count)
+                progress(index,result)
                 journal({'event':'step_changed','ot':item.ot,'action':action,'step':name,
-                         'previous_step':result.step,'previous_step_seconds':round(now-stage_started,3),
-                         'elapsed_seconds':round(now-started,3)})
-                stage_started = now
-                result = replace(result, status='running', step=name, completed_steps=count)
-                progress(index, result)
-                journal({'ot': item.ot, 'action': action, 'step': name})
-            try:
-                if stop.is_set():
-                    result = replace(result, status='stopped', detail='Detenida antes de comenzar.')
-                else:
-                    step('Abrir ficha', 0)
-                    if session is None:
-                        session = session_factory()
-                        journal({'event':'session_created','ot':item.ot,'action':action})
-                    else:
-                        journal({'event':'session_reused','ot':item.ot,'action':action})
-                    actual = session.open(item.ot)
+                         'elapsed_seconds':round(time.monotonic()-started,3)})
+            for attempt in range(2):
+                try:
+                    if stop.is_set():
+                        result=replace(result,status='stopped',detail='Detenida antes de comenzar.');break
+                    existing=store.get(item.ot)
+                    if existing:
+                        result=replace(result,status='uncertain',step='Operación anterior pendiente',
+                            detail='Esta OT tiene una operación pendiente. Usa Reverificar; no se enviará otra acción.')
+                        journal({'event':'duplicate_blocked','ot':item.ot,'action':action,
+                                 'pending_action':existing['action'],'operation_id':existing['operation_id']})
+                        break
+                    step('Abrir ficha',0)
+                    if session is None:session=session_factory()
+                    actual=session.open(item.ot)
                     journal({'event':'live_status_read','ot':item.ot,'action':action,'actual_state':actual})
-                    step('Comprobar OT y estado', 1)
-                    if actual != ACTIONS[action].initial_status:
+                    step('Comprobar OT y estado',1)
+                    identity=_identity(session,item)
+                    if actual==FINAL_STATES[action] and action not in SAT_ACTIONS:
+                        final=session.verify(item.ot,FINAL_STATES[action],identity)
+                        if final != FINAL_STATES[action]:raise RuntimeError('No se confirmó el estado final.')
+                        record=store.begin(item,action,identity,actual,verified_status=final)
+                        result=replace(result,status='already_done',step='Ya estaba completada',completed_steps=5,
+                            verified_status=final,operation_id=record['operation_id'],
+                            detail=f'La OT ya estaba en {final}; no se ha enviado ninguna acción.')
+                        journal({'event':'already_completed','ot':item.ot,'action':action,'actual_state':final})
+                        break
+                    if actual!=ACTIONS[action].initial_status:
                         raise RuntimeError(f'Estado real {actual}; se requiere {ACTIONS[action].initial_status}.')
-                    identity = session.identity()
-                    prior_history = session.history_count(ACTIONS[action].native_label) if action in SAT_ACTIONS else None
-                    journal({'ot': item.ot, 'action': action, 'initial_state': actual, 'identity': identity})
-                    session.check(actual, identity)
-                    session.reader.reject_dialogs()
-                    step('Seleccionar acción', 2)
-                    routed = True
-                    session.driver.find_element(By.ID, 'ROUTEWF_WO-MAIN_-tbb_image').click()
-                    session.reader.wait(lambda d: bool(session.reader.dialogs()), 'selector de almacén')
-                    session.check(actual, identity)
-                    option = session.choice(ACTIONS[action].native_label)
+                    prior=session.history_count(ACTIONS[action].native_label) if action in SAT_ACTIONS else None
+                    if action in SAT_ACTIONS and (type(prior) is not int or prior<0):
+                        raise RuntimeError('No se pudo leer el historial previo de SAT.')
+                    journal({'ot':item.ot,'action':action,'initial_state':actual,'identity':identity,'history_before':prior})
+                    session.check(actual,identity);session.reader.reject_dialogs()
+                    step('Seleccionar acción',2)
+                    record=store.begin(item,action,identity,actual,prior)
+                    result=replace(result,operation_id=record['operation_id'])
+                    journal({'event':'route_attempt','ot':item.ot,'action':action,'operation_id':record['operation_id']})
+                    routed=True
+                    session.driver.find_element(By.ID,'ROUTEWF_WO-MAIN_-tbb_image').click()
+                    session.reader.wait(lambda d:bool(session.reader.dialogs()),'selector de almacén')
+                    session.check(actual,identity)
+                    option=session.choice(ACTIONS[action].native_label)
                     journal({'event':'option_located','ot':item.ot,'action':action,'option':option})
                     if not option['checked']:
-                        session.driver.find_element(By.ID, option['id']).click()
-                        session.reader.idle()
-                    option = session.choice(ACTIONS[action].native_label)
-                    if not option['checked']:
-                        raise RuntimeError('Maximo no confirmó la selección de la acción.')
-                    journal({'event':'option_selected','ot':item.ot,'action':action,'option':option})
-                    session.check(actual, identity)
-                    step('Confirmar acción', 3)
-                    button = session.accept_button()
-                    journal({'ot': item.ot, 'action': action, 'confirmation': 'sending_once'})
-                    submitted = True
-                    button.click()
+                        session.driver.find_element(By.ID,option['id']).click();session.reader.idle()
+                    option=session.choice(ACTIONS[action].native_label)
+                    if not option['checked']:raise RuntimeError('Maximo no confirmó la selección de la acción.')
+                    session.check(actual,identity);step('Confirmar acción',3)
+                    button=session.accept_button()
+                    record=store.update(record,'confirmation_attempted',confirmation_attempted=True)
+                    journal({'ot':item.ot,'action':action,'confirmation':'sending_once','operation_id':record['operation_id']})
+                    submitted=True;button.click()
                     if action in SAT_ACTIONS:
-                        step('Completar detalles SAT', 3)
-                        session.sat_details(action, details.get(item.ot, ''), actual, identity,
-                            lambda: journal({'ot': item.ot, 'action': action,
-                                'details_confirmation': 'sending_once', 'has_details': bool(details.get(item.ot, ''))}))
-                    step('Verificar resultado', 4)
-                    session.reader.wait(lambda d: session.reader.value('Estado') != actual
-                        or not session.reader.dialogs(), 'respuesta de almacén')
-                    final = session.verify(item.ot, FINAL_STATES[action], identity)
-                    journal({'event':'final_state_verified','ot':item.ot,'action':action,'actual_state':final})
+                        step('Completar detalles SAT',3)
+                        def mark_details():
+                            nonlocal record
+                            record=store.update(record,'details_attempted',details_attempted=True)
+                            journal({'ot':item.ot,'action':action,'details_confirmation':'sending_once','operation_id':record['operation_id']})
+                        session.sat_details(action,details.get(item.ot,''),actual,identity,mark_details)
+                    step('Verificar resultado',4)
+                    session.reader.wait(lambda d:session.reader.value('Estado')!=actual or not session.reader.dialogs(),
+                                        'respuesta de almacén')
+                    final=session.verify(item.ot,FINAL_STATES[action],identity)
+                    if final != FINAL_STATES[action]:raise RuntimeError('No se confirmó el estado final.')
                     if action in SAT_ACTIONS:
-                        after_history = session.history_count(ACTIONS[action].native_label)
-                        journal({'event':'sat_history_checked','ot':item.ot,'action':action,
-                                 'before':prior_history,'after':after_history})
-                        if after_history <= prior_history:
-                            raise RuntimeError('El estado cambió, pero no se confirmó una nueva derivación SAT en el historial.')
-                    result = replace(result, status='success', step='Operación verificada',
-                                     completed_steps=5, verified_status=final,
-                                     detail=f'Estado real: {actual} → {final}.')
-            except Exception as exc:
-                context = None
-                if session is not None:
-                    try:
-                        context = session.diagnostic_context()
-                    except Exception as diagnostic_error:
-                        context = {'unavailable':type(diagnostic_error).__name__}
-                message = sanitize(str(exc))
-                journal({'event':'ot_error','ot':item.ot,'action':action,'step':result.step,
-                         'error_type':type(exc).__name__,'message':message,
-                         'maximo_codes':re.findall(r'BMX[A-Z0-9]+',message),
-                         'traceback':sanitize(traceback.format_exc()),'context':sanitize(context),
-                         'route_attempted':routed,'confirmation_attempted':submitted,
-                         'elapsed_seconds':round(time.monotonic()-started,3)})
-                # Routing can itself advance an assignment. Retire uncertain sessions;
-                # never navigate another OT in a browser with an unresolved submission.
-                result = replace(result, status='uncertain' if submitted or routed else 'failed',
-                                 detail=message.split('Stacktrace:')[0][:600])
-                if session is not None:
-                    try:
-                        session.close()
-                    except Exception:
-                        log_exception('No se pudo cerrar la sesión de almacén')
-                    session = None
+                        after=session.history_count(ACTIONS[action].native_label)
+                        journal({'event':'sat_history_checked','ot':item.ot,'action':action,'before':prior,'after':after})
+                        if after<=prior:raise RuntimeError('No se confirmó una nueva derivación SAT en el historial.')
+                    record=store.update(record,'verified',verified_status=final)
+                    journal({'event':'final_state_verified','ot':item.ot,'action':action,'actual_state':final,'operation_id':record['operation_id']})
+                    result=replace(result,status='success',step='Operación verificada',completed_steps=5,
+                        verified_status=final,operation_id=record['operation_id'],detail=f'Estado real: {actual} → {final}.')
+                    break
+                except Exception as exc:
+                    try:context=session.diagnostic_context() if session is not None else None
+                    except Exception as diagnostic_error:context={'unavailable':type(diagnostic_error).__name__}
+                    message=sanitize(str(exc))
+                    journal({'event':'ot_error','ot':item.ot,'action':action,'step':result.step,
+                        'error_type':type(exc).__name__,'message':message,'traceback':sanitize(traceback.format_exc()),
+                        'maximo_codes':re.findall(r'BMX[A-Z0-9]+',message),'context':sanitize(context),
+                        'route_attempted':routed,'confirmation_attempted':submitted})
+                    retire()
+                    transient=isinstance(exc,(TimeoutError,ConnectionError,WebDriverException)) or message.startswith('Tiempo agotado:')
+                    if not routed and not submitted and record is None and transient and attempt==0:
+                        journal({'event':'preparation_retry','ot':item.ot,'action':action,'attempt':2});continue
+                    result=replace(result,status='uncertain' if routed or submitted or record else 'failed',
+                        detail=message.split('Stacktrace:')[0][:600],operation_id=record['operation_id'] if record else '')
+                    break
             results.append(result)
-            journal({'ot': item.ot, 'action': action, 'outcome': result.status, 'detail': result.detail,
-                     'confirmation_attempted': submitted,'verified_status':result.verified_status,
-                     'elapsed_seconds':round(time.monotonic()-started,3)})
-            progress(index, result)
+            journal({'ot':item.ot,'action':action,'outcome':result.status,'detail':result.detail,
+                     'confirmation_attempted':submitted,'verified_status':result.verified_status,
+                     'operation_id':result.operation_id,'elapsed_seconds':round(time.monotonic()-started,3)})
+            progress(index,result)
+        retire()
+        if auto_recheck and not stop.is_set():
+            for index,result in enumerate(results):
+                if result.status!='uncertain' or not result.operation_id:continue
+                record=store.get(result.item.ot)
+                if record and record['operation_id']==result.operation_id:
+                    journal({'event':'second_pass','ot':result.item.ot,'action':action})
+                    progress(index,replace(result,status='running',step='Reverificando sin reenviar'))
+                    results[index]=_recover_one(record,store,session_factory,journal,stop)
+                    progress(index,results[index])
         return tuple(results)
     finally:
-        if session is not None:
-            try:
-                session.close()
-            except Exception:
-                log_exception('No se pudo cerrar la sesión final de almacén')
+        _close_session(session)
