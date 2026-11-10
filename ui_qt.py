@@ -1,6 +1,9 @@
 """Interfaz de escritorio Qt de Maximo Desktop."""
 from __future__ import annotations
 
+from runtime_limits import configure_numerical_threads
+configure_numerical_threads()
+
 import logging
 import os
 import sys

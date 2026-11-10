@@ -1,3 +1,6 @@
+from runtime_limits import configure_numerical_threads
+configure_numerical_threads()
+
 from task_priorities import coordinator, ReadYield
 # maximo_client.py
 import os
