@@ -81,6 +81,23 @@ muchas celdas; estos resultados no equivalen a virtualizar la tabla.
 Se verificó que configuración y credenciales reales no cambian durante la suite.
 Falta la validación manual con Python visible y una build empaquetada.
 
-Para volver al experimento anterior de OpenBLAS: cerrar dev y ejecutar
-`git switch rendimiento/openblas`. Para volver al código de dev previo a ambos
-experimentos: `git switch dev`. Reiniciar con `./run_dev.ps1` tras cambiar de rama.
+Los experimentos originales se conservan en `rendimiento/openblas` y
+`rendimiento/tabla`. El código previo a ambos corresponde al commit `76bcf6c`;
+`dev` ya incluye las mejoras. Cerrar la app antes de cambiar de rama y reiniciar
+con `./run_dev.ps1`.
+
+## Integración en dev — 10/11/2026
+
+Integrado junto con la recuperación de almacén mediante dos merges separados,
+para permitir revertir cada bloque. Suite conjunta: 356 pruebas, 274 correctas y
+82 de Edge offline omitidas. Configuraciones y credenciales reales sin cambios.
+
+Una comprobación sintética adicional con 5.000 OTs en la rama integrada dio
+13 ms en refresco sin cambios, 424 ms al limpiar filtros y 541 ms al cambiar
+el tema. No se crean ni eliminan filas en el refresco sin cambios ni al cambiar
+el tema. El hash de texto y visibilidad coincide con la referencia anterior.
+Es una muestra de comprobación, no una nueva comparación estadística.
+
+No se ha generado build ni validado esta combinación con operaciones reales.
+La recuperación de almacén continúa pendiente de validación controlada; sus
+pruebas locales y límites están en [almacen-recuperacion.md](almacen-recuperacion.md).
