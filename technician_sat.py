@@ -156,6 +156,59 @@ class TechnicianSatPreparer(WorkorderStarter):
         self._write_text('Resumen', summary)
         return True
 
+    def prepare_route(self):
+        """Wait for the final native tab response, not just its optimistic ARIA flag."""
+        self.require_approved()
+        was_active = self.driver.execute_script("""
+            return [...document.querySelectorAll('a[role=tab]')].some(a=>
+                a.getClientRects().length && a.textContent.trim()==='Orden de trabajo' &&
+                a.getAttribute('aria-expanded')==='true');
+        """)
+        marker = self.response_sequence()
+        response = {'after':marker}
+        self.tab('Orden de trabajo')
+        if not was_active:
+            def completed(_):
+                response['after'] = self.response_sequence()
+                return response['after'] > marker
+            self.wait(completed, 'respuesta de Orden de trabajo antes de enrutar')
+        self.idle()
+        self.require_approved()
+        def ready(_):
+            snapshot = self.driver.execute_script(r"""
+                const visible=e=>e&&e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
+                const norm=t=>String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+                    .replace(/^[ *:]+|[ *:]+$/g,'').toLowerCase();
+                const value=name=>{
+                    const label=[...document.querySelectorAll('label[for]')]
+                        .find(l=>visible(l)&&norm(l.textContent)===name);
+                    const field=label&&document.getElementById(label.htmlFor);
+                    return visible(field)?field.value:null;
+                };
+                const tab=[...document.querySelectorAll('a[role=tab]')].find(a=>
+                    visible(a)&&a.textContent.trim()==='Orden de trabajo');
+                const button=document.getElementById('ROUTEWF_WO-MAIN_-tbb_image');
+                let reachable=false;
+                if(visible(button)){
+                    const r=button.getBoundingClientRect();
+                    const top=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+                    reachable=top===button||button.contains(top);
+                    for(let n=button;n;n=n.parentElement){
+                        if(n.hasAttribute('disabled')||n.getAttribute('aria-disabled')==='true')reachable=false;
+                    }
+                }
+                const result={ot:value('orden de trabajo'),status:value('estado'),
+                    asset:value('activo'),plant:value('planta'),
+                    active_tab:tab?.getAttribute('aria-expanded')==='true',route_reachable:reachable};
+                result.ready=document.readyState==='complete'&&result.active_tab&&reachable&&
+                    result.ot===arguments[0]&&result.status==='APPR'&&Boolean(result.asset)&&Boolean(result.plant);
+                return result;
+            """, self.ot)
+            return snapshot if snapshot['ready'] else False
+        snapshot = self.wait(ready, 'ficha y botón Enrutar listos')
+        return {**snapshot, 'tab_was_active':bool(was_active),
+                'response_before':marker, 'response_after':response['after']}
+
     def prepare(self, plan):
         # Revalidate the complete reviewed input before the first write.
         checked, = reviewed_sat_plans([plan.item], {plan.item.ot: {

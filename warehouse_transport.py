@@ -99,6 +99,7 @@ class WarehouseSession:
             raise RuntimeError('La identidad del equipo ha cambiado.')
 
     def choice(self, caption):
+        self.reader.reject_dialogs(('inputwf-dialog_inner',))
         dialogs = self.reader.dialogs()
         if len(dialogs) != 1 or dialogs[0].get_attribute('id') != 'inputwf-dialog_inner':
             raise RuntimeError('Maximo no muestra el diálogo esperado; requiere revisión.')
@@ -316,7 +317,9 @@ def _recover_one(record, store, session_factory, journal, stop, attempts=2):
             message = sanitize(str(exc)).split('Stacktrace:')[0][:600]
             journal({'event':'recheck_pending','ot':item.ot,'action':action,'attempt':attempt+1,
                      'error_type':type(exc).__name__,'message':message,'operation_id':record['operation_id']})
-            result = replace(result, detail=message+' No se ha repetido la operación.')
+            original = record.get('last_error','')
+            detail = (original+' · Reverificación: ' if original else '')+message+' No se ha repetido la operación.'
+            result = replace(result, detail=detail)
         finally:
             _close_session(session)
     return result
@@ -417,8 +420,10 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                             progress=lambda text: step(text,2))
                         preparer.prepare(plans[item.ot])
                         session.reader = preparer
-                        session.reader.tab('Orden de trabajo')
+                        readiness = preparer.prepare_route()
                         session.check(actual,identity)
+                        journal({'event':'technician_route_ready','ot':item.ot,'action':action,
+                                 'operation_id':record['operation_id'],'readiness':readiness})
                         journal({'event':'technician_preparation_verified','ot':item.ot,'action':action,
                                  'operation_id':record['operation_id']})
                         record=store.update(record,'route_attempted',route_attempted=True)
@@ -429,7 +434,7 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                     journal({'event':'route_attempt','ot':item.ot,'action':action,'operation_id':record['operation_id']})
                     routed=True
                     session.driver.find_element(By.ID,'ROUTEWF_WO-MAIN_-tbb_image').click()
-                    session.reader.wait(lambda d:bool(session.reader.dialogs()),'selector de almacén')
+                    session.reader.wait(lambda d:bool(session.reader.dialogs()),'selector de enrutado')
                     session.check(actual,identity)
                     option=session.choice(ACTIONS[action].native_label)
                     journal({'event':'option_located','ot':item.ot,'action':action,'option':option})
@@ -475,6 +480,12 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                     transient=isinstance(exc,(TimeoutError,ConnectionError,WebDriverException)) or message.startswith('Tiempo agotado:')
                     if not routed and not submitted and record is None and transient and attempt==0:
                         journal({'event':'preparation_retry','ot':item.ot,'action':action,'attempt':2});continue
+                    if record is not None:
+                        try:
+                            record=store.update(record,record['phase'],
+                                last_error=message.split('Stacktrace:')[0][:600])
+                        except Exception:
+                            logging.exception('No se pudo conservar el error original de la OT %s',item.ot)
                     result=replace(result,status='uncertain' if routed or submitted or record else 'failed',
                         detail=message.split('Stacktrace:')[0][:600],operation_id=record['operation_id'] if record else '')
                     break

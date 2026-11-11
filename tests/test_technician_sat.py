@@ -142,6 +142,7 @@ class TechnicianSatPlanTests(TestCase):
                 self.assertFalse(store.get('1')['route_attempted'])
             with patch('technician_sat.TechnicianSatPreparer') as cls:
                 cls.return_value.prepare.side_effect=prepare
+                cls.return_value.prepare_route.return_value={"ready":True}
                 result=run_live([plan.item],'technician_sat_external',technician_plans=[plan],
                     recovery_store=store,session_factory=factory)
             self.assertEqual(result[0].status,'success')
@@ -201,10 +202,69 @@ class TechnicianSatPlanTests(TestCase):
             session.accept_button.return_value.click.side_effect=lambda:server.sent.update(['1'])
             return session
         plan,=reviewed_sat_plans([WarehouseItem('1')],self.values(),default_selection())
-        with temporary_directory() as folder,patch('technician_sat.TechnicianSatPreparer'):
+        with temporary_directory() as folder,patch('technician_sat.TechnicianSatPreparer') as cls:
+            cls.return_value.prepare_route.return_value={'ready':True}
             store=RecoveryStore(Path(folder))
             result=run_live([plan.item],'technician_sat_external',technician_plans=[plan],
                 recovery_store=store,session_factory=factory)
         self.assertEqual(result[0].status,'success')
         self.assertEqual(server.routed['1'],1);self.assertEqual(server.sent['1'],1)
         self.assertEqual(server.details_sent['1'],1)
+
+
+    def test_route_readiness_waits_for_native_response_before_testing_controls(self):
+        from technician_sat import TechnicianSatPreparer
+        p=TechnicianSatPreparer(Mock(),'1',timeout=1)
+        p.require_approved=Mock();p.tab=Mock();p.idle=Mock()
+        events=[]
+        responses=iter((10,10,11))
+        def response():
+            value=next(responses);events.append(('response',value));return value
+        p.response_sequence=Mock(side_effect=response)
+        def execute(script,*args):
+            if not args:return False  # Tab was not active before the click.
+            events.append(('controls',None))
+            return {'ready':True,'ot':'1','status':'APPR','asset':'A','plant':'LAB-BAD',
+                    'active_tab':True,'route_reachable':True}
+        p.driver.execute_script.side_effect=execute
+        result=p.prepare_route()
+        self.assertEqual(result['response_after'],11)
+        self.assertLess(events.index(('response',11)),events.index(('controls',None)))
+        p.tab.assert_called_once_with('Orden de trabajo')
+        p.driver.find_element.assert_not_called()
+
+    def test_route_readiness_does_not_click_when_controls_remain_blocked(self):
+        from technician_sat import TechnicianSatPreparer
+        p=TechnicianSatPreparer(Mock(),'1',timeout=0.1)
+        p.require_approved=Mock();p.tab=Mock();p.idle=Mock()
+        p.response_sequence=Mock(return_value=10)
+        p.driver.execute_script.side_effect=[True,{'ready':False},{'ready':False}]
+        with self.assertRaises(RuntimeError):p.prepare_route()
+        p.driver.find_element.assert_not_called()
+
+    def test_native_bmx_error_is_not_replaced_by_generic_selector_message(self):
+        from warehouse_transport import WarehouseSession
+        from workorder_start import WorkorderStarter
+        reader=WorkorderStarter(Mock(),'1')
+        reader.dialog_snapshot=Mock(return_value=[{'id':'msgbox-dialog_inner',
+            'text':'BMXAA4214E - Se ha producido un error desconocido.'}])
+        session=WarehouseSession.__new__(WarehouseSession);session.reader=reader
+        with self.assertRaisesRegex(RuntimeError,'BMXAA4214E'):
+            session.choice('Enviar a SAT Externo')
+        reader.driver.find_element.assert_not_called()
+
+    def test_failed_reverification_keeps_original_native_error(self):
+        from pathlib import Path
+        from tests.test_support import temporary_directory
+        from tests.test_warehouse_recovery import FakeServer
+        from warehouse_recovery import RecoveryStore
+        from warehouse_transport import reverify_pending
+        server=FakeServer(action='technician_sat_external',states={'1':'APPR'})
+        with temporary_directory() as folder:
+            store=RecoveryStore(Path(folder))
+            record=store.begin(WarehouseItem('1'),'technician_sat_external',
+                {'Activo':'ASSET-1','Nº de serie':'SERIAL-1','Planta':'LAB-BAD'},'APPR',0)
+            record=store.update(record,'route_attempted',last_error='Maximo requiere revisión: BMXAA4214E')
+            result,=reverify_pending([record],recovery_store=store,session_factory=server.session)
+        self.assertIn('BMXAA4214E',result.detail);self.assertIn('APPR',result.detail)
+        self.assertFalse(server.routed);self.assertFalse(server.sent)

@@ -95,3 +95,28 @@ estados incompatibles y recuperación de respuesta perdida. Suite completa:
 configuración y credenciales de producción/dev/almacén conservaron sus hashes.
 El envío real de referencia se realizó por etapas con autorización; el nuevo
 lote completo desde el diálogo de MD queda pendiente de la próxima OT autorizada.
+
+
+## Ajuste antes de la siguiente prueba real
+
+El primer lote desde MD sobre 4431127 guardó y verificó la preparación. Al pulsar
+Enrutar, Maximo mostró un msgbox BMXAA4214E en lugar de Entrada manual. No se llegó
+a seleccionar SAT ni se pulsaron Aceptar/OK. La reverificación observó APPR. El
+usuario pudo continuar manualmente, por lo que el registro no permite atribuir
+la causa a un dato inválido ni demostrar un fallo permanente de Maximo.
+
+Se refuerza la sincronización, sin afirmar que el origen esté confirmado:
+
+- Antes del enrutado técnico, si cambia a Orden de trabajo, esperar una respuesta
+  nativa posterior al cambio; el atributo aria-expanded por sí solo no basta.
+- Comprobar ficha, OT, estado APPR, activo/planta visibles y botón Enrutar accesible
+  antes del clic. Registrar esa evidencia como `technician_route_ready`.
+- Conservar el texto nativo y código BMX de cualquier diálogo inesperado, sin
+  sustituirlos por el error genérico del selector.
+- Mantener el error original también cuando la reverificación solo observa APPR.
+- No descartar avisos desconocidos ni añadir reintentos de la derivación.
+
+Cuatro regresiones nuevas reproducen respuesta tardía, botón bloqueado, aviso BMX
+y conservación del error durante una consulta posterior. Falta contrastar esta
+espera reforzada con una nueva OT autorizada; no se ha repetido la operación en
+las OTs terminadas manualmente.
