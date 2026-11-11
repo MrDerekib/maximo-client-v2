@@ -72,12 +72,12 @@ class TechnicianSatPlanTests(TestCase):
         preparer.value=Mock(return_value='0,50');preparer.incident_present=Mock(return_value=True)
         preparer.verify_failure_rows=Mock();preparer.verify_solution_codes=Mock();preparer.route=Mock()
         plan,=reviewed_sat_plans([WarehouseItem('1')],self.values(),default_selection())
-        preparer.value.return_value='0,75'
+        preparer.value.side_effect=lambda caption:'RFN-70' if caption=='Clase de anomalía' else '0,75'
         result=preparer.prepare(plan)
         self.assertTrue(result['prepared']);self.assertEqual(result['status'],'APPR')
         preparer.driver.refresh.assert_called_once();preparer.route.assert_not_called()
         preparer.driver.find_element.assert_not_called()
-        preparer.verify_failure_rows.assert_called_once_with([])
+        preparer.verify_failure_rows.assert_called_once()
 
     def test_saved_duration_mismatch_prevents_any_route(self):
         preparer=self.preparer()
@@ -268,3 +268,70 @@ class TechnicianSatPlanTests(TestCase):
             result,=reverify_pending([record],recovery_store=store,session_factory=server.session)
         self.assertIn('BMXAA4214E',result.detail);self.assertIn('APPR',result.detail)
         self.assertFalse(server.routed);self.assertFalse(server.sent)
+
+
+    def test_technical_preparing_session_never_routes_or_reads_history(self):
+        from pathlib import Path
+        from unittest.mock import patch
+        from tests.test_support import temporary_directory
+        from tests.test_warehouse_recovery import FakeServer
+        from warehouse_recovery import RecoveryStore
+        from warehouse_transport import run_live
+        server=FakeServer(action='technician_sat_external',states={'1':'APPR'})
+        original=server.session;events=[]
+        def factory():
+            session=original();index=len(server.sessions)
+            session.accept_button.return_value.click.side_effect=lambda:server.sent.update(['1'])
+            history=session.history_count.side_effect
+            def count(caption):events.append(('history',index));return history(caption)
+            session.history_count.side_effect=count
+            return session
+        plan,=reviewed_sat_plans([WarehouseItem('1')],self.values(),default_selection())
+        preparing,routing=Mock(),Mock()
+        preparing.prepare.side_effect=lambda _:events.append(('prepare',1))
+        routing.verify_prepared.side_effect=lambda _:events.append(('verify',2))
+        routing.prepare_route.return_value={'ready':True}
+        with temporary_directory() as folder,patch('technician_sat.TechnicianSatPreparer',side_effect=[preparing,routing]):
+            result=run_live([plan.item],'technician_sat_external',technician_plans=[plan],
+                recovery_store=RecoveryStore(Path(folder)),session_factory=factory)
+        self.assertEqual(result[0].status,'success')
+        self.assertEqual(len(server.sessions),2)
+        server.sessions[0].driver.find_element.assert_not_called()
+        server.sessions[0].history_count.assert_not_called()
+        server.sessions[0].close.assert_called_once()
+        preparing.prepare.assert_called_once_with(plan)
+        routing.prepare.assert_not_called();routing.verify_prepared.assert_called_once_with(plan)
+        self.assertLess(events.index(('prepare',1)),events.index(('verify',2)))
+        self.assertLess(events.index(('verify',2)),events.index(('history',2)))
+        self.assertEqual(server.routed['1'],1);self.assertEqual(server.sent['1'],1)
+
+    def test_changed_state_in_new_session_stops_before_routing(self):
+        from pathlib import Path
+        from unittest.mock import patch
+        from tests.test_support import temporary_directory
+        from tests.test_warehouse_recovery import FakeServer
+        from warehouse_recovery import RecoveryStore
+        from warehouse_transport import run_live
+        server=FakeServer(action='technician_sat_external',states={'1':'APPR'})
+        original=server.session
+        def factory():
+            if server.sessions:server.states['1']='INPRG'
+            return original()
+        plan,=reviewed_sat_plans([WarehouseItem('1')],self.values(),default_selection())
+        with temporary_directory() as folder,patch('technician_sat.TechnicianSatPreparer'):
+            store=RecoveryStore(Path(folder))
+            result=run_live([plan.item],'technician_sat_external',technician_plans=[plan],
+                recovery_store=store,session_factory=factory,auto_recheck=False)
+            self.assertEqual(store.get('1')['phase'],'preparing')
+            self.assertFalse(store.get('1')['route_attempted'])
+        self.assertEqual(result[0].status,'uncertain')
+        self.assertFalse(server.routed);self.assertFalse(server.sent)
+
+    def test_changed_anomaly_class_in_new_context_is_rejected(self):
+        preparer=self.preparer();preparer.incident_present=Mock(return_value=True)
+        preparer.value=Mock(side_effect=lambda caption:'0,75' if caption=='Horas totales de reparación' else 'OTHER')
+        preparer.verify_failure_rows=Mock();preparer.route=Mock()
+        plan,=reviewed_sat_plans([WarehouseItem('1')],self.values(),default_selection())
+        with self.assertRaisesRegex(RuntimeError,'clase de anomalía'):
+            preparer.verify_prepared(plan)
+        preparer.route.assert_not_called()

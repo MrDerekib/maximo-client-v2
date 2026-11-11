@@ -217,7 +217,7 @@ class TechnicianSatPreparer(WorkorderStarter):
             raise ValueError('El plan de envío corresponde a otra OT.')
         self.require_approved()
         fault = self.fault_reason()
-        resolved = self.apply_anomalies(checked.anomaly_selection)
+        self.apply_anomalies(checked.anomaly_selection)
         self.progress(f'OT {self.ot}: preparando horas de reparación…')
         self.set_repair_duration(checked.duration)
         self.progress(f'OT {self.ot}: preparando el registro de incidencia…')
@@ -228,18 +228,28 @@ class TechnicianSatPreparer(WorkorderStarter):
         self.driver.refresh()
         self.wait(lambda _: self.value('Orden de trabajo') == self.ot and self.value('Estado'),
                   'consulta nueva de la preparación guardada')
+        self.verify_prepared(checked)
+        return {'ot':self.ot, 'status':'APPR', 'prepared':True, 'incident_created':created,
+                'fault_reason':fault}
+
+    def verify_prepared(self, plan):
+        """Read the saved inputs in either the preparing or the new routing session."""
         self.require_approved()
+        if plan.item.ot != self.ot:
+            raise ValueError('La preparación corresponde a otra OT.')
+        resolved = resolve_selection(plan.anomaly_selection)
         self.tab('Consumos Actuales')
-        if repair_seconds(self.value('Horas totales de reparación')) != repair_seconds(checked.duration):
+        if repair_seconds(self.value('Horas totales de reparación')) != repair_seconds(plan.duration):
             raise RuntimeError('Maximo no guardó las horas de reparación; no se enrutará.')
         self.tab('Registro')
-        if not self.incident_present(checked.incident_summary):
+        if not self.incident_present(plan.incident_summary):
             raise RuntimeError('Maximo no guardó la incidencia; no se enrutará.')
+        self.tab('Informes de anomalías')
+        if self.value('Clase de anomalía') != resolved['class_code']:
+            raise RuntimeError('La clase de anomalía guardada no coincide; no se enrutará.')
         self.verify_failure_rows(resolved['path'])
         self.verify_solution_codes(resolved['path'])
         self.require_approved()
-        return {'ot':self.ot, 'status':'APPR', 'prepared':True, 'incident_created':created,
-                'fault_reason':fault}
 
 
 @scheduled('Consultar envío técnico a SAT', HIGH)

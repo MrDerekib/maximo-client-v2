@@ -406,8 +406,8 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                         break
                     if actual!=ACTIONS[action].initial_status:
                         raise RuntimeError(f'Estado real {actual}; se requiere {ACTIONS[action].initial_status}.')
-                    prior=session.history_count(ACTIONS[action].native_label) if action in SAT_ACTIONS else None
-                    if action in SAT_ACTIONS and (type(prior) is not int or prior<0):
+                    prior=session.history_count(ACTIONS[action].native_label) if action in SAT_ACTIONS and action != 'technician_sat_external' else None
+                    if action in SAT_ACTIONS and action != 'technician_sat_external' and (type(prior) is not int or prior<0):
                         raise RuntimeError('No se pudo leer el historial previo de SAT.')
                     journal({'ot':item.ot,'action':action,'initial_state':actual,'identity':identity,'history_before':prior})
                     session.check(actual,identity);session.reader.reject_dialogs()
@@ -419,7 +419,28 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                         preparer = TechnicianSatPreparer(session.driver,item.ot,
                             progress=lambda text: step(text,2))
                         preparer.prepare(plans[item.ot])
-                        session.reader = preparer
+                        journal({'event':'technician_preparation_saved','ot':item.ot,'action':action,
+                                 'operation_id':record['operation_id']})
+                        # A separate login/MBO context is used before the first routing click.
+                        # Never restart this session after routing or either confirmation.
+                        retire()
+                        step('Abrir sesión limpia para el envío',2)
+                        session=session_factory()
+                        reopened=session.open(item.ot)
+                        if reopened != actual or _identity(session,item) != identity:
+                            raise RuntimeError('La OT o su identidad cambiaron al abrir la sesión de envío; no se enrutará.')
+                        preparer=TechnicianSatPreparer(session.driver,item.ot,
+                            progress=lambda text: step(text,2))
+                        session.reader=preparer
+                        preparer.verify_prepared(plans[item.ot])
+                        # Read the baseline after preparation, in the very session that routes.
+                        prior=session.history_count(ACTIONS[action].native_label)
+                        if type(prior) is not int or prior<0:
+                            raise RuntimeError('No se pudo leer el historial previo de SAT en la sesión de envío.')
+                        record=store.update(record,'preparing',history_before=prior)
+                        journal({'event':'technician_route_session_opened','ot':item.ot,'action':action,
+                                 'operation_id':record['operation_id'],'history_before':prior,
+                                 'identity':identity,'actual_state':reopened})
                         readiness = preparer.prepare_route()
                         session.check(actual,identity)
                         journal({'event':'technician_route_ready','ot':item.ot,'action':action,

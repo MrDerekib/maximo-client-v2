@@ -120,3 +120,39 @@ Cuatro regresiones nuevas reproducen respuesta tardía, botón bloqueado, aviso 
 y conservación del error durante una consulta posterior. Falta contrastar esta
 espera reforzada con una nueva OT autorizada; no se ha repetido la operación en
 las OTs terminadas manualmente.
+
+
+## Separación de sesiones tras el segundo fallo
+
+La espera anterior no evitó el BMXAA4214E en 4431263: la respuesta de pestaña había
+pasado de 0 a 1, los campos eran correctos y el botón estaba accesible. Eso descarta
+que la espera aplicada bastase para resolver el caso; no revela la excepción interna.
+
+Con autorización del usuario exclusivamente para abrir el selector, se hicieron
+consultas en sesiones nuevas headless sobre la misma OT ya preparada, sin escribir
+campos ni seleccionar SAT ni pulsar Aceptar. Ambas abrieron Entrada manual y dejaron
+APPR. La segunda incluyó la verificación de horas, incidencia, clase/códigos, seguida
+del historial y de la espera de navegación. Evidencia en
+`validaciones/selector-4431263-sesion-limpia.json`. Las sesiones se cerraron después.
+
+El procesador técnico ahora separa las fases:
+
+1. Sesión de preparación: aplicar, guardar y verificar campos. No consulta historial
+   de flujo ni pulsa Enrutar.
+2. Cerrar esa sesión antes del primer intento de enrutado.
+3. Sesión nueva con la misma cuenta: volver a cargar la OT, comprobar APPR e identidad
+   y verificar los datos guardados sin volver a escribirlos.
+4. Consultar el historial previo en esta sesión, después de la preparación, y guardar
+   el contador en el registro persistente antes de enrutar.
+5. Abrir el selector y continuar con la acción explícita y su único Aceptar/OK.
+
+Si cambian el estado, el equipo o la clase, no se enruta. No se reinicia una sesión
+para repetir una confirmación incierta: los cambios de contexto solo ocurren antes
+del primer Enrutar. Las acciones de almacén conservan su recorrido anterior.
+
+Añade un inicio de sesión por OT técnica; el coste se acepta para aislar el contexto
+que falla después de modificar y recargar. No se afirma haber identificado la causa
+interna de Maximo. Falta validar el envío completo desde el nuevo lote de MD.
+
+Validación de esta separación: suite completa de 393 pruebas, 311 correctas y
+82 omitidas. Los seis archivos de configuración/credenciales conservaron sus hashes.
