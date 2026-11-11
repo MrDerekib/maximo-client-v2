@@ -241,6 +241,10 @@ class WorkorderStarter:
         """)
 
     def save_action_state(self):
+        """Reacquire a read-only snapshot if Maximo replaces the DOM mid-read."""
+        return self.wait(lambda _: self._save_action_state(), 'estado de la acción Guardar')
+
+    def _save_action_state(self):
         """Read native action availability, including Maximo's disabled menu LI."""
         def enabled(element):
             return self.driver.execute_script("""

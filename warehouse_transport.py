@@ -19,7 +19,7 @@ from workorder_start import WorkorderStarter, normalized
 from warehouse_diagnostics import sanitize, log_exception
 from warehouse_recovery import RecoveryStore, recovery_item, PendingOperationError
 
-SAT_ACTIONS = {'receive_sat_external': 'SAT Externo', 'receive_sat_internal': 'SAT Interno'}
+SAT_ACTIONS = {'technician_sat_external': 'SAT Externo', 'receive_sat_external': 'SAT Externo', 'receive_sat_internal': 'SAT Interno'}
 
 
 def unique_caption(options, caption):
@@ -139,7 +139,9 @@ class WarehouseSession:
         expected_title = SAT_ACTIONS[action]
         def matching_dialog():
             dialogs = self.reader.dialogs()
-            return len(dialogs) == 1 and normalized(dialogs[0].text.strip().split('\n')[0]) == normalized(expected_title)
+            return (len(dialogs) == 1 and
+                    (action != 'technician_sat_external' or dialogs[0].get_attribute('id') == 'ENVIAR_SAT_EXT-dialog_inner') and
+                    normalized(dialogs[0].text.strip().split('\n')[0]) == normalized(expected_title))
         self.reader.wait(lambda d: matching_dialog(), f'detalles de {expected_title}')
         self.check(initial_state, identity)
         dialogs = self.reader.dialogs()
@@ -149,10 +151,13 @@ class WarehouseSession:
         frames = dialogs[0].find_elements(By.TAG_NAME, 'iframe')
         if len(frames) != 1:
             raise RuntimeError('No se encontró un único editor de detalles SAT.')
+        marker = self.reader.response_sequence()
+        changed = False
         try:
             self.driver.switch_to.frame(frames[0])
             body = self.driver.find_element(By.ID, 'dijitEditorBody')
-            if body.text.strip() or text:
+            if body.text.strip() != text.strip():
+                changed = True
                 body.click()
                 body.send_keys(Keys.CONTROL, 'a')
                 body.send_keys(Keys.BACKSPACE)
@@ -163,6 +168,8 @@ class WarehouseSession:
                 raise RuntimeError('El editor SAT no contiene los detalles solicitados.')
         finally:
             self.driver.switch_to.default_content()
+        if changed:
+            self.reader.wait(lambda _: self.reader.response_sequence() > marker, 'validación del motivo SAT')
         self.check(initial_state, identity)
         dialogs = self.reader.dialogs()
         if len(dialogs) != 1 or dialogs[0].get_attribute('id') != dialog_id or not matching_dialog():
@@ -171,8 +178,22 @@ class WarehouseSession:
                    if b.is_displayed() and b.is_enabled() and normalized(b.text) == 'ok']
         if len(buttons) != 1:
             raise RuntimeError('No se encontró un único OK de SAT externo.')
+        def ready(_):
+            self.reader.idle()
+            current = self.reader.dialogs()
+            if len(current) != 1 or current[0].get_attribute('id') != dialog_id:
+                raise RuntimeError('El diálogo SAT cambió antes del OK.')
+            matches = [b for b in current[0].find_elements(By.TAG_NAME, 'button')
+                       if b.is_displayed() and b.is_enabled() and normalized(b.text) == 'ok']
+            if len(matches) != 1:
+                return False
+            button = matches[0]
+            reachable = self.driver.execute_script("const b=arguments[0],r=b.getBoundingClientRect(),e=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return e===b||b.contains(e)", button)
+            return button if reachable else False
+        button = self.reader.wait(ready, 'OK SAT sin capa de carga')
+        self.check(initial_state, identity)
         before_accept()
-        buttons[0].click()  # Never retry this confirmation.
+        button.click()  # Never retry this confirmation.
 
     def history_count(self, caption):
         """Read complete native history to distinguish SAT variants sharing ISSUE."""
@@ -318,11 +339,22 @@ def reverify_pending(records, *, recovery_store=None, stop=None, progress=None, 
 
 @scheduled('Operaciones de almacén', HIGH)
 def run_live(items, action, *, stop=None, progress=None, journal=None, details=None,
-             session_factory=WarehouseSession, recovery_store=None, auto_recheck=True):
+             session_factory=WarehouseSession, recovery_store=None, auto_recheck=True, technician_plans=None):
     """Retry reads before routing; after any possible effect, only query the result."""
     if action not in FINAL_STATES:
         raise ValueError('Esta acción todavía no está validada para ejecución real.')
     items=freeze_items(items);store=recovery_store or default_recovery_store()
+    plans = {}
+    if action == 'technician_sat_external':
+        from technician_sat import reviewed_sat_plans
+        supplied = tuple(technician_plans or ())
+        if len(supplied) != len(items) or {p.item for p in supplied} != set(items):
+            raise ValueError('Falta revisar los datos de todas las OTs del envío técnico.')
+        for plan in supplied:
+            checked, = reviewed_sat_plans([plan.item], {plan.item.ot: {
+                'duration':plan.duration, 'incident':plan.incident, 'reason':plan.reason}}, plan.anomaly_selection)
+            plans[plan.item.ot] = checked
+        details = {ot:p.reason for ot,p in plans.items()}
     details={str(ot):str(text).strip() for ot,text in (details or {}).items()}
     stop,progress=stop or Event(),progress or (lambda i,r:None)
     journal=journal or (lambda e:logging.info('Almacén: %s',json.dumps(e,ensure_ascii=False)))
@@ -376,8 +408,23 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                         raise RuntimeError('No se pudo leer el historial previo de SAT.')
                     journal({'ot':item.ot,'action':action,'initial_state':actual,'identity':identity,'history_before':prior})
                     session.check(actual,identity);session.reader.reject_dialogs()
+                    if action == 'technician_sat_external':
+                        record=store.begin(item,action,identity,actual,prior,preparing=True)
+                        result=replace(result,operation_id=record['operation_id'])
+                        step('Preparar anomalías, horas e incidencia',2)
+                        from technician_sat import TechnicianSatPreparer
+                        preparer = TechnicianSatPreparer(session.driver,item.ot,
+                            progress=lambda text: step(text,2))
+                        preparer.prepare(plans[item.ot])
+                        session.reader = preparer
+                        session.reader.tab('Orden de trabajo')
+                        session.check(actual,identity)
+                        journal({'event':'technician_preparation_verified','ot':item.ot,'action':action,
+                                 'operation_id':record['operation_id']})
+                        record=store.update(record,'route_attempted',route_attempted=True)
+                    else:
+                        record=store.begin(item,action,identity,actual,prior)
                     step('Seleccionar acción',2)
-                    record=store.begin(item,action,identity,actual,prior)
                     result=replace(result,operation_id=record['operation_id'])
                     journal({'event':'route_attempt','ot':item.ot,'action':action,'operation_id':record['operation_id']})
                     routed=True

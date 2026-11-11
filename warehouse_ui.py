@@ -27,7 +27,7 @@ STATUS_LABELS = {
 STATUS_COLORS = {'already_done': '#15803d', 'success': '#15803d', 'failed': '#dc2626', 'uncertain': '#b45309'}
 STATUS_COLORS_DARK = {'already_done': '#4ade80', 'success': '#4ade80', 'failed': '#f87171', 'uncertain': '#fbbf24'}
 LOCAL_TRACKING = {'receive': 'EN TALLER', 'dispatch': 'CLOSE',
-                  'receive_sat_internal': 'SAT INT', 'receive_sat_external': 'SAT EXT'}
+                  'receive_sat_internal': 'SAT INT', 'receive_sat_external': 'SAT EXT', 'technician_sat_external': 'SAT EXT'}
 
 
 class WarehouseThread(QThread):
@@ -37,7 +37,7 @@ class WarehouseThread(QThread):
     record_updated = Signal(str, str)
     waiting = Signal(str)
 
-    def __init__(self, items, action, journal_path, parent=None, *, details=None, recoveries=None, previous_results=()):
+    def __init__(self, items, action, journal_path, parent=None, *, details=None, recoveries=None, previous_results=(), technician_plans=None):
         super().__init__(parent)
         self.items, self.action = items, action
         self.stop_requested = Event()
@@ -45,6 +45,7 @@ class WarehouseThread(QThread):
         self.details = dict(details or {})
         self.recoveries = recoveries
         self.previous_results = tuple(previous_results)
+        self.technician_plans = technician_plans
 
     def run(self):
         try:
@@ -110,7 +111,8 @@ class WarehouseThread(QThread):
                                job_label=('Reverificar: ' if self.recoveries is not None else '')+ACTIONS[self.action].label,
                                job_waiting=self.waiting.emit, job_cancel_event=self.stop_requested)
                 if self.recoveries is None:
-                    results = run_live(self.items, self.action, progress=progress, details=self.details, **options)
+                    results = run_live(self.items, self.action, progress=progress, details=self.details,
+                                       technician_plans=self.technician_plans, **options)
                 else:
                     positions = {item.ot:index for index,item in enumerate(self.items)}
                     recovered = reverify_pending(self.recoveries,
@@ -142,7 +144,8 @@ class WarehouseBatchDialog(QDialog):
         self._has_started = False
         self.recovery_only = recovery_only
         self.details_inputs = {}
-        self.setWindowTitle(f'Almacén · {ACTIONS[action].label}')
+        owner = 'Técnico' if ACTIONS[action].role == 'technician' else 'Almacén'
+        self.setWindowTitle(f'{owner} · {ACTIONS[action].label}')
         self.resize(1000, 650)
         self.setMinimumSize(760, 520)
         layout = QVBoxLayout(self)
@@ -151,6 +154,8 @@ class WarehouseBatchDialog(QDialog):
         layout.addWidget(title)
         banner = QLabel('Se ejecutarán operaciones reales con la cuenta de almacén. '
                         'Revisa la acción y las OTs antes de confirmar. Se comprobará su estado en Maximo.')
+        if ACTIONS[action].role == 'technician':
+            banner.setText('Envío técnico a SAT externo. Se prepararán anomalías, horas e incidencia antes de enrutar. Revisa los datos por OT y confirma antes de ejecutar.')
         if recovery_only:
             banner.setText('Solo se consultarán resultados pendientes o se reintentará su guardado local. No se ejecutará Enrutar ni Aceptar.')
         banner.setWordWrap(True)
@@ -173,7 +178,7 @@ class WarehouseBatchDialog(QDialog):
                 cell = QTableWidgetItem(text)
                 if column == 0:
                     font = cell.font(); font.setUnderline(True); cell.setFont(font)
-                    cell.setToolTip('Abrir esta OT en Edge para revisión manual. No ejecuta acciones de almacén.')
+                    cell.setToolTip('Abrir esta OT en Edge para revisión manual. No ejecuta ninguna operación.')
                 self.table.setItem(index, column, cell)
         layout.addWidget(self.table, 1)
         if not recovery_only and ask_sat_details and action in ('receive_sat_internal', 'receive_sat_external'):
@@ -281,7 +286,8 @@ class WarehouseBatchDialog(QDialog):
         journal_id = self.batch_id if recoveries is None else self.batch_id+'-recheck-'+uuid4().hex
         self._worker = WarehouseThread(self.items, self.action,
             self.report_folder / f'{journal_id}-events.jsonl', self, details=details,
-            recoveries=recoveries, previous_results=self.results if recoveries is not None else ())
+            recoveries=recoveries, previous_results=self.results if recoveries is not None else (),
+            technician_plans=getattr(self, "technician_plans", None))
         self._worker.progress.connect(self._progress)
         self._worker.waiting.connect(self.current_step.setText)
         self._worker.record_updated.connect(self.record_updated)
@@ -420,20 +426,25 @@ class WarehouseWindowMixin:
     def warehouse_is_running(self):
         return any(dialog.is_running() for dialog in getattr(self, '_warehouse_dialogs', []))
 
+    def _operation_allowed(self, action):
+        flag = 'technician_sat_enabled' if ACTIONS[action].role == 'technician' else 'warehouse_enabled'
+        return bool(getattr(self.cfg, flag, False))
+
     def open_warehouse_recovery(self):
-        if not getattr(self.cfg, 'warehouse_enabled', False) or getattr(self, '_closing', False): return
+        if getattr(self, '_closing', False): return
+        if not (getattr(self.cfg, 'warehouse_enabled', False) or getattr(self.cfg, 'technician_sat_enabled', False)): return
         try:
-            records = RecoveryStore().pending()
+            records = [r for r in RecoveryStore().pending() if self._operation_allowed(r['action'])]
         except Exception as exc:
-            QMessageBox.warning(self, 'Recuperación de almacén', str(exc)); return
+            QMessageBox.warning(self, 'Recuperación de operaciones', str(exc)); return
         if not records:
-            QMessageBox.information(self, 'Recuperación de almacén', 'No hay operaciones pendientes.'); return
+            QMessageBox.information(self, 'Recuperación de operaciones', 'No hay operaciones pendientes.'); return
         groups = {action:[r for r in records if r['action']==action] for action in ACTIONS}
         groups = {action:values for action,values in groups.items() if values}
         action = next(iter(groups))
         if len(groups)>1:
             labels = {f'{ACTIONS[a].label} · {len(v)} OT':a for a,v in groups.items()}
-            selected,ok = QInputDialog.getItem(self,'Recuperación de almacén','Acción pendiente:',list(labels),0,False)
+            selected,ok = QInputDialog.getItem(self,'Recuperación de operaciones','Acción pendiente:',list(labels),0,False)
             if not ok:return
             action = labels[selected]
         dialogs = getattr(self, '_warehouse_dialogs', [])
@@ -444,11 +455,35 @@ class WarehouseWindowMixin:
         self._warehouse_dialogs = [*dialogs,dialog];dialog.show()
 
     def offer_warehouse_recovery(self):
-        if not getattr(self.cfg,'warehouse_enabled',False) or getattr(self,'_closing',False):return
-        try:count = len(RecoveryStore().pending())
+        if getattr(self,'_closing',False) or not (getattr(self.cfg,'warehouse_enabled',False) or getattr(self.cfg,'technician_sat_enabled',False)):return
+        try:count = sum(self._operation_allowed(r['action']) for r in RecoveryStore().pending())
         except Exception:
             log_exception('No se pudo consultar la recuperación de almacén');return
         if count and QMessageBox.question(self,'Operaciones pendientes',
-            f'Hay {count} operaciones de almacén pendientes de verificar o guardar. ¿Abrir su revisión? No se reenviarán acciones.',
+            f'Hay {count} operaciones pendientes de verificar o guardar. ¿Abrir su revisión? No se reenviarán acciones.',
             QMessageBox.Yes|QMessageBox.No,QMessageBox.No)==QMessageBox.Yes:
             self.open_warehouse_recovery()
+
+
+    def add_technician_sat_action(self, menu):
+        if not getattr(self.cfg, 'technician_sat_enabled', False):
+            return
+        items = self.warehouse_items()
+        menu.addSeparator()
+        menu.addAction(f'Enviar a SAT Externo · Técnico · {len(items)} OT…',
+                       lambda checked=False, selection=items: self.open_technician_sat_batch(selection))
+
+    def open_technician_sat_batch(self, items):
+        if not getattr(self.cfg, 'technician_sat_enabled', False) or getattr(self, '_closing', False):
+            return
+        dialogs = getattr(self, '_warehouse_dialogs', [])
+        active = next((d for d in dialogs if d.is_running()), None)
+        if active:
+            active.show(); active.raise_(); active.activateWindow(); return
+        from technician_sat_ui import TechnicianSatDialog
+        dialog = TechnicianSatDialog(items, self.open_ot_number, self,
+            selection=self.cfg.workorder_start_selection)
+        if hasattr(self, 'warehouse_row_updated'):
+            dialog.record_updated.connect(self.warehouse_row_updated)
+        self._warehouse_dialogs = [*dialogs, dialog]
+        dialog.show()

@@ -46,6 +46,7 @@ class AppConfig:
     workorder_start_mode: str = "configured"
     workorder_start_selection: dict = field(default_factory=default_selection)
     workorder_close_enabled: bool = False
+    technician_sat_enabled: bool = False
     warehouse_enabled: bool = False
     warehouse_ask_sat_details: bool = False
     repair_print_mode: str = "dialog"
@@ -91,6 +92,8 @@ class AppConfig:
             self.workorder_start_selection = {}
         if not isinstance(self.workorder_close_enabled, bool):
             self.workorder_close_enabled = False
+        if not isinstance(self.technician_sat_enabled, bool):
+            self.technician_sat_enabled = False
         if not isinstance(self.warehouse_enabled, bool):
             self.warehouse_enabled = False
         if not isinstance(self.warehouse_ask_sat_details, bool):

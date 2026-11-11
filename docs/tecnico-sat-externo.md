@@ -1,49 +1,97 @@
 # SAT externo desde el rol de técnico — fase 1
 
-Rama: `tecnico/sat-externo`. Flujo independiente de la recepción de almacén con
-«Confirmar y enviar a SAT Externo». La extensión de Edge se reserva para fase 2.
+Rama: `tecnico/sat-externo`. Acción distinta de la recepción de almacén con
+«Confirmar y enviar a SAT Externo». Comparte el procesador de lotes, el reporte,
+las prioridades y la recuperación; no comparte la acción ni el estado inicial.
+La extensión de Edge queda para fase 2 y no se ha modificado.
 
-## Reconocimiento del 11/11/2026
+## Uso desde MD
 
-OT de referencia: 4433097, APPR. Inspección mediante la sesión Selenium existente,
-sin CUA, sin iniciar la OT ni confirmar el envío.
+En Configuración → Envío a SAT · Técnico, activar «Mostrar envío técnico a SAT
+externo en MD» y guardar. No requiere habilitar funciones de almacén.
+Seleccionar una o varias filas y usar el menú contextual de envío técnico.
 
-- Consumos Actuales: «Horas totales de reparación» es editable en APPR.
-- Registro → Fila Nueva: tipo predeterminado CLIENTNOTE; «Resumen» editable.
-  El usuario confirma el formato `inc: número`. No se ha confirmado contenido
-  adicional para Detalles. La fila vacía de inspección se descartó con No al
-  aviso de guardar; después se reabrió la OT y se comprobó que había cero filas.
-- El usuario abrió Entrada manual. Se identificó el diálogo `inputwf-dialog_inner`
-  y cuatro opciones: Iniciar orden, Cancelar orden, Enviar a SAT Interno y
-  **Enviar a SAT Externo**. Esta última estaba habilitada, sin seleccionar.
-- Los controles se identificarán por el diálogo y la etiqueta exacta; los IDs
-  `mx...` observados son variables y no deben fijarse en el flujo.
-- No se pulsó Aceptar. El diálogo posterior de motivo, los requisitos adicionales
-  y el estado/historial final del envío técnico están pendientes de inspección.
-  No se asumen equivalentes a los de recepción SAT de almacén.
+El diálogo consulta primero las fichas sin modificarlas y propone como motivo la
+avería original de Maximo, editable por OT. También propone las horas ya existentes.
+Si alguna ficha no está en APPR, el envío queda deshabilitado y hay que revisar
+la selección. Antes de ejecutar, el usuario completa o revisa:
 
-## Preparación de datos
+- Combinación de anomalías para el lote, inicialmente la predeterminada de MD.
+- Horas de cada OT, positivas en múltiplos de 0,25 h.
+- Incidencia o referencia de cada OT. Admite números y texto como `stock`.
+- Motivo de cada OT, inicialmente el Resumen de Orden de trabajo en Maximo.
 
-`technician_sat.reviewed_sat_plans` valida todas las OTs del lote antes de cualquier
-operación: ruta de anomalías completa, duración positiva en múltiplos de 0,25 h,
-número de incidencia y motivo no vacío. Cada OT requiere sus propios valores.
-La selección se copia para que cambios posteriores en los diccionarios del
-formulario no alteren un lote ya revisado. No se usan datos de ejemplo en Maximo.
+El inicio requiere confirmación explícita con No por defecto. Cada OT se prepara
+con anomalías/soluciones, horas y un registro CLIENTNOTE con `inc: referencia`.
+La preparación se guarda y se contrasta desde una recarga antes de enrutar.
+Un registro idéntico visible no se duplica. Si no se encuentra y hay más páginas
+de registro que no se han inspeccionado, se detiene para revisión en lugar de
+crear una posible incidencia duplicada.
 
-Cinco pruebas locales cubren validación, datos faltantes y aislamiento de entradas.
-Todavía no hay una acción SAT técnica habilitada en el menú de MD.
+## Recorrido validado en la OT 4433097 — 11/11/2026
 
-## Recorrido a completar
+Estado inicial APPR; activo 136930, serie SA408, planta LAB-BAD. El usuario autorizó
+expresamente el envío real después de revisar la preparación:
 
-1. Revisar selección y datos por OT en MD con confirmación explícita.
-2. Abrir en sesión técnica, contrastar OT, identidad y estado permitido.
-3. Aplicar anomalías y soluciones usando el catálogo y la lógica existente.
-4. Introducir duración y validar; crear el registro de incidencia sin duplicarlo.
-5. Comprobar el guardado antes de enrutar.
-6. Localizar exclusivamente Enviar a SAT Externo y completar su motivo.
-7. Verificar el estado y evidencia específica de ese envío desde una nueva lectura.
-8. Integrar progreso, reporte y recuperación de incertidumbres sin reenviar
-   automáticamente una confirmación que pueda haberse ejecutado.
+1. RFN-70 → OTROS-01 → OTROS-02 → OTROS-03.
+2. Horas de reparación 0,50.
+3. Un registro CLIENTNOTE `inc: stock`, sin duplicarlo al repetir la preparación.
+4. En Entrada manual, elegir exactamente «Enviar a SAT Externo». Las otras opciones
+   son Iniciar orden, Cancelar orden y Enviar a SAT Interno.
+5. Aceptar abre `ENVIAR_SAT_EXT-dialog_inner`, título SAT Externo, editor Detalles.
+6. Motivo real: `NO ADMITE`, tomado del Resumen original de la OT.
+7. Tras OK, el resultado es ISSUE. Una sesión independiente confirmó la misma
+   identidad y una nueva entrada de «Enviar a SAT Externo» en el historial, de 0 a 1.
 
-Pendientes para el caso real: duración, número de incidencia real y motivo del
-usuario, inspección del diálogo posterior y autorización concreta para confirmar.
+La preparación real y el recorrido final se probaron por partes con Selenium.
+La cola completa del nuevo diálogo de MD se ha validado con simulaciones, no con
+un nuevo lote real. No se ha reenviado 4433097 después de su transición a ISSUE.
+La evidencia acotada del caso está en `validaciones/tecnico-sat-4433097.json`.
+
+## Incidencias encontradas y corregidas
+
+- Maximo puede sustituir elementos mientras se consulta si Guardar está disponible.
+  Se reintenta únicamente esa lectura si caduca la referencia, sin repetir el envío.
+- El editor SAT valida el texto de forma asíncrona al salir con Tab. En la prueba
+  la capa de carga interceptó el primer clic en OK: Selenium acreditó que no se
+  entregó. Después de verificar APPR, mismo diálogo, mismo motivo y ausencia de
+  bloqueo, se confirmó el OK dentro de la autorización original.
+- El código ahora espera la respuesta de validación del editor y comprueba que el
+  botón no está tapado antes de registrar el intento y pulsarlo una sola vez.
+  No reintenta automáticamente una confirmación incierta.
+
+## Recuperación y diagnóstico
+
+Los registros compartidos están en `logs/almacen-operaciones`, diferenciados por
+acción `technician_sat_external`. Se crea una evidencia persistente en fase
+`preparing` antes de la primera escritura. Se actualiza antes de Enrutar, Aceptar
+y el OK de detalles. Una preparación fallida puede conservar cambios parciales y
+queda para revisión; no se reejecuta a ciegas.
+
+Se reutilizan las comprobaciones de identidad, el incremento del historial de la
+acción exacta y el estado ISSUE para verificar el envío técnico. Los resultados
+inciertos se consultan al final del lote y mediante Reverificar, sin volver a
+preparar ni enviar. El estado local verificado se refleja como SAT EXT, sujeto a
+las posteriores lecturas de Maximo. El motivo y la referencia no se incorporan
+como campos del registro de recuperación ni del reporte normal.
+
+La revisión de pendientes se ofrece para los roles habilitados en Configuración.
+Las tareas no alteran credenciales ni usan otra cuenta para sortear permisos.
+
+## Límites de esta fase
+
+- Solo envío técnico a SAT externo desde APPR. No inicia la OT previamente.
+- La avería es un valor propuesto, no una justificación inventada; el usuario puede
+  editarla y un motivo vacío impide comenzar.
+- No se han añadido botones de SAT a la extensión de Edge.
+- No se ha generado build ni fusionado esta rama con dev/main.
+
+
+## Validación final
+
+24 pruebas nuevas de preparación, consulta, interfaz, confirmación, guardado,
+estados incompatibles y recuperación de respuesta perdida. Suite completa:
+386 pruebas, 304 correctas y 82 de Edge offline omitidas. Los seis archivos de
+configuración y credenciales de producción/dev/almacén conservaron sus hashes.
+El envío real de referencia se realizó por etapas con autorización; el nuevo
+lote completo desde el diálogo de MD queda pendiente de la próxima OT autorizada.

@@ -13,8 +13,8 @@ from app_paths import LOG_DIR, create_unique_file
 from warehouse import WarehouseItem, FINAL_STATES
 
 _guard = threading.RLock()
-PHASES = {'route_attempted', 'confirmation_attempted', 'details_attempted', 'verified', 'complete'}
-ACTIONS = {'receive', 'dispatch', 'receive_sat_internal', 'receive_sat_external'}
+PHASES = {'preparing', 'route_attempted', 'confirmation_attempted', 'details_attempted', 'verified', 'complete'}
+ACTIONS = set(FINAL_STATES)
 
 
 class PendingOperationError(RuntimeError):
@@ -61,13 +61,13 @@ class RecoveryStore:
             records = [self._read(path) for path in sorted(self.folder.glob('*.json'))]
             return [record for record in records if record['phase'] != 'complete']
 
-    def begin(self, item, action, identity, initial_state, history_before=None, *, verified_status=''):
+    def begin(self, item, action, identity, initial_state, history_before=None, *, verified_status='', preparing=False):
         record = {'schema_version': 1, 'operation_id': uuid4().hex, 'item': asdict(item),
                   'action': action, 'identity': dict(identity), 'initial_state': initial_state,
                   'origin_report': self.origin_report,
                   'history_before': history_before, 'verified_status': verified_status,
-                  'phase': 'verified' if verified_status else 'route_attempted',
-                  'route_attempted': not bool(verified_status), 'confirmation_attempted': False,
+                  'phase': 'verified' if verified_status else 'preparing' if preparing else 'route_attempted',
+                  'route_attempted': not bool(verified_status) and not preparing, 'confirmation_attempted': False,
                   'details_attempted': False, 'created_at': datetime.now(timezone.utc).isoformat()}
         payload = json.dumps(record, ensure_ascii=False)
         if len(payload.encode('utf-8')) > 128_000:

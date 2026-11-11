@@ -1369,6 +1369,19 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.path_details.setVisible(False)
         paths_layout.addWidget(self.path_details)
 
+        self.technician_sat_card = QGroupBox("Envío a SAT · Técnico")
+        technical_layout = QVBoxLayout(self.technician_sat_card)
+        self.technician_sat_check = QCheckBox("Mostrar envío técnico a SAT externo en MD")
+        technical_layout.addWidget(self.technician_sat_check)
+        technical_hint = QLabel("Permite revisar y enviar una o varias OTs en APPR desde el menú contextual. "
+            "Pide horas, incidencia o referencia y motivo; propone la avería consultada en Maximo. "
+            "La combinación de anomalías se revisa antes de ejecutar. No activa opciones de almacén ni de Edge.")
+        technical_hint.setWordWrap(True); technical_hint.setObjectName("filterHint")
+        technical_layout.addWidget(technical_hint)
+        technical_recovery = QPushButton("Revisar operaciones pendientes…")
+        technical_recovery.clicked.connect(self.open_warehouse_recovery)
+        technical_layout.addWidget(technical_recovery)
+
         self.warehouse_card = QGroupBox("Funciones de almacén · En pruebas")
         warehouse_layout = QVBoxLayout(self.warehouse_card)
         self.warehouse_check = QCheckBox("Mostrar acciones de almacén")
@@ -1392,7 +1405,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
         for card in (self.access_card, self.app_updates_card,
                      self.appearance_card, self.maintenance_card,
-                     self.fault_descriptions_card, self.paths_card):
+                     self.fault_descriptions_card, self.technician_sat_card, self.paths_card):
             self.settings_sections[0].addWidget(card)
         for card in (self.edge_extension_card, self.warehouse_card, self.priorities_card):
             self.settings_sections[1].addWidget(card)
@@ -1912,6 +1925,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             pdf_action.setToolTip(reason)
         if self.table.item(row, 0).text() == "○ No activo":
             menu.addAction("Eliminar registro local…", lambda: self.delete_inactive(ot))
+        if getattr(self.cfg, 'technician_sat_enabled', False):
+            self.add_technician_sat_action(menu)
         if getattr(self.cfg, 'warehouse_enabled', False):
             self.add_warehouse_actions(menu)
         menu.exec(self.table.viewport().mapToGlobal(position))
@@ -2389,6 +2404,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.workorder_failure_picker.set_selection(self.cfg.workorder_start_selection)
         self._update_workorder_start_controls()
         self.workorder_close_check.setChecked(self.cfg.workorder_close_enabled)
+        self.technician_sat_check.setChecked(self.cfg.technician_sat_enabled)
         self.warehouse_check.setChecked(self.cfg.warehouse_enabled)
         self.warehouse_details_check.setChecked(self.cfg.warehouse_ask_sat_details)
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
@@ -2445,6 +2461,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             or (self.workorder_start_mode_combo.currentData() or "invalid") != self.cfg.workorder_start_mode
             or self.workorder_failure_picker.selection() != self.cfg.workorder_start_selection
             or self.workorder_close_check.isChecked() != self.cfg.workorder_close_enabled
+            or self.technician_sat_check.isChecked() != self.cfg.technician_sat_enabled
             or self.warehouse_check.isChecked() != self.cfg.warehouse_enabled
             or self.warehouse_details_check.isChecked() != self.cfg.warehouse_ask_sat_details
             or self.repair_mode_combo.currentData() != self.cfg.repair_print_mode
@@ -2476,6 +2493,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.cfg.workorder_start_mode = start_mode or "invalid"
         self.cfg.workorder_start_selection = start_selection
         self.cfg.workorder_close_enabled = self.workorder_close_check.isChecked()
+        self.cfg.technician_sat_enabled = self.technician_sat_check.isChecked()
         self.cfg.warehouse_enabled = self.warehouse_check.isChecked()
         self.cfg.warehouse_ask_sat_details = self.warehouse_details_check.isChecked()
         self.cfg.repair_print_mode = self.repair_mode_combo.currentData()
