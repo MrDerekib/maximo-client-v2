@@ -1,4 +1,4 @@
-"""Durable per-OT recovery records. No credentials, session objects or SAT details."""
+"""Durable per-OT recovery records. No credentials or browser session objects. Reviewed technician requests stay local."""
 from dataclasses import asdict
 from datetime import datetime, timezone
 import hashlib
@@ -19,6 +19,14 @@ ACTIONS = set(FINAL_STATES)
 
 class PendingOperationError(RuntimeError):
     pass
+
+
+def preparation_retry_allowed(record):
+    return bool(record and record.get('action') == 'technician_sat_external'
+        and record.get('phase') == 'preparing'
+        and all(record.get(key) is False for key in
+                ('route_attempted','confirmation_attempted','details_attempted'))
+        and not record.get('verified_status'))
 
 
 class RecoveryStore:
@@ -61,7 +69,7 @@ class RecoveryStore:
             records = [self._read(path) for path in sorted(self.folder.glob('*.json'))]
             return [record for record in records if record['phase'] != 'complete']
 
-    def begin(self, item, action, identity, initial_state, history_before=None, *, verified_status='', preparing=False):
+    def begin(self, item, action, identity, initial_state, history_before=None, *, verified_status='', preparing=False, reviewed_request=None):
         record = {'schema_version': 1, 'operation_id': uuid4().hex, 'item': asdict(item),
                   'action': action, 'identity': dict(identity), 'initial_state': initial_state,
                   'origin_report': self.origin_report,
@@ -69,6 +77,8 @@ class RecoveryStore:
                   'phase': 'verified' if verified_status else 'preparing' if preparing else 'route_attempted',
                   'route_attempted': not bool(verified_status) and not preparing, 'confirmation_attempted': False,
                   'details_attempted': False, 'created_at': datetime.now(timezone.utc).isoformat()}
+        if reviewed_request is not None:
+            record['reviewed_request'] = reviewed_request
         payload = json.dumps(record, ensure_ascii=False)
         if len(payload.encode('utf-8')) > 128_000:
             raise RuntimeError('Registro de recuperación demasiado grande; no se enviará la acción.')
@@ -101,6 +111,8 @@ class RecoveryStore:
             if phase not in PHASES:
                 raise ValueError('Fase de recuperación inválida.')
             current.update(values, phase=phase, updated_at=datetime.now(timezone.utc).isoformat())
+            if len(json.dumps(current,ensure_ascii=False).encode('utf-8')) > 128_000:
+                raise RuntimeError('Registro de recuperación demasiado grande; no se guardarán cambios ni enviará la acción.')
             if phase in ('verified','complete') and current.get('verified_status') != FINAL_STATES[current['action']]:
                 raise ValueError('No hay un estado final verificado para esta acción.')
             temporary = create_unique_file(self.folder, 'recovery-', '.tmp')
@@ -112,6 +124,15 @@ class RecoveryStore:
             finally:
                 temporary.unlink(missing_ok=True)
             return current
+
+    def resume_preparation(self, record, reviewed_request):
+        with _guard:
+            current = self.get(record['item']['ot'])
+            if (not preparation_retry_allowed(current)
+                    or current['operation_id'] != record['operation_id']):
+                raise PendingOperationError('La preparación cambió o ya se intentó Enrutar; revisa de nuevo la OT.')
+            return self.update(current,'preparing',reviewed_request=reviewed_request,
+                               retry_count=current.get('retry_count',0)+1)
 
     def update_report(self, record, result):
         """Refresh an older report after recovery, without trusting paths from JSON."""

@@ -4,6 +4,7 @@ from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import QLabel, QLineEdit, QTableWidgetItem, QMessageBox, QHeaderView
 from failure_picker import FailurePathPicker
 from technician_sat import reviewed_sat_plans, technician_sat_defaults
+from warehouse_recovery import preparation_retry_allowed
 from warehouse_ui import WarehouseBatchDialog
 from warehouse_diagnostics import log_exception, sanitize
 
@@ -13,15 +14,16 @@ class TechnicianPreviewThread(QThread):
     failed = Signal(str)
     waiting = Signal(str)
 
-    def __init__(self, items, parent=None):
+    def __init__(self, items, parent=None, *, read_reference=False):
         super().__init__(parent)
         self.items = items
+        self.read_reference = read_reference
         self.stop_requested = Event()
 
     def run(self):
         try:
             data = technician_sat_defaults(self.items, stop=self.stop_requested,
-                progress=self.waiting.emit, job_waiting=self.waiting.emit,
+                progress=self.waiting.emit, read_reference=self.read_reference, job_waiting=self.waiting.emit,
                 job_cancel_event=self.stop_requested)
             self.ready.emit(data)
         except Exception as exc:
@@ -31,7 +33,13 @@ class TechnicianPreviewThread(QThread):
 
 class TechnicianSatDialog(WarehouseBatchDialog):
     def __init__(self, items, open_ot, parent=None, *, selection=None, report_folder=None,
-                 autoload=True):
+                 autoload=True, retry_records=()):
+        records = tuple(retry_records)
+        if records and (len(records)!=len(items) or {r['item']['ot'] for r in records}!={i.ot for i in items}
+                        or not all(preparation_retry_allowed(r) for r in records)):
+            raise ValueError('El reintento no corresponde a una preparación sin enrutado.')
+        self.retry_records = records
+        self.technician_retries = {r['item']['ot']:r['operation_id'] for r in records}
         self._preview_worker = None
         self._preview_closed = False
         self._preview_complete = False
@@ -39,7 +47,7 @@ class TechnicianSatDialog(WarehouseBatchDialog):
         self.technician_plans = None
         self.inputs = {}
         self.table.setColumnCount(9)
-        for column, caption in ((6,'Horas'),(7,'Incidencia / referencia'),(8,'Motivo SAT (editable)')):
+        for column, caption in ((6,'Horas'),(7,'Incidencia'),(8,'Motivo SAT (editable)')):
             self.table.setHorizontalHeaderItem(column,QTableWidgetItem(caption))
         for row, item in enumerate(self.items):
             duration, incident, reason = QLineEdit(), QLineEdit(), QLineEdit()
@@ -65,6 +73,13 @@ class TechnicianSatDialog(WarehouseBatchDialog):
             self.failure_picker.set_selection(selection)
         self.layout().insertWidget(2,self.anomaly_label)
         self.layout().insertWidget(3,self.failure_picker)
+        for record in records:
+            request=record.get('reviewed_request') or {}
+            for key in ('duration','incident','reason'):
+                value=request.get(key,'')
+                if isinstance(value,str):self.inputs[record['item']['ot']][key].setText(value)
+            if request.get('anomaly_selection'):
+                self.failure_picker.set_selection(request['anomaly_selection'])
         self.start_button.setEnabled(False)
         self.start_button.setText('Consultar datos antes de enviar')
         self.steps.setText('Consultar → Revisar → Preparar anomalías, horas e incidencia → Enviar → Verificar')
@@ -76,7 +91,7 @@ class TechnicianSatDialog(WarehouseBatchDialog):
     def start_preview(self):
         if self._preview_closed or self.is_running():
             return
-        self._preview_worker = TechnicianPreviewThread(self.items,self)
+        self._preview_worker = TechnicianPreviewThread(self.items,self,read_reference=bool(self.retry_records))
         self._preview_worker.ready.connect(self._defaults_ready)
         self._preview_worker.failed.connect(self._preview_failed)
         self._preview_worker.waiting.connect(self.current_step.setText)
@@ -100,9 +115,11 @@ class TechnicianSatDialog(WarehouseBatchDialog):
                 continue
             defaults = data[item.ot]
             fields = self.inputs[item.ot]
-            for key in ('duration','reason'):
+            for key in ('duration','reason','incident'):
                 if not fields[key].text():
-                    fields[key].setText(defaults[key])
+                    fields[key].setText(defaults.get(key,''))
+                if defaults.get(key) is not None:
+                    fields[key].setToolTip('Valor actual en Maximo: '+str(defaults[key]))
             self.table.item(row,3).setText('Datos consultados')
             self.table.item(row,5).setText('Estado real: '+defaults['status'])
         self.start_button.setEnabled(self._preview_complete)
@@ -110,7 +127,7 @@ class TechnicianSatDialog(WarehouseBatchDialog):
         if unsuitable:
             self.current_step.setText('Envío deshabilitado: estas OTs no están en APPR: '+', '.join(unsuitable)+'. Revisa la selección.')
         else:
-            self.current_step.setText('Completa horas e incidencia por OT y revisa el motivo propuesto desde Maximo.')
+            self.current_step.setText(('Reintento: revisa la petición recuperada. Los valores actuales de Maximo aparecen al situarte sobre los campos. ' if self.retry_records else '')+'Completa horas e incidencia por OT y revisa el motivo.')
 
     def _preview_failed(self, message):
         self.current_step.setText('No se pudieron consultar los datos: '+message)

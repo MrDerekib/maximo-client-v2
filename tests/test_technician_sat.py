@@ -55,6 +55,7 @@ class TechnicianSatPlanTests(TestCase):
         from technician_sat import TechnicianSatPreparer
         preparer=TechnicianSatPreparer(Mock(),'1')
         preparer.require_approved=Mock()
+        preparer.reload_workorder=Mock()
         preparer.tab=Mock()
         return preparer
 
@@ -75,7 +76,7 @@ class TechnicianSatPlanTests(TestCase):
         preparer.value.side_effect=lambda caption:'RFN-70' if caption=='Clase de anomalía' else '0,75'
         result=preparer.prepare(plan)
         self.assertTrue(result['prepared']);self.assertEqual(result['status'],'APPR')
-        preparer.driver.refresh.assert_called_once();preparer.route.assert_not_called()
+        preparer.reload_workorder.assert_called_once();preparer.driver.refresh.assert_not_called();preparer.route.assert_not_called()
         preparer.driver.find_element.assert_not_called()
         preparer.verify_failure_rows.assert_called_once()
 
@@ -270,7 +271,7 @@ class TechnicianSatPlanTests(TestCase):
         self.assertFalse(server.routed);self.assertFalse(server.sent)
 
 
-    def test_technical_preparing_session_never_routes_or_reads_history(self):
+    def test_technical_preparation_and_routing_use_one_session(self):
         from pathlib import Path
         from unittest.mock import patch
         from tests.test_support import temporary_directory
@@ -280,32 +281,26 @@ class TechnicianSatPlanTests(TestCase):
         server=FakeServer(action='technician_sat_external',states={'1':'APPR'})
         original=server.session;events=[]
         def factory():
-            session=original();index=len(server.sessions)
+            session=original()
             session.accept_button.return_value.click.side_effect=lambda:server.sent.update(['1'])
             history=session.history_count.side_effect
-            def count(caption):events.append(('history',index));return history(caption)
+            def count(caption):events.append('history');return history(caption)
             session.history_count.side_effect=count
             return session
         plan,=reviewed_sat_plans([WarehouseItem('1')],self.values(),default_selection())
-        preparing,routing=Mock(),Mock()
-        preparing.prepare.side_effect=lambda _:events.append(('prepare',1))
-        routing.verify_prepared.side_effect=lambda _:events.append(('verify',2))
-        routing.prepare_route.return_value={'ready':True}
-        with temporary_directory() as folder,patch('technician_sat.TechnicianSatPreparer',side_effect=[preparing,routing]):
+        preparing=Mock()
+        preparing.prepare.side_effect=lambda _:events.append('prepare')
+        preparing.prepare_route.return_value={'ready':True}
+        with temporary_directory() as folder,patch('technician_sat.TechnicianSatPreparer',return_value=preparing):
             result=run_live([plan.item],'technician_sat_external',technician_plans=[plan],
                 recovery_store=RecoveryStore(Path(folder)),session_factory=factory)
         self.assertEqual(result[0].status,'success')
-        self.assertEqual(len(server.sessions),2)
-        server.sessions[0].driver.find_element.assert_not_called()
-        server.sessions[0].history_count.assert_not_called()
-        server.sessions[0].close.assert_called_once()
+        self.assertEqual(len(server.sessions),1)
         preparing.prepare.assert_called_once_with(plan)
-        routing.prepare.assert_not_called();routing.verify_prepared.assert_called_once_with(plan)
-        self.assertLess(events.index(('prepare',1)),events.index(('verify',2)))
-        self.assertLess(events.index(('verify',2)),events.index(('history',2)))
+        self.assertLess(events.index('prepare'),events.index('history'))
         self.assertEqual(server.routed['1'],1);self.assertEqual(server.sent['1'],1)
 
-    def test_changed_state_in_new_session_stops_before_routing(self):
+    def test_changed_identity_after_preparation_stops_before_routing(self):
         from pathlib import Path
         from unittest.mock import patch
         from tests.test_support import temporary_directory
@@ -315,17 +310,34 @@ class TechnicianSatPlanTests(TestCase):
         server=FakeServer(action='technician_sat_external',states={'1':'APPR'})
         original=server.session
         def factory():
-            if server.sessions:server.states['1']='INPRG'
-            return original()
+            session=original()
+            def check(state,identity):
+                if '1' in server.identity_changed:raise RuntimeError('Identity changed')
+            session.check.side_effect=check
+            return session
         plan,=reviewed_sat_plans([WarehouseItem('1')],self.values(),default_selection())
-        with temporary_directory() as folder,patch('technician_sat.TechnicianSatPreparer'):
+        with temporary_directory() as folder,patch('technician_sat.TechnicianSatPreparer') as cls:
+            cls.return_value.prepare.side_effect=lambda _:server.identity_changed.add('1')
             store=RecoveryStore(Path(folder))
             result=run_live([plan.item],'technician_sat_external',technician_plans=[plan],
                 recovery_store=store,session_factory=factory,auto_recheck=False)
             self.assertEqual(store.get('1')['phase'],'preparing')
             self.assertFalse(store.get('1')['route_attempted'])
-        self.assertEqual(result[0].status,'uncertain')
+        self.assertEqual(result[0].status,'failed')
+        self.assertEqual(result[0].step,'Preparación incompleta')
         self.assertFalse(server.routed);self.assertFalse(server.sent)
+
+    def test_native_reload_reuses_driver_and_checks_state(self):
+        from unittest.mock import patch
+        from technician_sat import TechnicianSatPreparer
+        p=TechnicianSatPreparer(Mock(),'1');p.require_approved=Mock();p.idle=Mock()
+        with patch('maximo_client.open_workorders_app') as opened, patch('maximo_client.read_workorder_status',return_value='APPR') as read:
+            p.reload_workorder()
+        opened.assert_called_once_with(p.driver,headless=True)
+        read.assert_called_once_with(p.driver,'1')
+        p.driver.refresh.assert_not_called()
+        with patch('maximo_client.open_workorders_app'), patch('maximo_client.read_workorder_status',return_value='ISSUE'):
+            with self.assertRaisesRegex(RuntimeError,'cambió de estado'):p.reload_workorder()
 
     def test_changed_anomaly_class_in_new_context_is_rejected(self):
         preparer=self.preparer();preparer.incident_present=Mock(return_value=True)

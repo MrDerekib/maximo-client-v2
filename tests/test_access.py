@@ -15,6 +15,23 @@ import updater
 
 
 class AccessTests(unittest.TestCase):
+    def test_visible_sessions_keep_automation_mode_and_seed_only_md_extension_pin(self):
+        with temporary_directory() as directory:
+            cfg = SimpleNamespace(download_dir=directory, repair_extension_enabled=True,repair_print_mode="dialog")
+            with patch.object(client, "load_config",return_value=cfg), patch.object(client.webdriver,"Edge",return_value=Mock()) as launch:
+                client.setup_driver(headless=False,profile_dir=str(Path(directory)/"profile"))
+            options=launch.call_args.kwargs["options"]
+            self.assertNotIn("excludeSwitches",options.experimental_options)
+            pinned=options.experimental_options["prefs"]["extensions.pinned_extensions"]
+            self.assertEqual(len(pinned),1)
+            self.assertTrue(options.experimental_options["prefs"]["extensions.pinned_extension_migration"])
+            self.assertRegex(pinned[0],r"^[a-p]{32}$")
+            with patch.object(client,"load_config",return_value=cfg), patch.object(client.webdriver,"Edge",return_value=Mock()) as launch:
+                client.setup_driver(headless=True,profile_dir=str(Path(directory)/"headless"))
+            options=launch.call_args.kwargs["options"]
+            self.assertNotIn("excludeSwitches",options.experimental_options)
+            self.assertNotIn("extensions.pinned_extensions",options.experimental_options["prefs"])
+
     def test_pending_repair_lookup_is_clicked_by_webdriver(self):
         option_id = "lookup_page3_tdrow_[C:1]_ttxt-lb[R:0]"
         option = Mock()

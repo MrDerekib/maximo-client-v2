@@ -1,16 +1,53 @@
 {
   "manifest_version": 3,
-  "name": "Maximo Desktop - Parte de reparación",
+  "name": "Maximo Desktop · Acciones de OT",
   "version": "0.1.0",
-  "description": "Abre el parte de reparación de la OT visible y su vista de impresión.",
-  "permissions": ["storage", "scripting", "downloads"],
-  "host_permissions": ["https://eam.indraweb.net/maximo/*"],
-  "background": { "service_worker": "service_worker.js" },
+  "description": "Acciones de la OT y seguimiento en el panel lateral de Edge.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "downloads",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://eam.indraweb.net/maximo/*"
+  ],
+  "background": {
+    "service_worker": "service_worker.js"
+  },
   "content_scripts": [
     {
-      "matches": ["https://eam.indraweb.net/maximo/*"],
-      "js": ["workflow_logic.js", "content.js"],
-      "run_at": "document_idle"
+      "matches": [
+        "https://eam.indraweb.net/maximo/*"
+      ],
+      "js": [
+        "workflow_logic.js",
+        "content.js",
+        "panel_content.js"
+      ],
+      "run_at": "document_idle",
+      "css": [
+        "panel_content.css"
+      ]
     }
-  ]
+  ],
+  "action": {
+    "default_title": "Abrir Maximo Desktop en el panel lateral",
+    "default_icon": {
+      "16": "icons/md-16.png",
+      "24": "icons/md-24.png",
+      "32": "icons/md-32.png",
+      "48": "icons/md-48.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkNnAlC5FKjYLFP0+TsIf3+tv8wMHYfRngWCqcSXl/tG6nSqmoRBd2Q92JJ4+yy8FGBhH8GDIajWGiZoJbXfGzbSTtprVyxkHReMIccOllBaeFiAMJR4Ydo69DoO1L7e68/74Lq/isoI+muovlCH9bfV7tGWEGnpiclD7iTy9w4f6Z8zltKEnhbZSrBdI1khnFOhj6b1YLO0jCLwg4UB51/praxingla6rhGZecrH3H6IUT9lENTRqwE7AnEMaCkoXEvp2MGg98q6Hdk3vdy4bCP575S1azCfeIYQr98j3m7cV+cdZdxt7YgxfkySSBTwbUloxhCBEWdwiZWM16o86wIDAQAB",
+  "icons": {
+    "16": "icons/md-16.png",
+    "32": "icons/md-32.png",
+    "48": "icons/md-48.png",
+    "128": "icons/md-128.png"
+  }
 }

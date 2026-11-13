@@ -36,7 +36,7 @@ from priority_notices import PriorityNotices
 from update_status import UpdateStatusBar
 from workorder_selection import WorkorderSelection, prepare_row_context_selection
 from db import (
-    apply_started_workorder, apply_closed_repair,
+    apply_started_workorder, apply_closed_repair, apply_warehouse_status,
     clear_current_priority_snapshot, current_priority_ots, current_priority_snapshots,
     delete_all_inactive_records, delete_inactive_record, fetch_data, filter_choices,
     fault_description_candidate_count, detailed_description_candidate_count,
@@ -1218,7 +1218,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.workorder_start_mode_combo.addItem("Iniciar y establecer anomalías", "configured")
         self.workorder_start_mode_combo.addItem("Solo iniciar: conservar anomalías actuales", "only")
         self.workorder_failure_picker = FailurePathPicker(combo_factory=DecoratedComboBox)
-        self.workorder_close_check = QCheckBox("Mostrar «Cerrar OT» en Edge")
+        self.workorder_close_check = QCheckBox("Cerrar OT en Edge y finalizar reparaciones desde MD")
         start_hint = QLabel(
             "Añade un botón «Iniciar OT» en las nuevas ventanas de Maximo abiertas desde MD. "
             "Elige si inicia conservando los datos actuales o establece la combinación predeterminada. "
@@ -1374,7 +1374,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.technician_sat_check = QCheckBox("Mostrar envío técnico a SAT externo en MD")
         technical_layout.addWidget(self.technician_sat_check)
         technical_hint = QLabel("Permite revisar y enviar una o varias OTs en APPR desde el menú contextual. "
-            "Pide horas, incidencia o referencia y motivo; propone la avería consultada en Maximo. "
+            "Pide horas, incidencia o referencia y motivo; propone la avería de MD y la consulta en Maximo solo si falta. "
             "La combinación de anomalías se revisa antes de ejecutar. No activa opciones de almacén ni de Edge.")
         technical_hint.setWordWrap(True); technical_hint.setObjectName("filterHint")
         technical_layout.addWidget(technical_hint)
@@ -1925,10 +1925,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             pdf_action.setToolTip(reason)
         if self.table.item(row, 0).text() == "○ No activo":
             menu.addAction("Eliminar registro local…", lambda: self.delete_inactive(ot))
-        if getattr(self.cfg, 'technician_sat_enabled', False):
-            self.add_technician_sat_action(menu)
-        if getattr(self.cfg, 'warehouse_enabled', False):
-            self.add_warehouse_actions(menu)
+        self.add_role_action_menus(menu)
         menu.exec(self.table.viewport().mapToGlobal(position))
 
     def delete_inactive(self, ot):
@@ -2299,13 +2296,16 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if self._closing:
             return
         ot = result['ot']
+        final=result.get('status','ISSUE')
         try:
-            apply_closed_repair(ot)
+            if final=='CLOSE':apply_warehouse_status(ot,'CLOSE')
+            else:apply_closed_repair(ot)
             self.refresh_choices()
             self.refresh_table()
         except Exception:
             logging.exception('OT %s en ISSUE, pero no se pudo refrescar su seguimiento local', ot)
-        self.status.showMessage(f'OT {ot}: pendiente dar salida del almacén (ISSUE).', 10000)
+        message='equipo declarado irreparable (CLOSE)' if final=='CLOSE' else 'pendiente dar salida del almacén (ISSUE)'
+        self.status.showMessage(f'OT {ot}: {message}.', 10000)
 
     def open_repair_report(self, ot, action):
         if self._closing or not ot or not self._credentials_ready(): return
@@ -2836,7 +2836,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             for dialog in self._warehouse_dialogs:
                 if dialog.is_running():
                     dialog.request_stop()
-                    dialog.show(); dialog.raise_()
+                    target=getattr(dialog,'progress_dialog',None) or dialog
+                    target.show(); target.raise_()
             return
         if self._closing:
             return

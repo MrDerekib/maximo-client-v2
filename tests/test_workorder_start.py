@@ -284,6 +284,20 @@ class BrowserStartTests(TestCase):
         self.assertTrue(FixtureStarter(self.browser,'4314531',timeout=2).save())
         self.assertEqual(self.browser.execute_script('return state.events').count(['save']), 1)
 
+    def test_save_without_notice_verifies_saved_values_without_second_click(self):
+        self.browser.execute_script("resetState({faultclass:'RFN-70',problem:'OTROS-01',cause:'OTROS-02',remedy:'OTROS-03',dirty:true,persistenceModel:true})")
+        original=self.browser.execute_script
+        def execute(script,*args):
+            if "document.querySelectorAll('[role=alert]')" in script:return []
+            return original(script,*args)
+        starter=FixtureStarter(self.browser,'4314531',timeout=3)
+        with patch.object(self.browser,'execute_script',side_effect=execute):
+            self.assertTrue(starter.save_anomalies(workflow.resolve_selection(workflow.default_selection())['path'],'RFN-70'))
+        state=self.browser.execute_script('return state')
+        self.assertEqual(state['events'].count(['save']),1)
+        self.assertEqual(state['events'].count(['fresh-read']),1)
+        self.assertEqual(state['routes'],0)
+
     def test_automatic_code_save_is_verified_before_starting_without_a_second_save(self):
         self.run_fixture(faultclass='OTHER',problem='',cause='',remedy='',nativeAutosave=True,persistenceModel=True)
         state=self.browser.execute_script('return state')

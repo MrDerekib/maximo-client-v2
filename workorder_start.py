@@ -1,6 +1,7 @@
 """Inicio explícito de OT mediante los controles nativos de Maximo."""
 import json
 import logging
+import re
 import time
 import unicodedata
 from pathlib import Path
@@ -39,6 +40,10 @@ VISIBLE_DIALOGS_SCRIPT = """
       return true;
     });
 """
+
+
+class SaveConfirmationMissing(RuntimeError):
+    """Save responded without a success notice; persisted values must be read back."""
 
 
 class WorkorderStarter:
@@ -303,26 +308,39 @@ class WorkorderStarter:
                 self.progress(f"OT {self.ot}: continuando el aviso de problema ya informado…")
                 self.button("alreadyreported-dialog_inner", "Continuar")
                 continue
-            saved = self.driver.execute_script("""
-                return [...document.querySelectorAll('[role=alert]')].some(e =>
-                  e.getClientRects().length && /BMXAA4205I/.test(e.textContent));
+            alerts = self.driver.execute_script("""
+                return [...document.querySelectorAll('[role=alert]')]
+                  .filter(e=>e.getClientRects().length).map(e=>e.textContent);
             """)
-            if not saved:
-                raise RuntimeError("Maximo respondió, pero no confirmó que la OT se haya guardado.")
+            errors = [text for text in alerts if re.search(r'BMX[A-Z0-9]+E\b', text)]
+            if errors:
+                raise RuntimeError('Maximo rechazó el guardado: ' + ' · '.join(errors))
+            if not any('BMXAA4205I' in text for text in alerts):
+                logging.warning('OT %s: respuesta a Guardar sin aviso de éxito; requiere lectura nueva.', self.ot)
+                raise SaveConfirmationMissing("Maximo respondió, pero no confirmó que la OT se haya guardado.")
             return True
         raise RuntimeError(f"Maximo repitió el aviso de guardado; se detuvo el {self.operation} de la OT.")
 
+    def reload_workorder(self):
+        """Reload the saved record; specialised workflows may use native navigation."""
+        self.driver.refresh()
+
     def save_anomalies(self, path, class_code=None):
         """Save normally, or verify a fresh server view when Save is disabled."""
-        if self.save():
-            return True
-        if self._save_unavailable != "disabled":
-            return False
+        try:
+            if self.save():
+                return True
+            if self._save_unavailable != "disabled":
+                return False
+            reason = "Guardar deshabilitado"
+        except SaveConfirmationMissing:
+            reason = "respuesta sin aviso de guardado"
         self.check_startable()
         self.reject_dialogs()
-        self.progress(f"OT {self.ot}: Guardar está deshabilitado; comprobando los datos guardados…")
+        self.progress(f"OT {self.ot}: comprobando los datos guardados en Maximo…")
+        logging.info('OT %s: verificando anomalías mediante consulta nueva (%s); no se repite Guardar.', self.ot, reason)
         self.set_anomaly_diagnostic_stage("verify_automatic_save")
-        self.driver.refresh()
+        self.reload_workorder()
         self.wait(lambda d: self.value("Orden de trabajo") == self.ot and self.value("Estado"), "recarga para verificar el guardado")
         self.idle()
         self.check_location()
@@ -336,6 +354,8 @@ class WorkorderStarter:
         actual = sorted((row["type"], row["code"]) for row in snapshot["rows"])
         if ((class_code is not None and actual_class != class_code) or actual != expected or
                 any("deshacer suprimir" in normalized(row.get("toggleTitle")) for row in snapshot["rows"])):
+            logging.warning('OT %s: guardado no verificado; clase esperada=%s, recibida=%s; códigos esperados=%s, recibidos=%s.',
+                            self.ot, class_code, actual_class, expected, actual)
             return False
         self.tab("Soluciones")
         codes = self.solution_codes()
@@ -345,7 +365,9 @@ class WorkorderStarter:
         matches = all((codes.get(kind) or "").strip() == wanted.get(kind, "") for kind in ("PROBLEM", "CAUSE", "REMEDY"))
         self.check_startable()
         if matches:
-            logging.info("OT %s: valores confirmados tras recargar con Guardar deshabilitado", self.ot)
+            logging.info("OT %s: clase, códigos y soluciones confirmados en consulta nueva (%s).", self.ot, reason)
+        if not matches:
+            logging.warning('OT %s: soluciones guardadas no coinciden; esperadas=%s, recibidas=%s.', self.ot, wanted, codes)
         return matches
 
     def start_choice(self, dialog):

@@ -1,13 +1,16 @@
 """Reviewed input for technician SAT dispatch; separate from warehouse reception."""
+import logging
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from threading import Event
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from workorder_start import WorkorderStarter, normalized
+from workorder_start import WorkorderStarter, SaveConfirmationMissing, normalized
 from task_priorities import coordinator, scheduled, HIGH
 
+from db import get_fault_description
 from failure_catalog import resolve_selection
 from warehouse import WarehouseItem, freeze_items
 from workorder_close import repair_seconds
@@ -15,6 +18,13 @@ from workorder_close import repair_seconds
 
 TECHNICIAN_SAT_LABEL = 'Enviar a SAT Externo'
 TECHNICIAN_SAT_INITIAL_STATE = 'APPR'
+
+
+def format_incident(value):
+    text=str(value or '').strip()
+    text=re.sub(r'^(?:inc\s*:\s*)+', '', text, flags=re.IGNORECASE).strip()
+    if not text:raise ValueError('Introduce la incidencia (texto libre).')
+    return 'inc: '+text
 
 
 @dataclass(frozen=True)
@@ -27,7 +37,12 @@ class TechnicianSatPlan:
 
     @property
     def incident_summary(self):
-        return 'inc: ' + self.incident
+        return format_incident(self.incident)
+
+
+def saved_request(plan):
+    return {'duration':plan.duration, 'incident':plan.incident, 'reason':plan.reason,
+            'anomaly_selection':deepcopy(plan.anomaly_selection)}
 
 
 def reviewed_sat_plans(items, values, selection):
@@ -52,6 +67,7 @@ def reviewed_sat_plans(items, values, selection):
         incident = str(row.get('incident') or '').strip()
         if not incident or any(ord(ch) < 32 for ch in incident):
             raise ValueError(f'OT {item.ot}: introduce una incidencia o referencia, por ejemplo stock.')
+        format_incident(incident)
         # Native worklog Summary limit will also be checked before typing.
         reason = str(row.get('reason') or '').strip()
         if not reason:
@@ -72,6 +88,9 @@ class TechnicianSatPreparer(WorkorderStarter):
 
     def fault_reason(self):
         self.require_approved()
+        cached=get_fault_description(self.ot)
+        if cached:
+            return cached
         self.tab('Orden de trabajo')
         return self.value('Resumen') or ''
 
@@ -156,6 +175,17 @@ class TechnicianSatPreparer(WorkorderStarter):
         self._write_text('Resumen', summary)
         return True
 
+    def reload_workorder(self):
+        """Reopen through Maximo, preserving its client queue and the current login."""
+        import maximo_client as client
+        self.require_approved()
+        client.open_workorders_app(self.driver, headless=True)
+        status = client.read_workorder_status(self.driver, self.ot)
+        if status != TECHNICIAN_SAT_INITIAL_STATE:
+            raise RuntimeError('La OT cambió de estado al consultar los datos guardados; no se enrutará.')
+        self.idle()
+        self.require_approved()
+
     def prepare_route(self):
         """Wait for the final native tab response, not just its optimistic ARIA flag."""
         self.require_approved()
@@ -222,18 +252,25 @@ class TechnicianSatPreparer(WorkorderStarter):
         self.set_repair_duration(checked.duration)
         self.progress(f'OT {self.ot}: preparando el registro de incidencia…')
         created = self.ensure_incident(checked.incident_summary)
-        saved = self.save()
-        if not saved and self._save_unavailable != 'disabled':
+        try:
+            saved = self.save()
+        except SaveConfirmationMissing:
+            # No repeat click: only a fresh, complete read-back can establish success.
+            saved = None
+            self.progress(f'OT {self.ot}: verificando el guardado de horas e incidencia…')
+            logging.warning('OT %s: sin aviso de guardado final; se consultará la preparación completa antes de enrutar.', self.ot)
+        if saved is False and self._save_unavailable != 'disabled':
             raise RuntimeError('No se encontró una acción Guardar válida; no se enrutará.')
-        self.driver.refresh()
+        self.reload_workorder()
         self.wait(lambda _: self.value('Orden de trabajo') == self.ot and self.value('Estado'),
                   'consulta nueva de la preparación guardada')
         self.verify_prepared(checked)
+        logging.info('OT %s: preparación SAT confirmada por consulta nueva: clase, códigos, soluciones, horas e incidencia.', self.ot)
         return {'ot':self.ot, 'status':'APPR', 'prepared':True, 'incident_created':created,
                 'fault_reason':fault}
 
     def verify_prepared(self, plan):
-        """Read the saved inputs in either the preparing or the new routing session."""
+        """Read the saved inputs without modifying or routing the OT."""
         self.require_approved()
         if plan.item.ot != self.ot:
             raise ValueError('La preparación corresponde a otra OT.')
@@ -253,7 +290,7 @@ class TechnicianSatPreparer(WorkorderStarter):
 
 
 @scheduled('Consultar envío técnico a SAT', HIGH)
-def technician_sat_defaults(items, *, stop=None, progress=None, session_factory=None):
+def technician_sat_defaults(items, *, stop=None, progress=None, session_factory=None, read_reference=False):
     """Read fresh defaults for review; never save, prepare or route."""
     from warehouse_transport import WarehouseSession
     stop = stop or Event()
@@ -276,10 +313,20 @@ def technician_sat_defaults(items, *, stop=None, progress=None, session_factory=
                 raise RuntimeError(f'OT {item.ot}: no se pudo contrastar equipo y planta.')
             if item.serial and item.serial.strip() != (identity.get('Nº de serie') or '').strip():
                 raise RuntimeError(f'OT {item.ot}: el número de serie no coincide.')
-            reason = reader.value('Resumen') or ''
+            reason = get_fault_description(item.ot) or reader.value('Resumen') or ''
             reader.tab('Consumos Actuales')
             duration = reader.value('Horas totales de reparación') or ''
             values[item.ot] = {'reason':reason, 'duration':duration, 'status':state}
+            if read_reference and state == 'APPR':
+                reference_reader = TechnicianSatPreparer(session.driver,item.ot)
+                reference_reader.tab('Registro')
+                snapshot = reference_reader.worklog_snapshot()
+                references = {match.group(1).strip() for row in snapshot['rows']
+                    if any(normalized(cell)=='clientnote' for cell in row['cells'])
+                    for cell in row['cells'] if (match:=re.fullmatch(r'inc\s*:\s*(.+)',cell,re.I))}
+                complete = bool(snapshot['totals']) and len(set(snapshot['totals']))==1 and snapshot['totals'][0]<=len(snapshot['rows'])
+                values[item.ot]['incident'] = next(iter(references)) if complete and len(references)==1 else ''
+
         return values
     finally:
         if session is not None:

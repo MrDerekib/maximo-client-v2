@@ -102,10 +102,13 @@ class WorkorderStartUiTests(TestCase):
         ui.table.indexAt.return_value.column.return_value = 1
         ui.table.item.side_effect = lambda row,col: SimpleNamespace(text=lambda: 'APPR' if col==7 else 'Activo')
         ui.selected_ot = Mock(return_value='4314531')
+        ui.add_role_action_menus = Mock()
         menu = Mock()
         with patch('ui_qt.QMenu',return_value=menu):
             MaximoDesktopWindow.show_context_menu(ui, Mock())
         labels = [call.args[0] for call in menu.addAction.call_args_list]
+        ui.add_role_action_menus.assert_called_once_with(menu)
+        ui._start_task.assert_not_called()
         self.assertIn('Abrir OT en Maximo',labels)
         self.assertNotIn('Iniciar OT',labels)
         self.assertNotIn('Cerrar OT',labels)

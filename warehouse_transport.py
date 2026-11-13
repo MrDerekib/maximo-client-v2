@@ -17,8 +17,9 @@ import maximo_client as client
 from warehouse import ACTIONS, FINAL_STATES, WarehouseResult, freeze_items
 from workorder_start import WorkorderStarter, normalized
 from warehouse_diagnostics import sanitize, log_exception
-from warehouse_recovery import RecoveryStore, recovery_item, PendingOperationError
+from warehouse_recovery import RecoveryStore, recovery_item, PendingOperationError, preparation_retry_allowed
 
+REPAIR_HISTORY = {'technician_discard':'Desechar equipo','technician_close':'Cerrar OT'}
 SAT_ACTIONS = {'technician_sat_external': 'SAT Externo', 'receive_sat_external': 'SAT Externo', 'receive_sat_internal': 'SAT Interno'}
 
 
@@ -137,11 +138,14 @@ class WarehouseSession:
         return self.sat_details('receive_sat_external', text, initial_state, identity, before_accept)
 
     def sat_details(self, action, text, initial_state, identity, before_accept):
-        expected_title = SAT_ACTIONS[action]
+        return self.rich_details(SAT_ACTIONS[action],text,initial_state,identity,before_accept,
+            expected_id='ENVIAR_SAT_EXT-dialog_inner' if action=='technician_sat_external' else None)
+
+    def rich_details(self, expected_title, text, initial_state, identity, before_accept, *, expected_id=None):
         def matching_dialog():
             dialogs = self.reader.dialogs()
             return (len(dialogs) == 1 and
-                    (action != 'technician_sat_external' or dialogs[0].get_attribute('id') == 'ENVIAR_SAT_EXT-dialog_inner') and
+                    (expected_id is None or dialogs[0].get_attribute('id') == expected_id) and
                     normalized(dialogs[0].text.strip().split('\n')[0]) == normalized(expected_title))
         self.reader.wait(lambda d: matching_dialog(), f'detalles de {expected_title}')
         self.check(initial_state, identity)
@@ -274,6 +278,9 @@ def _recover_one(record, store, session_factory, journal, stop, attempts=2):
         record = current
     except Exception as exc:
         return replace(result, detail='No se pudo comprobar el registro pendiente: '+sanitize(str(exc))[:400])
+    if preparation_retry_allowed(record):
+        return replace(result,status='failed',step='Preparación incompleta',completed_steps=1,
+            detail=record.get('last_error','')+' No se llegó a Enrutar. Usa Reintentar preparación para revisar los datos y confirmar un nuevo intento.')
     if stop.is_set():
         return replace(result, detail='Reverificación detenida; la operación sigue pendiente.')
     if record.get('verified_status') == FINAL_STATES[action]:
@@ -300,7 +307,7 @@ def _recover_one(record, store, session_factory, journal, stop, attempts=2):
             final = session.verify(item.ot, FINAL_STATES[action], identity)
             if final != FINAL_STATES[action]:
                 raise RuntimeError('La consulta no confirmó el estado final solicitado.')
-            if action in SAT_ACTIONS:
+            if action in SAT_ACTIONS or action in REPAIR_HISTORY:
                 before = record.get('history_before')
                 if type(before) is not int or before < 0:
                     raise RuntimeError('Falta la evidencia de historial previa al envío SAT; requiere revisión manual.')
@@ -308,6 +315,9 @@ def _recover_one(record, store, session_factory, journal, stop, attempts=2):
                 journal({'event':'recheck_history','ot':item.ot,'action':action,'before':before,'after':after})
                 if after <= before:
                     raise RuntimeError('No hay una nueva entrada de la acción SAT solicitada.')
+            if action in REPAIR_HISTORY:
+                from technician_repair import verify_saved_repair
+                verify_saved_repair(session,record['reviewed_request'])
             store.update(record, 'verified', verified_status=final)
             journal({'event':'recheck_verified','ot':item.ot,'action':action,'actual_state':final,
                      'operation_id':record['operation_id'],'confirmation_replayed':False})
@@ -342,8 +352,10 @@ def reverify_pending(records, *, recovery_store=None, stop=None, progress=None, 
 
 @scheduled('Operaciones de almacén', HIGH)
 def run_live(items, action, *, stop=None, progress=None, journal=None, details=None,
-             session_factory=WarehouseSession, recovery_store=None, auto_recheck=True, technician_plans=None):
+             session_factory=WarehouseSession, recovery_store=None, auto_recheck=True, technician_plans=None, technician_retries=None):
     """Retry reads before routing; after any possible effect, only query the result."""
+    if action in REPAIR_HISTORY:
+        raise ValueError('Esta reparación requiere su formulario y el flujo de revisión específico.')
     if action not in FINAL_STATES:
         raise ValueError('Esta acción todavía no está validada para ejecución real.')
     items=freeze_items(items);store=recovery_store or default_recovery_store()
@@ -358,6 +370,9 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                 'duration':plan.duration, 'incident':plan.incident, 'reason':plan.reason}}, plan.anomaly_selection)
             plans[plan.item.ot] = checked
         details = {ot:p.reason for ot,p in plans.items()}
+    retry_ids = dict(technician_retries or {})
+    if retry_ids and (action != 'technician_sat_external' or not set(retry_ids).issubset(plans)):
+        raise ValueError('El reintento no corresponde a las OTs revisadas.')
     details={str(ot):str(text).strip() for ot,text in (details or {}).items()}
     stop,progress=stop or Event(),progress or (lambda i,r:None)
     journal=journal or (lambda e:logging.info('Almacén: %s',json.dumps(e,ensure_ascii=False)))
@@ -383,7 +398,11 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                     if stop.is_set():
                         result=replace(result,status='stopped',detail='Detenida antes de comenzar.');break
                     existing=store.get(item.ot)
-                    if existing:
+                    retrying = bool(existing and retry_ids.get(item.ot)==existing['operation_id']
+                                    and preparation_retry_allowed(existing))
+                    if retry_ids.get(item.ot) and not retrying:
+                        raise RuntimeError('La preparación pendiente cambió o ya se intentó Enrutar; vuelve a abrir su revisión.')
+                    if existing and not retrying:
                         result=replace(result,status='uncertain',step='Operación anterior pendiente',
                             detail='Esta OT tiene una operación pendiente. Usa Reverificar; no se enviará otra acción.')
                         journal({'event':'duplicate_blocked','ot':item.ot,'action':action,
@@ -395,6 +414,8 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                     journal({'event':'live_status_read','ot':item.ot,'action':action,'actual_state':actual})
                     step('Comprobar OT y estado',1)
                     identity=_identity(session,item)
+                    if retrying and identity != existing['identity']:
+                        raise RuntimeError('La identidad cambió; no se reintentará la preparación.')
                     if actual==FINAL_STATES[action] and action not in SAT_ACTIONS:
                         final=session.verify(item.ot,FINAL_STATES[action],identity)
                         if final != FINAL_STATES[action]:raise RuntimeError('No se confirmó el estado final.')
@@ -412,7 +433,13 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                     journal({'ot':item.ot,'action':action,'initial_state':actual,'identity':identity,'history_before':prior})
                     session.check(actual,identity);session.reader.reject_dialogs()
                     if action == 'technician_sat_external':
-                        record=store.begin(item,action,identity,actual,prior,preparing=True)
+                        from technician_sat import saved_request
+                        request = saved_request(plans[item.ot])
+                        if retrying:
+                            record=store.resume_preparation(existing,request)
+                            journal({'event':'reviewed_preparation_retry','ot':item.ot,'operation_id':record['operation_id']})
+                        else:
+                            record=store.begin(item,action,identity,actual,prior,preparing=True,reviewed_request=request)
                         result=replace(result,operation_id=record['operation_id'])
                         step('Preparar anomalías, horas e incidencia',2)
                         from technician_sat import TechnicianSatPreparer
@@ -421,26 +448,16 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                         preparer.prepare(plans[item.ot])
                         journal({'event':'technician_preparation_saved','ot':item.ot,'action':action,
                                  'operation_id':record['operation_id']})
-                        # A separate login/MBO context is used before the first routing click.
-                        # Never restart this session after routing or either confirmation.
-                        retire()
-                        step('Abrir sesión limpia para el envío',2)
-                        session=session_factory()
-                        reopened=session.open(item.ot)
-                        if reopened != actual or _identity(session,item) != identity:
-                            raise RuntimeError('La OT o su identidad cambiaron al abrir la sesión de envío; no se enrutará.')
-                        preparer=TechnicianSatPreparer(session.driver,item.ot,
-                            progress=lambda text: step(text,2))
                         session.reader=preparer
-                        preparer.verify_prepared(plans[item.ot])
-                        # Read the baseline after preparation, in the very session that routes.
+                        # Preparation already reopened and verified the saved record natively.
+                        # Keep this same browser/login for the history baseline and routing.
                         prior=session.history_count(ACTIONS[action].native_label)
                         if type(prior) is not int or prior<0:
-                            raise RuntimeError('No se pudo leer el historial previo de SAT en la sesión de envío.')
+                            raise RuntimeError('No se pudo leer el historial previo de SAT.')
                         record=store.update(record,'preparing',history_before=prior)
-                        journal({'event':'technician_route_session_opened','ot':item.ot,'action':action,
+                        journal({'event':'technician_route_same_session','ot':item.ot,'action':action,
                                  'operation_id':record['operation_id'],'history_before':prior,
-                                 'identity':identity,'actual_state':reopened})
+                                 'identity':identity,'actual_state':actual})
                         readiness = preparer.prepare_route()
                         session.check(actual,identity)
                         journal({'event':'technician_route_ready','ot':item.ot,'action':action,
@@ -507,7 +524,10 @@ def run_live(items, action, *, stop=None, progress=None, journal=None, details=N
                                 last_error=message.split('Stacktrace:')[0][:600])
                         except Exception:
                             logging.exception('No se pudo conservar el error original de la OT %s',item.ot)
-                    result=replace(result,status='uncertain' if routed or submitted or record else 'failed',
+                    incomplete = preparation_retry_allowed(record)
+                    result=replace(result,status='failed' if incomplete else 'uncertain' if routed or submitted or record else 'failed',
+                        step='Preparación incompleta' if incomplete else result.step,
+                        completed_steps=1 if incomplete else result.completed_steps,
                         detail=message.split('Stacktrace:')[0][:600],operation_id=record['operation_id'] if record else '')
                     break
             results.append(result)

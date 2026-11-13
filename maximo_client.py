@@ -5,6 +5,8 @@ from task_priorities import coordinator, ReadYield
 # maximo_client.py
 import os
 import json
+import base64
+import hashlib
 import time
 import shutil
 import threading
@@ -175,11 +177,32 @@ def _should_close_after_direct_print(requested: bool, headless: bool, printer_na
     return bool(requested and not headless and printer_name)
 
 
+def repair_extension_toolbar_preferences(extension):
+    """Seed the disposable MD profile; never change the user's Edge policies."""
+    try:
+        manifest = json.loads((Path(extension) / "manifest.json").read_text(encoding="utf-8"))
+        if not manifest.get("key"):
+            return {}
+        public_key = base64.b64decode(manifest["key"], validate=True)
+        digest = hashlib.sha256(public_key).hexdigest()[:32]
+        extension_id = "".join(chr(ord("a") + int(char, 16)) for char in digest)
+        return {
+            "extensions.pinned_extensions": [extension_id],
+            # Otherwise Edge's first-run migration replaces the seeded list
+            # with the (empty) legacy toolbar list in a new temporary profile.
+            "extensions.pinned_extension_migration": True,
+        }
+    except (OSError, ValueError, TypeError):
+        logging.warning("No se pudo preparar el icono fijo de la extensión de MD", exc_info=True)
+        return {}
+
+
 def setup_driver(headless=True, profile_dir=None, download_dir=None, force_repair_extension=False):
     cfg = load_config()
     logging.info("Inicializando Edge...")
 
     options = EdgeOptions()
+    extension_preferences = {}
     if headless:
         options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
@@ -199,6 +222,7 @@ def setup_driver(headless=True, profile_dir=None, download_dir=None, force_repai
         if not (extension / "manifest.json").is_file():
             raise FileNotFoundError(f"No se encuentra la extensión del parte: {extension}")
         options.add_argument(f"--load-extension={extension}")
+        extension_preferences = repair_extension_toolbar_preferences(extension)
         if getattr(cfg, "repair_print_mode", "dialog") == "direct":
             printer = default_printer_name()
             if printer:
@@ -215,6 +239,7 @@ def setup_driver(headless=True, profile_dir=None, download_dir=None, force_repai
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
     }
+    prefs.update(extension_preferences)
     if not headless:
         prefs["printing.print_preview_sticky_settings"] = visible_ot_print_preferences()
     options.add_experimental_option("prefs", prefs)
@@ -643,7 +668,13 @@ def start_repair_report(
     def ready(browser):
         try:
             button = browser.find_element(By.ID, "maximo-desktop-print-part")
-            return button if button.is_displayed() and button.is_enabled() else False
+            # The side panel hides the legacy control visually, but MD still
+            # starts the same guarded HTML/PDF report workflow through it.
+            presented = button.is_displayed() or browser.execute_script(
+                "return document.documentElement.dataset.maximoPresentation === 'sidepanel' "
+                "&& !arguments[0].hidden;", button,
+            )
+            return button if presented and button.is_enabled() else False
         except Exception:
             return False
 

@@ -62,6 +62,7 @@ function chromeHarness() {
       async remove(key) { session.delete(key); }
     } },
     tabs: {
+      async query() { return []; },
       async update(tabId, properties) {
         activatedTabs.push({ tabId, properties });
         return { id: tabId, windowId: 10 };
@@ -350,11 +351,11 @@ test("direct Boixeres printing closes each BIRT tab between both variants", asyn
   assert.equal(session.has(JOB_KEY), false);
 });
 
-test("PDF jobs stay single even for TMB BOIXERES", async () => {
+test("Boixeres PDF jobs include the same two native report variants", async () => {
   const { handleMessage } = chromeHarness();
   const job = await handleMessage({ type: "START", ot: "4228010", outputFormat: "pdf",
     client: "TMB BOIXERES" }, { tab: { id: 1 } });
-  assert.equal(job.variantCount, 1);
+  assert.equal(job.variantCount, 2);
 });
 
 test("repair report variants set Maximo's include-technician parameter in the page context", async () => {
@@ -441,4 +442,165 @@ test("an unrelated report window cannot claim or finish the job", async () => {
     handleMessage({ type: "FINISH", jobId: started.jobId }, { tab: { id: 9 } }),
     /no pertenece/
   );
+});
+
+
+test("source activation transfers focus from the panel without clicking the menu", async () => {
+  const { handleMessage, executions } = chromeHarness();
+  const source = { tab: { id: 1 } };
+  const { jobId } = await handleMessage({ type: "START", ot: "4411048" }, source);
+  await handleMessage({ type: "ACTIVATE_SOURCE", jobId }, source);
+  assert.equal(executions[0].world, "MAIN");
+  assert.equal(executions[0].target.tabId, 1);
+  const previousDocument = global.document;
+  const previousWindow = global.window;
+  let focused = false;
+  let clicked = false;
+  global.window = { focus() {} };
+  global.document = { hasFocus: () => focused, querySelectorAll: () => [
+    { getClientRects: () => [], focus() { throw Error("Hidden menu"); } },
+    { getClientRects: () => [1], focus(options) {
+      assert.equal(options.preventScroll, true); focused = true;
+    }, click() { clicked = true; } }
+  ] };
+  try {
+    executions[0].func();
+    assert.equal(focused, true);
+    assert.equal(clicked, false);
+  } finally {
+    global.document = previousDocument;
+    global.window = previousWindow;
+  }
+});
+
+
+test("printing releases Edge panel focus only when focusing the page is insufficient", async () => {
+  for (const focused of [true, false]) {
+    const { handleMessage } = chromeHarness();
+    const events = [];
+    chrome.scripting.executeScript = async () => {
+      events.push("focus-page");
+      return [{ result: { focused: events.length > 1 || focused } }];
+    };
+    chrome.sidePanel = { close: async options => {
+      assert.equal(options.windowId, 10); events.push("close-panel");
+    } };
+    const source = { tab: { id: 1 } };
+    const { jobId } = await handleMessage({ type: "START", ot: "4411048" }, source);
+    await handleMessage({ type: "ACTIVATE_SOURCE", jobId }, source);
+    assert.deepEqual(events, focused ? ["focus-page"] : ["focus-page", "close-panel", "focus-page"]);
+    await assert.rejects(handleMessage({ type: "ACTIVATE_SOURCE", jobId }, {tab:{id:2}}), /no pertenece/);
+  }
+});
+
+
+const nativePdfLib = require("../vendor/pdf-lib.min.js");
+const pdfMerge = require("../pdf_merge.js");
+async function nativePdf(width) {
+  const doc = await nativePdfLib.PDFDocument.create();
+  doc.addPage([width, 400]);
+  return doc.save();
+}
+function mergerEnvironment() {
+  global.PDFLib=nativePdfLib;
+  global.repairPdfBase64=pdfMerge.repairPdfBase64;
+  global.mergeRepairPdfs=pdfMerge.mergeRepairPdfs;
+}
+
+test("Boixeres saves one combined PDF, preserving variant/page order with one filename prompt", async () => {
+  const h=chromeHarness();mergerEnvironment();
+  const previousFetch=global.fetch;
+  const source={tab:{id:1}};
+  const url="https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign&__requestid=";
+  const parts=[await nativePdf(200),await nativePdf(300)];
+  chrome.tabs.query=async()=>[
+    {id:1,url:'https://eam.indraweb.net/maximo/ui/'},
+    {id:2,openerTabId:1,url:'https://eam.indraweb.net/maximo/report?__report=parte_reparacion.rptdesign'},
+    {id:3,openerTabId:2,url:url+'1'}];
+  const sendMessage=chrome.tabs.sendMessage;
+  chrome.tabs.sendMessage=async (id,message)=>{
+    if(message.type==='NEXT_VARIANT')assert.deepEqual(h.removedTabs,[3,2]);
+    return sendMessage(id,message);
+  };
+  const requests=[];
+  global.fetch=async (requested,options)=>{
+    requests.push([requested,options]);
+    const bytes=parts[requests.length-1];
+    return {ok:true,url:requested,arrayBuffer:async()=>bytes.buffer};
+  };
+  try {
+    await h.handleMessage({type:"START",ot:"4228010",outputFormat:"pdf",client:"TMB BOIXERES"},source);
+    await h.handleMessage({type:"CLAIM_VIEWER"},{tab:{id:2,openerTabId:1}});
+    await h.handlePdfOutput(3,{url:url+"1"},{id:3,openerTabId:2,url:url+"1"});
+    assert.equal(h.downloads.length,0,"the first variant must not open Save As");
+    assert.equal(h.session.get(h.JOB_KEY).variantIndex,1);
+    assert.equal(h.sent.at(-1).message.type,"NEXT_VARIANT");
+    // A restarted MV3 worker recovers the first PDF from session storage.
+    delete require.cache[require.resolve("../service_worker.js")];
+    const restarted=require("../service_worker.js");
+    await restarted.handleMessage({type:"CLAIM_VIEWER"},{tab:{id:4,openerTabId:1}});
+    await restarted.handlePdfOutput(5,{url:url+"2"},{id:5,openerTabId:4,url:url+"2"});
+    assert.equal(h.downloads.length,1);
+    const download=h.downloads[0];
+    assert.equal(download.filename,"parte_reparacion_OT4228010.pdf");
+    assert.equal(download.saveAs,true);assert.equal(download.conflictAction,"uniquify");
+    assert.match(download.url,/^data:application\/pdf;base64,/);
+    const merged=await nativePdfLib.PDFDocument.load(download.url);
+    assert.deepEqual(merged.getPages().map(p=>p.getWidth()),[200,300]);
+    assert.equal(h.session.has(h.JOB_KEY),false);
+    assert.equal(requests.length,2);
+    assert.ok(requests.every(([,options])=>options.credentials==="include"));
+    assert.match(h.sent.at(-1).message.text,/ambas variantes/);
+    assert.deepEqual(h.removedTabs,[3,2],"BIRT preview and its viewer close before generating the next variant");
+  } finally {global.fetch=previousFetch;}
+});
+
+test("a missing/expired or invalid Boixeres PDF never downloads a misleading partial combined report", async () => {
+  const h=chromeHarness();mergerEnvironment();
+  const previousFetch=global.fetch;
+  const url="https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign";
+  global.fetch=async()=>({ok:true,url,arrayBuffer:async()=>new TextEncoder().encode("<html>Login</html>").buffer});
+  try {
+    await h.handleMessage({type:"START",ot:"4228010",outputFormat:"pdf",client:"TMB BOIXERES"},{tab:{id:1}});
+    await h.handleMessage({type:"CLAIM_VIEWER"},{tab:{id:2,openerTabId:1}});
+    await h.handlePdfOutput(3,{url},{id:3,openerTabId:2,url});
+    assert.equal(h.downloads.length,0);assert.equal(h.session.has(h.JOB_KEY),false);
+    assert.match(h.sent.at(-1).message.text,/PDF válido/);
+    assert.equal(h.sent.filter(e=>e.message.type==="NEXT_VARIANT").length,0);
+  } finally {global.fetch=previousFetch;}
+});
+
+test("failure obtaining the second Boixeres PDF does not save the first as a complete result", async () => {
+  const h=chromeHarness();mergerEnvironment();
+  const previousFetch=global.fetch;
+  const url="https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign";
+  const bytes=await nativePdf(200);let calls=0;
+  global.fetch=async()=>{if(calls++)throw new Error("Connection lost");return {ok:true,url,arrayBuffer:async()=>bytes.buffer};};
+  try {
+    await h.handleMessage({type:"START",ot:"4228010",outputFormat:"pdf",client:"TMB BOIXERES"},{tab:{id:1}});
+    await h.handleMessage({type:"CLAIM_VIEWER"},{tab:{id:2,openerTabId:1}});
+    await h.handlePdfOutput(3,{url},{id:3,openerTabId:2,url});
+    await h.handleMessage({type:"CLAIM_VIEWER"},{tab:{id:4,openerTabId:1}});
+    await h.handlePdfOutput(5,{url},{id:5,openerTabId:4,url});
+    assert.equal(h.downloads.length,0);assert.equal(h.session.has(h.JOB_KEY),false);
+    assert.match(h.sent.at(-1).message.text,/Connection lost/);
+  } finally {global.fetch=previousFetch;}
+});
+
+
+test("PDF cleanup never closes a preview the user navigated elsewhere", async () => {
+  const h=chromeHarness();mergerEnvironment();
+  const previousFetch=global.fetch;
+  const url="https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign";
+  const bytes=await nativePdf(200);
+  chrome.tabs.query=async()=>[{id:3,openerTabId:2,url:'https://eam.indraweb.net/maximo/ui/'}];
+  global.fetch=async()=>({ok:true,url,arrayBuffer:async()=>bytes.buffer});
+  try {
+    await h.handleMessage({type:"START",ot:"4228010",outputFormat:"pdf",client:"TMB BOIXERES"},{tab:{id:1}});
+    await h.handleMessage({type:"CLAIM_VIEWER"},{tab:{id:2,openerTabId:1}});
+    await h.handlePdfOutput(3,{url},{id:3,openerTabId:2,url});
+    assert.deepEqual(h.removedTabs,[]);assert.equal(h.downloads.length,0);
+    assert.match(h.sent.at(-1).message.text,/ventana ajena/);
+    assert.equal(h.sent.filter(e=>e.message.type==='NEXT_VARIANT').length,0);
+  } finally {global.fetch=previousFetch;}
 });

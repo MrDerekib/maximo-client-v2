@@ -200,6 +200,18 @@ def mark_detailed_description_attempt(ot: str, attempted_at: str | None = None) 
         conn.close()
 
 
+def get_fault_description(ot: str) -> str:
+    """Return the cached fault without modifying its enrichment state."""
+    try:
+        with closing(get_connection()) as conn:
+            row = conn.execute('SELECT Descripcion_averia FROM maximo WHERE OT = ?',
+                               (str(ot).strip(),)).fetchone()
+            return str(row[0] or '').strip() if row else ''
+    except sqlite3.Error:
+        logging.warning('OT %s: no se pudo consultar la avería local; se consultará Maximo.', ot)
+        return ''
+
+
 def get_detailed_description(ot: str) -> tuple[str, str]:
     conn = get_connection()
     try:
