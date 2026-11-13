@@ -1,6 +1,9 @@
 """Interfaz de escritorio Qt de Maximo Desktop."""
 from __future__ import annotations
 
+from runtime_limits import configure_numerical_threads
+configure_numerical_threads()
+
 import logging
 import os
 import sys
@@ -11,7 +14,7 @@ from datetime import date, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal, QSignalBlocker
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
@@ -30,9 +33,10 @@ from failure_picker import FailurePathPicker
 from warehouse_ui import WarehouseWindowMixin
 from task_priorities import coordinator, JobCounter, AUTOMATIC, MANUAL, HIGH
 from priority_notices import PriorityNotices
+from update_status import UpdateStatusBar
 from workorder_selection import WorkorderSelection, prepare_row_context_selection
 from db import (
-    apply_started_workorder, apply_closed_repair,
+    apply_started_workorder, apply_closed_repair, apply_warehouse_status,
     clear_current_priority_snapshot, current_priority_ots, current_priority_snapshots,
     delete_all_inactive_records, delete_inactive_record, fetch_data, filter_choices,
     fault_description_candidate_count, detailed_description_candidate_count,
@@ -799,6 +803,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._restore_column_widths()
         QTimer.singleShot(0, self._fit_columns_to_viewport)
         self.schedule_auto_update()
+        QTimer.singleShot(1800, self.offer_warehouse_recovery)
         # La consulta no bloquea el inicio; si hay una versión nueva, ofrece
         # instalarla una sola vez por sesión.
         if not WAREHOUSE_DEVELOPMENT_MODE:
@@ -815,7 +820,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.pages.addWidget(self._build_settings_page())
         layout.addWidget(self.pages, 1)
         self.setCentralWidget(root)
-        self.status = QStatusBar()
+        self.status = UpdateStatusBar()
+        self._priority_notices.event_received.connect(self.status.handle_job_event)
         self.status.showMessage("Listo para consultar la base local.")
         self.setStatusBar(self.status)
 
@@ -1212,7 +1218,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.workorder_start_mode_combo.addItem("Iniciar y establecer anomalías", "configured")
         self.workorder_start_mode_combo.addItem("Solo iniciar: conservar anomalías actuales", "only")
         self.workorder_failure_picker = FailurePathPicker(combo_factory=DecoratedComboBox)
-        self.workorder_close_check = QCheckBox("Mostrar «Cerrar OT» en Edge")
+        self.workorder_close_check = QCheckBox("Cerrar OT en Edge y finalizar reparaciones desde MD")
         start_hint = QLabel(
             "Añade un botón «Iniciar OT» en las nuevas ventanas de Maximo abiertas desde MD. "
             "Elige si inicia conservando los datos actuales o establece la combinación predeterminada. "
@@ -1363,6 +1369,19 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.path_details.setVisible(False)
         paths_layout.addWidget(self.path_details)
 
+        self.technician_sat_card = QGroupBox("Envío a SAT · Técnico")
+        technical_layout = QVBoxLayout(self.technician_sat_card)
+        self.technician_sat_check = QCheckBox("Mostrar envío técnico a SAT externo en MD")
+        technical_layout.addWidget(self.technician_sat_check)
+        technical_hint = QLabel("Permite revisar y enviar una o varias OTs en APPR desde el menú contextual. "
+            "Pide horas, incidencia o referencia y motivo; propone la avería de MD y la consulta en Maximo solo si falta. "
+            "La combinación de anomalías se revisa antes de ejecutar. No activa opciones de almacén ni de Edge.")
+        technical_hint.setWordWrap(True); technical_hint.setObjectName("filterHint")
+        technical_layout.addWidget(technical_hint)
+        technical_recovery = QPushButton("Revisar operaciones pendientes…")
+        technical_recovery.clicked.connect(self.open_warehouse_recovery)
+        technical_layout.addWidget(technical_recovery)
+
         self.warehouse_card = QGroupBox("Funciones de almacén · En pruebas")
         warehouse_layout = QVBoxLayout(self.warehouse_card)
         self.warehouse_check = QCheckBox("Mostrar acciones de almacén")
@@ -1372,6 +1391,11 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             "Muestra un campo opcional por OT en la revisión del lote. "
             "Desactivado: se deja Detalles vacío; no se inventa una justificación.")
         warehouse_layout.addWidget(self.warehouse_details_check)
+        self.warehouse_recovery_button = QPushButton("Revisar operaciones pendientes…")
+        self.warehouse_recovery_button.clicked.connect(self.open_warehouse_recovery)
+        self.warehouse_recovery_button.setEnabled(self.cfg.warehouse_enabled)
+        self.warehouse_check.toggled.connect(self.warehouse_recovery_button.setEnabled)
+        warehouse_layout.addWidget(self.warehouse_recovery_button)
         warehouse_hint = QLabel("Muestra las acciones de recepción y salida en el menú contextual. "
                                "Ejecuta las acciones validadas en segundo plano tras revisar y confirmar las OTs. "
                                "Las opciones pendientes de validación permanecen deshabilitadas.")
@@ -1381,7 +1405,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
         for card in (self.access_card, self.app_updates_card,
                      self.appearance_card, self.maintenance_card,
-                     self.fault_descriptions_card, self.paths_card):
+                     self.fault_descriptions_card, self.technician_sat_card, self.paths_card):
             self.settings_sections[0].addWidget(card)
         for card in (self.edge_extension_card, self.warehouse_card, self.priorities_card):
             self.settings_sections[1].addWidget(card)
@@ -1440,7 +1464,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         try:
             self._effective_theme = apply_application_theme(QApplication.instance(), preference)
             self.client_combo.refresh_theme()
-            self.refresh_table()
+            self._refresh_table_colors()
         finally:
             activity.close()
 
@@ -1583,7 +1607,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if not profile:
             return
         self.search_edit.setText(profile["search"])
-        self.search_by_combo.setCurrentIndex(max(0, self.search_by_combo.findData(profile["search_by"])))
+        with QSignalBlocker(self.search_by_combo):
+            self.search_by_combo.setCurrentIndex(max(0, self.search_by_combo.findData(profile["search_by"])))
         self.advanced_state = profile["advanced"]
         selected_clients = [] if profile["advanced"]["clients"] else ([profile["client"]] if profile["client"] != "Todos" else [])
         self.client_combo.set_options(self.filter_choices_cache["clients"], selected_clients)
@@ -1666,54 +1691,107 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
     def refresh_table(self):
         try:
-            rows = fetch_data(self.search_edit.text(), self.search_field(), "Todos", self.effective_advanced_filters(), include_sync=True, include_fault=True, include_detail=True)
+            filters = self.effective_advanced_filters()
+            rows = fetch_data(self.search_edit.text(), self.search_field(), "Todos", filters,
+                              include_sync=True, include_fault=True, include_detail=True)
         except ValueError as exc:
             QMessageBox.warning(self, "Filtros", str(exc)); return
         priority_ots = current_priority_ots()
         self.priority_only_button.setVisible(bool(priority_ots))
         if not priority_ots and self.priority_only_button.isChecked():
-            self.priority_only_button.blockSignals(True)
-            self.priority_only_button.setChecked(False)
-            self.priority_only_button.blockSignals(False)
+            with QSignalBlocker(self.priority_only_button):
+                self.priority_only_button.setChecked(False)
         self._priority_ots = priority_ots
         def ot_sort_key(row):
             value = str(row[2] or "").strip()
             return (0, int(value)) if value.isdigit() else (1, value)
         rows.sort(key=ot_sort_key, reverse=True)
-        self.table.setSortingEnabled(False); self.table.setRowCount(0)
+        snapshot = (tuple(rows), frozenset(priority_ots),
+                    self.cfg.fault_descriptions_enabled, self.cfg.detailed_descriptions_enabled)
+        filter_key = (self.search_edit.text(), self.search_field(), repr(filters))
+        if getattr(self, '_table_snapshot', None) == snapshot and self.table.rowCount() == len(rows):
+            self._refresh_table_colors()
+            if getattr(self, '_table_filter_key', None) != filter_key:
+                self._workorder_selector.clear_selection()
+            self._table_filter_key = filter_key
+            self._update_list_summary()
+            return False
+
         detail_column = self.columns.index("Avería" if self.cfg.fault_descriptions_enabled else "Descripción")
-        for raw in rows:
-            active, last_seen, *data = raw
-            has_detail = bool(data.pop())
-            fault_description = data.pop()
-            is_priority = active == 1 and str(raw[2] or "") in priority_ots
-            status = "▲ Prioridad · ✓ Activo en Maximo" if is_priority else "✓ Activo en Maximo" if active == 1 else "× No activo en Maximo" if active == 0 else "? Estado desconocido"
-            try: last_seen = datetime.fromisoformat(last_seen).strftime("%d/%m/%Y %H:%M") if last_seen else ""
-            except (TypeError, ValueError): pass
-            row = [status, *data, last_seen, fault_description]
-            index = self.table.rowCount(); self.table.insertRow(index)
-            for column, value in enumerate(row):
-                item = QTableWidgetItem(str(value or "")); item.setData(Qt.UserRole, raw[2])
-                item.setForeground(QColor(ACTIVE_COLORS["text"] if active == 1 else ACTIVE_COLORS["inactive"]))
-                if column == detail_column and has_detail and self.cfg.detailed_descriptions_enabled:
-                    item.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxInformation))
-                    item.setToolTip("Descripción detallada disponible. Doble clic para verla.")
-                if column == 0:
-                    item.setToolTip("Prioridad: marcada en el informe local vigente y todavía activa en Maximo.\n\nActivo en Maximo: aparece en el listado de reparaciones y recibe actualizaciones.\nNo activo en Maximo: ya no aparece en ese listado y no recibe nuevas actualizaciones.")
-                    item.setForeground(QColor(ACTIVE_COLORS["priority"] if is_priority else ACTIVE_COLORS["success"] if active == 1 else ACTIVE_COLORS["inactive"]))
-                    item.setData(Qt.UserRole + 1, is_priority)
-                    item.setData(Qt.UserRole + 2, active)
-                self.table.setItem(index, column, item)
-        self.table.setSortingEnabled(True)
-        self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
-        self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
+        colors = {key: QColor(value) for key, value in ACTIVE_COLORS.items()}
+        detail_icon = self.style().standardIcon(QStyle.SP_MessageBoxInformation)
+        updates_enabled = self.table.updatesEnabled()
+        self._table_snapshot = None
+        self.table.setUpdatesEnabled(False)
+        try:
+            with QSignalBlocker(self.table):
+                self.table.setSortingEnabled(False)
+                self.table.setRowCount(0)
+                self.table.setRowCount(len(rows))
+                for index, raw in enumerate(rows):
+                    active, last_seen, *data = raw
+                    has_detail = bool(data.pop())
+                    fault_description = data.pop()
+                    is_priority = active == 1 and str(raw[2] or "") in priority_ots
+                    status = "▲ Prioridad · ✓ Activo en Maximo" if is_priority else "✓ Activo en Maximo" if active == 1 else "× No activo en Maximo" if active == 0 else "? Estado desconocido"
+                    try: last_seen = datetime.fromisoformat(last_seen).strftime("%d/%m/%Y %H:%M") if last_seen else ""
+                    except (TypeError, ValueError): pass
+                    values = [status, *data, last_seen, fault_description]
+                    for column, value in enumerate(values):
+                        item = QTableWidgetItem(str(value or "")); item.setData(Qt.UserRole, raw[2])
+                        item.setForeground(colors["text" if active == 1 else "inactive"])
+                        if column == detail_column and has_detail and self.cfg.detailed_descriptions_enabled:
+                            item.setIcon(detail_icon)
+                            item.setToolTip("Descripción detallada disponible. Doble clic para verla.")
+                        if column == 0:
+                            item.setToolTip("Prioridad: marcada en el informe local vigente y todavía activa en Maximo.\n\nActivo en Maximo: aparece en el listado de reparaciones y recibe actualizaciones.\nNo activo en Maximo: ya no aparece en ese listado y no recibe nuevas actualizaciones.")
+                            item.setForeground(colors["priority" if is_priority else "success" if active == 1 else "inactive"])
+                            item.setData(Qt.UserRole + 1, is_priority)
+                            item.setData(Qt.UserRole + 2, active)
+                        self.table.setItem(index, column, item)
+                self.table.setSortingEnabled(True)
+                self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
+                self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
+        finally:
+            self.table.setUpdatesEnabled(updates_enabled)
+        self._table_snapshot = snapshot
+        self._table_filter_key = filter_key
+        self._table_palette = dict(ACTIVE_COLORS)
         self._apply_priority_filter()
         self._update_list_summary()
-        if getattr(self, '_workorder_selector', None) is not None:
-            self._workorder_selector.refresh()
+        return True
+
+    def _refresh_table_colors(self):
+        """Apply the theme to existing items without querying or rebuilding data."""
+        if not hasattr(self, 'table') or getattr(self, '_table_palette', None) == ACTIVE_COLORS:
+            return
+        colors = {key: QColor(value) for key, value in ACTIVE_COLORS.items()}
+        detail_icon = self.style().standardIcon(QStyle.SP_MessageBoxInformation)
+        detail_column = self.columns.index("Avería" if self.cfg.fault_descriptions_enabled else "Descripción")
+        updates_enabled = self.table.updatesEnabled()
+        self.table.setUpdatesEnabled(False)
+        try:
+            with QSignalBlocker(self.table):
+                for row in range(self.table.rowCount()):
+                    status = self.table.item(row, 0)
+                    if status is None:
+                        continue
+                    active = status.data(Qt.UserRole + 2)
+                    priority = bool(status.data(Qt.UserRole + 1))
+                    for column in range(1, self.table.columnCount()):
+                        item = self.table.item(row, column)
+                        if item is not None:
+                            item.setForeground(colors["text" if active == 1 else "inactive"])
+                            if column == detail_column and not item.icon().isNull():
+                                item.setIcon(detail_icon)
+                    status.setForeground(colors["priority" if priority else "success" if active == 1 else "inactive"])
+        finally:
+            self.table.setUpdatesEnabled(updates_enabled)
+        self._table_palette = dict(ACTIVE_COLORS)
 
     def warehouse_row_updated(self, ot, tracking):
         """Refresh a verified operation without rebuilding thousands of unchanged rows."""
+        self._table_snapshot = None
         try:
             allowed = {str(row[0]): str(row[6] or '') for row in fetch_data(
                 self.search_edit.text(), self.search_field(), "Todos", self.effective_advanced_filters())}
@@ -1765,6 +1843,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
     def _refresh_priority_indicators(self):
         """Refreshes priority markers and visibility after local priority changes."""
+        self._table_snapshot = None
         priority_ots = current_priority_ots()
         self._priority_ots = priority_ots
         self.priority_only_button.setVisible(bool(priority_ots))
@@ -1812,7 +1891,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
     def clear_filters(self):
         self.search_edit.clear()
-        self.client_combo.clear_selection()
+        with QSignalBlocker(self.client_combo):
+            self.client_combo.clear_selection()
         self.advanced_state = {"equipment": "", "date_from": "", "date_to": "", "clients": [], "types": [], "tracking": []}
         self.refresh_table()
 
@@ -1845,8 +1925,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             pdf_action.setToolTip(reason)
         if self.table.item(row, 0).text() == "○ No activo":
             menu.addAction("Eliminar registro local…", lambda: self.delete_inactive(ot))
-        if getattr(self.cfg, 'warehouse_enabled', False):
-            self.add_warehouse_actions(menu)
+        self.add_role_action_menus(menu)
         menu.exec(self.table.viewport().mapToGlobal(position))
 
     def delete_inactive(self, ot):
@@ -1914,9 +1993,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             return
         if self._closing or not self._credentials_ready() or not self.update_lock.acquire(False): return
         self._list_update_pending = True
-        self.status.showMessage("Actualizando listado desde Maximo…" if not automatic else "Actualización automática en curso…")
+        self.status.begin_progress()
         def done(result):
             self._list_update_pending = False
+            self.status.finish_progress()
             self.update_lock.release(); new, changed = result; self.refresh_choices(); self.refresh_table(); self._refresh_reconciliation_summary()
             sync_summary = (
                 f"Última sincronización de Maximo ({datetime.now().strftime('%H:%M')}): "
@@ -1932,11 +2012,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             )
         def failed(error):
             self._list_update_pending = False
+            self.status.finish_progress()
             self.update_lock.release()
             if not self._closing:
                 QMessageBox.critical(self, "Actualización", f"No se pudo actualizar:\n{error}")
             self.status.showMessage("La actualización falló.")
-        self._start_task(lambda: run_update(headless=True, job_priority=AUTOMATIC if automatic else MANUAL), done, failed, coordinated=True)
+        self._start_task(lambda progress: run_update(headless=True,
+            job_priority=AUTOMATIC if automatic else MANUAL, progress_callback=progress), done, failed,
+            progress=lambda _completed, _total, phase: self.status.update_progress(phase), coordinated=True)
 
     def start_background_reconcile(self, sync_summary=None, after=None):
         if self._closing:
@@ -1955,7 +2038,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if not sync_summary:
             self.status.showMessage(f"Revisando hasta {batch} OT históricas en segundo plano…")
         def done(changed):
-            self.reconcile_lock.release(); self.refresh_table(); self._refresh_reconciliation_summary()
+            self.reconcile_lock.release()
+            if changed:
+                self.refresh_table()
+            self._refresh_reconciliation_summary()
             reconciliation_summary = (
                 "Conciliación: sin cambios" if not changed
                 else f"Conciliación: {changed} seguimientos actualizados"
@@ -2038,7 +2124,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             cancelled = cancel_event.is_set()
             self.fault_description_lock.release(); self.update_lock.release()
             self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
-            self.refresh_table(); self._refresh_fault_description_summary()
+            if completed:
+                self.refresh_table()
+            self._refresh_fault_description_summary()
             detail = (f"Lectura cancelada: {completed} campos guardados" if cancelled else
                       "Información ampliada: sin pendientes nuevas" if not completed else
                       f"Información ampliada: {completed} campos completados")
@@ -2085,7 +2173,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             cancelled = cancel_event.is_set()
             self.fault_description_lock.release(); self.update_lock.release()
             self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
-            self.refresh_table(); self._refresh_fault_description_summary()
+            if completed:
+                self.refresh_table()
+            self._refresh_fault_description_summary()
             if cancelled:
                 self.status.showMessage(f"Lectura cancelada: {completed} campos guardados.", 7000)
             else:
@@ -2118,7 +2208,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             self.update_lock.release(); QMessageBox.information(self, "Mantenimiento", "Ya hay una revisión en curso."); return
         self.status.showMessage(f"Revisión prioritaria: iniciando sesión… 0/{count} OT")
         def done(changed):
-            self.reconcile_lock.release(); self.update_lock.release(); self.refresh_table(); self._refresh_reconciliation_summary()
+            self.reconcile_lock.release(); self.update_lock.release()
+            if changed:
+                self.refresh_table()
+            self._refresh_reconciliation_summary()
             self.status.showMessage(f"Revisión prioritaria completada: {changed} seguimientos actualizados.", 7000)
             if not self._closing:
                 QMessageBox.information(self, "Mantenimiento", f"Revisión completada. Seguimientos actualizados: {changed}.")
@@ -2203,13 +2296,16 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if self._closing:
             return
         ot = result['ot']
+        final=result.get('status','ISSUE')
         try:
-            apply_closed_repair(ot)
+            if final=='CLOSE':apply_warehouse_status(ot,'CLOSE')
+            else:apply_closed_repair(ot)
             self.refresh_choices()
             self.refresh_table()
         except Exception:
             logging.exception('OT %s en ISSUE, pero no se pudo refrescar su seguimiento local', ot)
-        self.status.showMessage(f'OT {ot}: pendiente dar salida del almacén (ISSUE).', 10000)
+        message='equipo declarado irreparable (CLOSE)' if final=='CLOSE' else 'pendiente dar salida del almacén (ISSUE)'
+        self.status.showMessage(f'OT {ot}: {message}.', 10000)
 
     def open_repair_report(self, ot, action):
         if self._closing or not ot or not self._credentials_ready(): return
@@ -2308,6 +2404,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.workorder_failure_picker.set_selection(self.cfg.workorder_start_selection)
         self._update_workorder_start_controls()
         self.workorder_close_check.setChecked(self.cfg.workorder_close_enabled)
+        self.technician_sat_check.setChecked(self.cfg.technician_sat_enabled)
         self.warehouse_check.setChecked(self.cfg.warehouse_enabled)
         self.warehouse_details_check.setChecked(self.cfg.warehouse_ask_sat_details)
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
@@ -2364,6 +2461,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             or (self.workorder_start_mode_combo.currentData() or "invalid") != self.cfg.workorder_start_mode
             or self.workorder_failure_picker.selection() != self.cfg.workorder_start_selection
             or self.workorder_close_check.isChecked() != self.cfg.workorder_close_enabled
+            or self.technician_sat_check.isChecked() != self.cfg.technician_sat_enabled
             or self.warehouse_check.isChecked() != self.cfg.warehouse_enabled
             or self.warehouse_details_check.isChecked() != self.cfg.warehouse_ask_sat_details
             or self.repair_mode_combo.currentData() != self.cfg.repair_print_mode
@@ -2395,6 +2493,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.cfg.workorder_start_mode = start_mode or "invalid"
         self.cfg.workorder_start_selection = start_selection
         self.cfg.workorder_close_enabled = self.workorder_close_check.isChecked()
+        self.cfg.technician_sat_enabled = self.technician_sat_check.isChecked()
         self.cfg.warehouse_enabled = self.warehouse_check.isChecked()
         self.cfg.warehouse_ask_sat_details = self.warehouse_details_check.isChecked()
         self.cfg.repair_print_mode = self.repair_mode_combo.currentData()
@@ -2737,7 +2836,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             for dialog in self._warehouse_dialogs:
                 if dialog.is_running():
                     dialog.request_stop()
-                    dialog.show(); dialog.raise_()
+                    target=getattr(dialog,'progress_dialog',None) or dialog
+                    target.show(); target.raise_()
             return
         if self._closing:
             return

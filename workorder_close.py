@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
+from app_paths import PROGRAM_DIR
 
 from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.by import By
@@ -77,6 +78,19 @@ class WorkorderCloser(WorkorderStarter):
     """Only used by a reviewed, explicitly confirmed action in the visible browser."""
     active_status = 'INPRG'
     operation = 'cierre'
+
+    def reload_workorder(self):
+        if not getattr(self,'_browser_native_navigation',False):
+            return super().reload_workorder()
+        # Reuse Maximo's navigation and client event queue, as MD repair does.
+        # A browser refresh can restart the page against a live server UI session.
+        import maximo_client as client
+        self.check_location();self.idle();self.reject_dialogs()
+        self.progress(f'OT {self.ot}: consultando de nuevo la ficha mediante Maximo…')
+        logging.info('OT %s: consulta nativa de cierre; se mantiene la sesión y la ventana visible',self.ot)
+        client.open_workorders_app(self.driver,headless=False)
+        client.read_workorder_status(self.driver,self.ot)
+        self.idle();self.check_ot();self.reject_dialogs()
 
     def field_snapshot(self, caption):
         def read(d):
@@ -161,7 +175,7 @@ class WorkorderCloser(WorkorderStarter):
         self.idle()
 
     def prepare_close(self, approval, pending):
-        """Persist the reviewed inputs and verify them before any routing click."""
+        """Validate reviewed inputs before routing; browser drafts commit in the workflow."""
         if not pending.get('approved') or approval.get('token')!=pending.get('token'):
             raise RuntimeError('Falta la confirmación explícita del cierre de esta OT.')
         if approval.get('ot')!=self.ot or pending['snapshot']['ot']!=self.ot:
@@ -178,8 +192,14 @@ class WorkorderCloser(WorkorderStarter):
         validate_close_times(plan)
         if actual_datetime(approval.get('end'))!=plan['expected_end']:
             raise RuntimeError('La finalización confirmada no coincide con la duración. Revisa el cierre.')
-        self.driver.refresh()
-        current=self.inspect_repair()
+        if 'records' in pending:
+            self._browser_native_navigation=True
+            from browser_close_records import prepare_browser_records
+            current=prepare_browser_records(self,approval,pending)
+        else:
+            if pending.get('prepared_in_place') is not True:
+                self.reload_workorder()
+            current=self.inspect_repair()
         if current!=pending['snapshot']:
             raise RuntimeError('Los datos de la OT cambiaron desde la revisión. Compruébalos antes de volver a cerrar.')
         self.set_duration(approval['duration'])
@@ -204,6 +224,15 @@ class WorkorderCloser(WorkorderStarter):
                                'No se enviará el cierre de la OT.')
         return verified
 
+    def before_route_click(self):
+        pass
+
+    def before_route_accept(self):
+        pass
+
+    def handle_discard_details(self, dialog):
+        return False
+
     def route_close(self, route_action='close'):
         """Select only the explicitly reviewed route and stop at its first state change."""
         if route_action not in ROUTE_ACTIONS:
@@ -218,7 +247,7 @@ class WorkorderCloser(WorkorderStarter):
             self.check_ot()
             status=self.wait(lambda d:self.value('Estado'),'estado del cierre')
             if route_action=='close' and status=='ISSUE':
-                return
+                return status
             if submitted and status not in (None,'','INPRG'):
                 return status
             if status!='INPRG':
@@ -228,6 +257,8 @@ class WorkorderCloser(WorkorderStarter):
                 dialog=dialogs[-1]
                 if (route_action=='discard' and submitted
                         and self.is_discard_details_dialog(dialog)):
+                    if self.handle_discard_details(dialog):
+                        return self.value('Estado')
                     self.progress(f'OT {self.ot}: completa la justificación de «Desechar Activo» y pulsa OK en Maximo…')
                     try:
                         WebDriverWait(self.driver,180,poll_frequency=0.25,
@@ -288,6 +319,7 @@ class WorkorderCloser(WorkorderStarter):
                 if len(buttons)!=1:
                     raise RuntimeError('No se encontró la confirmación nativa del cierre.')
                 self.progress(f'OT {self.ot}: enviando «{action["label"]}» confirmado…')
+                self.before_route_accept()
                 submitted=True
                 try:
                     buttons[0].click()  # Never replay this irreversible confirmation.
@@ -301,6 +333,7 @@ class WorkorderCloser(WorkorderStarter):
             if routes>=3:
                 raise RuntimeError('Maximo no ofreció el cierre tras tres pulsaciones. No se seguirá enrutando.')
             self.progress(f'OT {self.ot}: abriendo flujo de cierre ({routes+1}/3)…')
+            self.before_route_click()
             try:
                 self.driver.find_element(By.ID,'ROUTEWF_WO-MAIN_-tbb_image').click()
             except StaleElementReferenceException:
@@ -319,8 +352,15 @@ class WorkorderCloser(WorkorderStarter):
         text=normalized(dialog.get('text',''))
         return all(part in text for part in ('desechar activo','detalles','ok','cancel'))
 
+    def after_prepare_close(self):
+        pass
+
+    def before_final_verification(self):
+        pass
+
     def run_close(self, approval, pending):
         self.prepare_close(approval,pending)
+        self.after_prepare_close()
         self.require_in_progress()
         route_action=approval.get('route_action','close')
         routed_status=self.route_close(route_action)
@@ -331,7 +371,12 @@ class WorkorderCloser(WorkorderStarter):
             return {'ot':self.ot,'status':'INPRG','action':route_action,'cancelled':True}
         if route_action!='close' and routed_status in (None,'','INPRG'):
             raise RuntimeError(f'Maximo no confirmó «{ROUTE_ACTIONS[route_action]["label"]}».')
-        self.driver.refresh()
+        self.before_final_verification()
+        # The browser flow validated its drafts; routing commits them.
+        # A definite routing response can be checked in-place. Keep read-back
+        # for an uncertain route and the existing desktop/legacy workflows.
+        if 'records' not in pending or not routed_status:
+            self.reload_workorder()
         self.wait(lambda d:self.value('Orden de trabajo')==self.ot and
                   self.value('Estado')==(routed_status or 'ISSUE'),
                   f'confirmación guardada de {routed_status or "ISSUE"}')
@@ -348,8 +393,11 @@ class WorkorderCloser(WorkorderStarter):
         except ValueError:
             persisted=False
         if not persisted:
-            raise RuntimeError('La OT pasó a ISSUE, pero Maximo no conservó la duración o las fechas tras el cierre. '
+            raise RuntimeError('La OT finalizó, pero Maximo no conservó la duración o las fechas tras el cierre. '
                                'Revisa la ficha antes de cualquier otra acción.')
+        if 'records' in pending:
+            from browser_close_records import verify_browser_closed_records
+            verify_browser_closed_records(self,pending,routed_status or 'ISSUE')
         if pending.get('return_tab'):
             self.tab(pending['return_tab'])
         logging.info('OT %s: acción %s confirmada en estado %s tras revisión explícita del usuario',
@@ -374,16 +422,25 @@ BROWSER_BUTTON_SCRIPT = r"""
         padding:'9px 14px',border:'1px solid #1155a0',borderRadius:'6px',background:'#1769c2',
         color:'#fff',font:'600 13px Arial,sans-serif',boxShadow:'0 3px 12px #0004',cursor:'pointer'});
       button.addEventListener('click',event=>{
-        if (!event.isTrusted || button.disabled || document.documentElement.dataset.maximoAnomalyChangeBusy==='true') return;
-        button.disabled=true; button.dataset.busy='true'; button.textContent='Revisando cierre…';
-        const activeTab=[...document.querySelectorAll('a[role=tab]')]
-          .find(e=>e.getClientRects().length&&e.getAttribute('aria-expanded')==='true');
-        document.documentElement.dataset.maximoCloseOtRequest=JSON.stringify({
-          action:'prepare',ot:field('Orden de trabajo'),returnTab:activeTab?.textContent.trim()||''
-        });
+        // This only prepares the review; the final confirmation is unchanged.
+        // DOM events also reach handlers installed in WebDriver's JS world.
+        globalThis.MaximoDesktopRequestClose?.();
       });
       document.body.appendChild(button);
     }
+    // The extension panel requests only this existing preparation step.
+    // Final routing still requires the original review and confirmation.
+    globalThis.MaximoDesktopRequestClose=()=>{
+      if (!button || button.hidden || button.disabled || field('Estado')!=='INPRG' ||
+          visibleDialogs.length || document.documentElement.dataset.maximoAnomalyChangeBusy==='true') return false;
+      button.disabled=true; button.dataset.busy='true'; button.textContent='Revisando cierre…';
+      const activeTab=[...document.querySelectorAll('a[role=tab]')]
+        .find(e=>e.getClientRects().length&&e.getAttribute('aria-expanded')==='true');
+      document.documentElement.dataset.maximoCloseOtRequest=JSON.stringify({
+        action:'prepare',ot:field('Orden de trabajo'),returnTab:activeTab?.textContent.trim()||''
+      });
+      return true;
+    };
     if (button) {
       button.hidden=!/^\d{1,20}$/.test(ot||'') || status!=='INPRG';
       if (button.dataset.busy!=='true') {
@@ -411,6 +468,22 @@ BROWSER_REVIEW_SCRIPT = r"""
         box-shadow:0 22px 72px #102c4b50;font:14px/1.45 "Segoe UI",Arial,sans-serif}
       #maximo-close-review::backdrop{background:#12283d80;backdrop-filter:blur(2px)}
       #maximo-close-review *{box-sizing:border-box}
+      #maximo-close-review{overflow:hidden}
+      #maximo-close-review>form{display:flex;flex-direction:column;max-height:calc(100vh - 20px);margin:0}
+      #maximo-close-review .close-head,#maximo-close-review .close-actions{flex-shrink:0}
+      #maximo-close-review .close-body{min-height:0;overflow-y:auto}
+      #maximo-close-review .close-actions{background:#fff}
+      #maximo-close-review .close-records h3{font-size:14px;margin:0 0 7px}
+      #maximo-close-review .close-records summary{cursor:pointer;color:#245e9f;font-weight:600;padding:6px 0}
+      #maximo-close-review .close-record-history{max-height:180px;overflow:auto;border:1px solid #d7e3f0;border-radius:7px;padding:8px}
+      #maximo-close-review .close-record-history article+article{border-top:1px solid #d7e3f0;margin-top:7px;padding-top:7px}
+      #maximo-close-review .close-record-history p{margin:3px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+      #maximo-close-review .close-record-check{display:flex;align-items:flex-start;gap:7px;margin:9px 0}
+      #maximo-close-review .close-record-check input{width:auto;min-height:0;margin-top:4px}
+      #maximo-close-review .close-record-check[hidden]{display:none}
+      #maximo-close-review .close-new-entry{border:1px solid #d7e3f0;border-radius:8px;padding:9px;margin:7px 0;display:grid;gap:7px}
+      #maximo-close-review textarea{font:inherit;width:100%;resize:vertical;padding:8px;border:1px solid #b8cbe0;border-radius:7px;background:#fff;color:#18344f}
+      #maximo-close-review .close-records>.close-label{margin-top:10px}
       #maximo-close-review .close-head{padding:15px 22px 11px;background:linear-gradient(135deg,#eaf3ff,#fff);
         border-bottom:1px solid #d7e3f0}
       #maximo-close-review .close-kicker{margin:0 0 5px;color:#3974b7;font-size:11px;font-weight:700;
@@ -504,6 +577,11 @@ BROWSER_REVIEW_SCRIPT = r"""
           <button type="button" name="routeActionConfirm" class="close-confirm" disabled></button></div>
       </section></form>`;
     const form=dialog.querySelector('form'),duration=form.elements.duration,start=form.elements.start,end=form.elements.end;
+    const recordReview=globalThis.MaximoCloseRecordReview?.mount(dialog,data,()=>calculate());
+    let datesEdited=false;
+    const preserveDates=Boolean(data.records && data.start && data.end);
+    if(data.records && data.start)start.value=data.start.slice(0,16);
+    if(data.records && data.end)end.value=data.end.slice(0,16);
     const nowButton=form.elements.now,basis=form.elements.dateBasis,routeAction=form.elements.routeAction;
     const routeActionWarning=dialog.querySelector('#maximo-route-action-warning');
     const routeActionConfirm=dialog.querySelector('#maximo-route-action-confirm');
@@ -548,9 +626,10 @@ BROWSER_REVIEW_SCRIPT = r"""
     };
     const sendApproval=actionConfirmed=>{
       if(!calculate())return false;
+      const keepExact=preserveDates&&!datesEdited;
       const request={action:'approve',token,ot:data.ot,duration:duration.value.trim(),
-        start:start.value,end:end.value,route_action:routeAction.value||'close',
-        action_confirmed:actionConfirmed===true};
+        start:keepExact?data.start:start.value,end:keepExact?data.end:end.value,route_action:routeAction.value||'close',
+        action_confirmed:actionConfirmed===true,...(recordReview?.approval()||{})};
       dialog.close();dialog.remove();
       document.documentElement.dataset.maximoCloseOtRequest=JSON.stringify(request);
       return true;
@@ -566,7 +645,7 @@ BROWSER_REVIEW_SCRIPT = r"""
     const calculate=()=>{
       const useStart=basis.value==='start';
       start.readOnly=!useStart; end.readOnly=useStart; nowButton.hidden=useStart;
-      if(useStart)end.value=''; else start.value='';
+      if(!(preserveDates&&!datesEdited)){if(useStart)end.value=''; else start.value='';}
       const text=duration.value.trim().replace(',','.');
       const hours=Number(text),quarter=hours*4;
       let error='';
@@ -585,19 +664,30 @@ BROWSER_REVIEW_SCRIPT = r"""
           error='La duración está fuera de rango.';
         else {
           const toInput=date=>date.toISOString().slice(0,16);
-          start.value=toInput(startDate); end.value=toInput(endDate);
+          let reviewedEndMs=endDate.getTime();
+          if(preserveDates&&!datesEdited){
+            const civil=value=>{const p=value.split(/[-T:]/).map(Number);return Date.UTC(p[0],p[1]-1,p[2],p[3],p[4],p[5]||0);};
+            const actualStart=civil(data.start),actualEnd=civil(data.end);
+            reviewedEndMs=actualEnd;
+            if(Math.abs((actualEnd-actualStart)/1000-quarter*900)>0.1)
+              error='Inicio, fin y duración no coinciden. Corrige las fechas antes de confirmar.';
+            start.value=data.start.slice(0,16);end.value=data.end.slice(0,16);
+          }else{start.value=toInput(startDate); end.value=toInput(endDate);}
           const now=new Date(),civilNow=Date.UTC(now.getFullYear(),now.getMonth(),now.getDate(),
             now.getHours(),now.getMinutes(),now.getSeconds());
-          if(endDate.getTime()>civilNow)error='La finalización no puede ser posterior a la hora actual.';
+          if(reviewedEndMs>civilNow)error='La finalización no puede ser posterior a la hora actual.';
         }
       }
+      error=error||(recordReview?.validate()||'');
       dialog.querySelector('#maximo-close-error').textContent=error;
       form.elements.confirm.disabled=!!error;
       return !error;
     };
-    duration.addEventListener('input',calculate); start.addEventListener('input',calculate);
-    end.addEventListener('input',calculate); basis.forEach(option=>option.addEventListener('change',calculate));
+    const editDates=()=>{datesEdited=true;calculate();};
+    duration.addEventListener('input',editDates); start.addEventListener('input',editDates);
+    end.addEventListener('input',editDates); basis.forEach(option=>option.addEventListener('change',editDates));
     nowButton.addEventListener('click',()=>{
+      datesEdited=true;
       const now=new Date(); now.setSeconds(0,0);
       const pad=n=>String(n).padStart(2,'0');
       end.value=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
@@ -613,8 +703,18 @@ BROWSER_REVIEW_SCRIPT = r"""
       if((routeAction.value||'close')!=='close'){showActionConfirmation();return;}
       sendApproval(false);
     });
+    if(data.records && data.time_complete){
+      const times=document.createElement('details');times.className='close-card';
+      const summary=document.createElement('summary');summary.textContent=`Duración y fechas · ${data.duration} h · Editar`;
+      summary.style.cssText='cursor:pointer;color:#245e9f;font-weight:600';times.append(summary);
+      const description=document.createElement('p');description.className='close-hint';
+      description.textContent=`Inicio: ${data.start.replace('T',' ')} · Fin: ${data.end.replace('T',' ')}`;
+      const first=duration.closest('.close-card'),second=start.closest('.close-card');
+      first.before(times);times.append(description,first,second,dialog.querySelector('#maximo-close-existing'));
+    }
     document.body.appendChild(dialog); calculate(); dialog.showModal();
-    (duration.value ? start : duration).focus();
+    const focusTarget=data.records?dialog.querySelector('#maximo-close-reference'):(duration.value?start:duration);
+    focusTarget.focus({preventScroll:true});dialog.scrollTop=0;
 """
 
 
@@ -628,7 +728,10 @@ def poll_browser_close(driver):
         driver.execute_script("""
           const b=document.getElementById('maximo-desktop-close-ot');
           if(b){b.textContent=arguments[0];b.title=arguments[0];}
-        """,message)
+          sessionStorage.setItem('maximoDesktop.closeProgress',JSON.stringify({
+            ot:arguments[1],text:arguments[0],at:Date.now()
+          }));
+        """,message,str(request.get('ot') or ''))
 
     keep_review=False
     try:
@@ -639,14 +742,25 @@ def poll_browser_close(driver):
             return None
         if action=='prepare':
             driver._maximo_close_review=None
-            snapshot=WorkorderCloser(driver,request.get('ot'),report).inspect_repair()
+            from browser_close_records import inspect_browser_review
+            snapshot,records,anomalies=inspect_browser_review(WorkorderCloser(driver,request.get('ot'),report))
             return_tab=str(request.get('returnTab') or '').strip()
             if return_tab:
                 WorkorderCloser(driver,request.get('ot'),report).tab(return_tab)
             pending={'token':uuid4().hex,'snapshot':snapshot,'created':time.monotonic(),
-                     'return_tab':return_tab}
+                     'return_tab':return_tab,'records':records,'anomalies':anomalies}
             driver._maximo_close_review=pending
-            driver.execute_script(BROWSER_REVIEW_SCRIPT,snapshot,pending['token'])
+            driver.execute_script((PROGRAM_DIR/'browser_extension/close_review.js').read_text(encoding='utf-8'))
+            time_complete=False
+            try:
+                times=close_review(snapshot['duration'],actual_datetime(snapshot['start']),actual_datetime(snapshot['end']))
+                validate_close_times(times)
+                time_complete=times['dates_match']
+            except ValueError:
+                pass
+            driver.execute_script(BROWSER_REVIEW_SCRIPT,{**snapshot,'records':records,'anomalies':anomalies,
+                                 'time_complete':time_complete},pending['token'])
+            driver.execute_script("sessionStorage.removeItem('maximoDesktop.closeProgress');")
             keep_review=True
             return None
         if action!='approve':
@@ -684,6 +798,7 @@ def poll_browser_close(driver):
     finally:
         if not keep_review:
             driver.execute_script("""
+                sessionStorage.removeItem('maximoDesktop.closeProgress');
                 const b=document.getElementById('maximo-desktop-close-ot');
                 if(b){b.dataset.busy='false';setTimeout(()=>{
                   if(b.dataset.busy!=='true')b.textContent='Cerrar OT';

@@ -1,0 +1,2 @@
+# Preserve the verified upstream bytes and license of bundled vendor assets.
+browser_extension/vendor/* -text

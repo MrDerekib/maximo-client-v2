@@ -289,3 +289,100 @@ class FilterTests(unittest.TestCase):
             window.clear_filters()
             self.assertEqual(window.table.rowCount(), 4)
             self.assertEqual(window.advanced_state["tracking"], [])
+
+    def test_unchanged_refresh_keeps_cells_sort_and_selection(self):
+        with self.qt_window() as (window, qt):
+            window.table.sortItems(2, qt.Qt.AscendingOrder)
+            window.table.selectRow(1)
+            selected=[index.row() for index in window.table.selectionModel().selectedRows()]
+            cells=[window.table.item(row,1) for row in range(window.table.rowCount())]
+            with patch.object(qt,'QTableWidgetItem',wraps=qt.QTableWidgetItem) as create:
+                self.assertFalse(window.refresh_table())
+                create.assert_not_called()
+            self.assertEqual([window.table.item(row,1) for row in range(window.table.rowCount())],cells)
+            self.assertEqual([index.row() for index in window.table.selectionModel().selectedRows()],selected)
+            self.assertEqual(window.table.horizontalHeader().sortIndicatorSection(),2)
+
+    def test_filter_with_same_results_clears_selection_without_rebuilding(self):
+        with self.qt_window() as (window, qt):
+            cell=window.table.item(0,1);window.table.selectRow(0)
+            window.search_edit.setText(' ')
+            self.assertFalse(window.refresh_table())
+            self.assertIs(window.table.item(0,1),cell)
+            self.assertFalse(window.table.selectionModel().selectedRows())
+
+    def test_zero_count_update_still_refreshes_presence_and_last_seen(self):
+        with self.qt_window() as (window, qt):
+            with patch.object(window,'_credentials_ready',return_value=True), \
+                 patch.object(window,'_start_task') as task, \
+                 patch.object(window,'start_background_reconcile'):
+                window.update_now()
+                with closing(sqlite3.connect(self.path)) as conn:
+                    conn.execute("UPDATE maximo SET Activo=0,Ultima_vez_visto='2026-11-10T12:00:00' WHERE OT='1'")
+                    conn.commit()
+                task.call_args.args[1]((0,0))
+            row=next(r for r in range(window.table.rowCount()) if window.table.item(r,1).text()=='1')
+            self.assertIn('No activo',window.table.item(row,0).text())
+            self.assertEqual(window.table.item(row,9).text(),'10/11/2026 12:00')
+
+    def test_theme_recolors_existing_cells_without_sql_or_selection_loss(self):
+        with self.qt_window() as (window, qt):
+            previous=qt.ACTIVE_THEME
+            try:
+                cells=[window.table.item(row,1) for row in range(window.table.rowCount())]
+                window.table.selectRow(1)
+                selected=[index.row() for index in window.table.selectionModel().selectedRows()]
+                with qt.QSignalBlocker(window.theme_combo):
+                    window.theme_combo.setCurrentIndex(window.theme_combo.findData('dark' if previous!='dark' else 'light'))
+                with patch.object(qt,'fetch_data') as fetch:
+                    window.preview_theme()
+                    fetch.assert_not_called()
+                self.assertEqual([window.table.item(row,1) for row in range(window.table.rowCount())],cells)
+                self.assertEqual([index.row() for index in window.table.selectionModel().selectedRows()],selected)
+                for row in range(window.table.rowCount()):
+                    active=window.table.item(row,0).data(qt.Qt.UserRole+2)
+                    self.assertEqual(window.table.item(row,1).foreground().color().name(),qt.QColor(qt.ACTIVE_COLORS['text' if active==1 else 'inactive']).name())
+            finally:qt.apply_application_theme(self.qt_app,previous)
+
+    def test_visible_data_and_display_options_invalidate_snapshot(self):
+        with self.qt_window() as (window, qt):
+            with closing(sqlite3.connect(self.path)) as conn:
+                conn.execute("UPDATE maximo SET Descripción='Nueva descripción',Descripcion_detallada_texto='Detalle' WHERE OT='1'")
+                conn.commit()
+            self.assertTrue(window.refresh_table())
+            row=next(r for r in range(window.table.rowCount()) if window.table.item(r,1).text()=='1')
+            self.assertEqual(window.table.item(row,2).text(),'Nueva descripción')
+            window.cfg.detailed_descriptions_enabled=True
+            self.assertTrue(window.refresh_table())
+            row=next(r for r in range(window.table.rowCount()) if window.table.item(r,1).text()=='1')
+            self.assertFalse(window.table.item(row,2).icon().isNull())
+            window.cfg.fault_descriptions_enabled=True
+            self.assertTrue(window.refresh_table())
+            row=next(r for r in range(window.table.rowCount()) if window.table.item(r,1).text()=='1')
+            self.assertTrue(window.table.item(row,2).icon().isNull())
+            self.assertFalse(window.table.item(row,10).icon().isNull())
+
+    def test_incremental_change_then_database_reversion_cannot_leave_stale_cell(self):
+        with self.qt_window() as (window, qt):
+            with closing(sqlite3.connect(self.path)) as conn:
+                conn.execute("UPDATE maximo SET Seguimiento='CLOSE' WHERE OT='1'");conn.commit()
+            window.warehouse_row_updated('1','CLOSE')
+            with closing(sqlite3.connect(self.path)) as conn:
+                conn.execute("UPDATE maximo SET Seguimiento='EN TALLER' WHERE OT='1'");conn.commit()
+            self.assertTrue(window.refresh_table())
+            row=next(r for r in range(window.table.rowCount()) if window.table.item(r,1).text()=='1')
+            self.assertEqual(window.table.item(row,7).text(),'EN TALLER')
+
+    def test_clearing_client_and_changing_profile_query_refresh_once(self):
+        with self.qt_window() as (window, qt):
+            window.client_combo.set_options(['TMB','OTRO'],['TMB'])
+            window.refresh_table()
+            with patch.object(window,'refresh_table',wraps=window.refresh_table) as refresh:
+                window.clear_filters();self.assertEqual(refresh.call_count,1)
+            window.profiles={'Serial':{'search':'001','search_by':'Nº_de_serie','client':'Todos','advanced':validate_filters({})}}
+            item=qt.QListWidgetItem('Serial');item.setData(qt.Qt.UserRole,'Serial')
+            with qt.QSignalBlocker(window.search_by_combo):
+                window.search_by_combo.setCurrentIndex(window.search_by_combo.findData('OT'))
+            with patch.object(window,'refresh_table',wraps=window.refresh_table) as refresh:
+                window.load_selected_profile(item);self.assertEqual(refresh.call_count,1)
+            self.assertEqual(window.table.rowCount(),1)

@@ -1,14 +1,30 @@
 import tests  # Isolate application data before importing product modules.
 from threading import Event
 from unittest import TestCase
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+from pathlib import Path
+from itertools import count
+from tests.test_support import temporary_directory
+from warehouse_recovery import RecoveryStore
 
 from warehouse import WarehouseItem
 from warehouse_transport import run_live, unique_caption
 from config import AppConfig
 
 
+def single_pass(*args, **kwargs):
+    """Existing transport assertions inspect only execution; recovery has its own suite."""
+    return run_live(*args, auto_recheck=False, **kwargs)
+
+
 class TransportTests(TestCase):
+    def setUp(self):
+        temp=temporary_directory();self.folder=Path(temp.__enter__())
+        self.addCleanup(temp.__exit__,None,None,None)
+        sequence=count()
+        patcher=patch('warehouse_transport.default_recovery_store',side_effect=lambda:RecoveryStore(self.folder/str(next(sequence))))
+        patcher.start();self.addCleanup(patcher.stop)
+
     def test_details_preference_missing_or_invalid_stays_disabled(self):
         self.assertFalse(AppConfig().warehouse_ask_sat_details)
         for value in ('true', 'false', 1, None):
@@ -31,7 +47,7 @@ class TransportTests(TestCase):
 
     def test_server_state_blocks_route_even_when_local_state_is_eligible(self):
         s = self.session('CLOSE')
-        r = run_live([WarehouseItem('1', status='PDTE CONFIRMAR')], 'receive', session_factory=lambda:s)
+        r = single_pass([WarehouseItem('1', status='PDTE CONFIRMAR')], 'receive', session_factory=lambda:s)
         self.assertEqual(r[0].status, 'failed')
         s.driver.find_element.assert_not_called()
         s.accept_button.assert_not_called()
@@ -40,7 +56,7 @@ class TransportTests(TestCase):
         factory = Mock()
         for action in ('reject_receive',):
             with self.assertRaises(ValueError):
-                run_live([WarehouseItem('1')], action, session_factory=factory)
+                single_pass([WarehouseItem('1')], action, session_factory=factory)
         factory.assert_not_called()
 
     def test_sat_variants_require_their_own_new_history_entry_and_keep_details(self):
@@ -48,7 +64,7 @@ class TransportTests(TestCase):
             for text in ('', 'Detalle aprobado'):
                 s = self.session()
                 s.history_count.side_effect = [0, 1]
-                r = run_live([WarehouseItem('1')], action, details={'1': text}, session_factory=lambda:s)
+                r = single_pass([WarehouseItem('1')], action, details={'1': text}, session_factory=lambda:s)
                 self.assertEqual(r[0].status, 'success')
                 s.sat_details.assert_called_once()
                 self.assertEqual(s.sat_details.call_args.args[:2], (action,text))
@@ -58,7 +74,7 @@ class TransportTests(TestCase):
     def test_sat_issue_without_new_history_is_uncertain(self):
         s = self.session()
         s.history_count.side_effect = [2, 2]
-        r = run_live([WarehouseItem('1')], 'receive_sat_external', session_factory=lambda:s)
+        r = single_pass([WarehouseItem('1')], 'receive_sat_external', session_factory=lambda:s)
         self.assertEqual(r[0].status, 'uncertain')
         s.accept_button.return_value.click.assert_called_once()
 
@@ -66,7 +82,7 @@ class TransportTests(TestCase):
         s = self.session()
         s.history_count.return_value=0
         s.sat_details.side_effect=RuntimeError('Otro diálogo')
-        r=run_live([WarehouseItem('1')], 'receive_sat_internal', session_factory=lambda:s)
+        r=single_pass([WarehouseItem('1')], 'receive_sat_internal', session_factory=lambda:s)
         self.assertEqual(r[0].status, 'uncertain')
         s.accept_button.return_value.click.assert_called_once()
         s.sat_details.assert_called_once()
@@ -75,7 +91,7 @@ class TransportTests(TestCase):
         s = self.session()
         entries = []
         s.accept_button.return_value.click.side_effect = lambda: self.assertEqual(entries[-1]['confirmation'], 'sending_once')
-        r = run_live([WarehouseItem('1')], 'receive', journal=entries.append, session_factory=lambda:s)
+        r = single_pass([WarehouseItem('1')], 'receive', journal=entries.append, session_factory=lambda:s)
         self.assertEqual(r[0].status, 'success')
         s.accept_button.return_value.click.assert_called_once()
         s.verify.assert_called_once_with('1', 'APPR', s.identity.return_value)
@@ -85,7 +101,7 @@ class TransportTests(TestCase):
         first, second = self.session(), self.session()
         first.accept_button.return_value.click.side_effect = TimeoutError('lost response')
         factory = Mock(side_effect=[first, second])
-        results = run_live([WarehouseItem('1'), WarehouseItem('2')], 'receive', session_factory=factory)
+        results = single_pass([WarehouseItem('1'), WarehouseItem('2')], 'receive', session_factory=factory)
         self.assertEqual([r.status for r in results], ['uncertain', 'success'])
         first.accept_button.return_value.click.assert_called_once()
         first.close.assert_called_once()
@@ -96,7 +112,7 @@ class TransportTests(TestCase):
         def progress(index, result):
             if result.status == 'success':
                 stop.set()
-        r = run_live([WarehouseItem('1'), WarehouseItem('2')], 'receive',
+        r = single_pass([WarehouseItem('1'), WarehouseItem('2')], 'receive',
                      stop=stop, progress=progress, session_factory=lambda:s)
         self.assertEqual([x.status for x in r], ['success', 'stopped'])
         s.accept_button.return_value.click.assert_called_once()
@@ -104,7 +120,7 @@ class TransportTests(TestCase):
     def test_failed_verification_does_not_claim_success(self):
         s = self.session()
         s.verify.side_effect = RuntimeError('Unexpected dialog')
-        r = run_live([WarehouseItem('1')], 'receive', session_factory=lambda:s)
+        r = single_pass([WarehouseItem('1')], 'receive', session_factory=lambda:s)
         self.assertEqual(r[0].status, 'uncertain')
         s.accept_button.return_value.click.assert_called_once()
 
@@ -113,7 +129,7 @@ class TransportTests(TestCase):
         s.verify.side_effect=RuntimeError('BMXAA9999E unexpected dialog')
         s.diagnostic_context.return_value={'ui':{'dialogs':[{'id':'unexpected','text':'BMXAA9999E'}]}}
         entries=[]
-        r=run_live([WarehouseItem('1')],'receive',session_factory=lambda:s,journal=entries.append)
+        r=single_pass([WarehouseItem('1')],'receive',session_factory=lambda:s,journal=entries.append)
         error=next(e for e in entries if e.get('event')=='ot_error')
         self.assertEqual(error['step'],'Verificar resultado')
         self.assertTrue(error['confirmation_attempted'])
@@ -127,7 +143,7 @@ class TransportTests(TestCase):
         def journal(entry):
             if entry.get('confirmation')=='sending_once':
                 raise OSError('Log disk unavailable')
-        r=run_live([WarehouseItem('1')],'receive',session_factory=lambda:s,journal=journal)
+        r=single_pass([WarehouseItem('1')],'receive',session_factory=lambda:s,journal=journal)
         s.accept_button.return_value.click.assert_not_called()
         s.close.assert_called_once()
         self.assertEqual(r[0].status,'uncertain')
@@ -139,6 +155,6 @@ class TransportTests(TestCase):
             if entry.get('event')=='ot_error':
                 raise OSError('Disk unavailable')
         with self.assertRaises(OSError):
-            run_live([WarehouseItem('1')],'receive',session_factory=lambda:s,journal=journal)
+            single_pass([WarehouseItem('1')],'receive',session_factory=lambda:s,journal=journal)
         s.close.assert_called_once()
         s.accept_button.return_value.click.assert_called_once()

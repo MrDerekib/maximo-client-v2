@@ -43,7 +43,12 @@ def _timed(label, operation, *args, **kwargs):
         logging.info("Etapa %s: %.2fs", label, time.monotonic() - started)
 
 
-def _download_export_once(headless, download_root, attempt):
+def _update_progress(callback, phase):
+    if callback is not None:
+        callback(0, 0, phase)  # Export duration/size are unknown; no invented percentage.
+
+
+def _download_export_once(headless, download_root, attempt, progress_callback=None):
     """Use a fresh Edge profile for each read-only export attempt."""
     profile_dir = create_edge_profile("maximo-update-")
     driver = None
@@ -51,11 +56,16 @@ def _download_export_once(headless, download_root, attempt):
     try:
         download_dir = str(create_unique_directory(download_root, "maximo-download-"))
         logging.info("Descarga XLS: intento %d/2; perfil %s", attempt, profile_dir)
+        _update_progress(progress_callback, f"Abriendo Edge (intento {attempt}/2)")
         driver = _timed("abrir Edge", setup_driver, headless=headless,
                         profile_dir=profile_dir, download_dir=download_dir)
+        _update_progress(progress_callback, "Iniciando sesión en Maximo")
         _timed("login", login, driver, headless=headless)
+        _update_progress(progress_callback, "Abriendo listado de OTs")
         _timed("abrir listado", open_workorders_app, driver, headless=headless)
+        _update_progress(progress_callback, "Esperando exportación y descarga del listado")
         downloaded = _timed("descargar XLS", download_file, driver, download_dir)
+        _update_progress(progress_callback, "Preparando archivo descargado")
         return move_downloaded_file(downloaded)
     finally:
         try:
@@ -69,7 +79,7 @@ def _download_export_once(headless, download_root, attempt):
 
 
 @scheduled("Actualizar listado de Maximo", MANUAL)
-def run_update(headless=True):
+def run_update(headless=True, progress_callback=None):
     started = time.monotonic()
     try:
         download_root = Path(load_config().download_dir).resolve()
@@ -80,7 +90,7 @@ def run_update(headless=True):
                 with coordinator.interruptible_read():
                     for attempt in (1, 2):
                         try:
-                            file_path = _download_export_once(headless, download_root, attempt)
+                            file_path = _download_export_once(headless, download_root, attempt, progress_callback)
                             break
                         except ExportDownloadTimeout:
                             if attempt == 2: raise
@@ -91,13 +101,16 @@ def run_update(headless=True):
             if coordinator.checkpoint('Procesando listado'):
                 Path(file_path).unlink(missing_ok=True)
                 continue
+            _update_progress(progress_callback, 'Procesando listado descargado')
             df = _timed('procesar XLS', process_html_table, file_path)
             if coordinator.checkpoint('Guardando listado'):
                 Path(file_path).unlink(missing_ok=True)
                 continue
+            _update_progress(progress_callback, 'Guardando cambios en la base de datos')
             new_entries, updated_entries = _timed('sincronizar BD', update_database_from_df, df)
             break
         logging.info("Actualización de base de datos completada.")
+        _update_progress(progress_callback, 'Finalizando actualización')
         cleanup_exports(Path(file_path).parent)
         return new_entries, updated_entries
     finally:

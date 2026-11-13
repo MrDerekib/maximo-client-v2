@@ -1,5 +1,7 @@
 "use strict";
 
+if (typeof importScripts === "function") importScripts("panel_bridge.js", "panel_visibility.js", "panel_worker.js", "vendor/pdf-lib.min.js", "pdf_merge.js");
+
 const JOB_KEY = "activePrintJob";
 const JOB_TTL_MS = 3 * 60 * 1000;
 let pdfDownloadInProgress = false;
@@ -18,24 +20,46 @@ function repairOutputUrl(raw) {
 async function handlePdfOutput(tabId, changeInfo, tab) {
   if (pdfDownloadInProgress || !repairOutputUrl(changeInfo.url || tab?.url)) return;
   const job = await readJob();
-  if (job?.outputFormat !== "pdf" || !job.viewerTabId ||
+  if (pdfDownloadInProgress || job?.outputFormat !== "pdf" || !job.viewerTabId ||
       tab?.openerTabId !== job.viewerTabId ||
       (job.outputTabId && job.outputTabId !== tabId)) return;
   pdfDownloadInProgress = true;
   try {
     job.outputTabId = tabId;
     await chrome.storage.session.set({ [JOB_KEY]: job });
+    let downloadUrl=changeInfo.url || tab.url;
+    if(job.variantCount===2){
+      await tellSource(job,`Preparando PDF ${job.variantIndex+1}/2 de Boixeres…`,"PROGRESS");
+      const response=await fetch(downloadUrl,{credentials:"include",signal:AbortSignal.timeout(45000)});
+      if(!response.ok || !repairOutputUrl(response.url || downloadUrl))
+        throw new Error("No se pudo obtener el PDF de BIRT en la sesión actual.");
+      const bytes=new Uint8Array(await response.arrayBuffer());
+      if(String.fromCharCode(...bytes.subarray(0,5))!=="%PDF-")
+        throw new Error("BIRT no devolvió un PDF válido; revisa si la sesión ha caducado.");
+      if(job.variantIndex===0){
+        // Survive worker suspension; discard these temporary bytes on finish/fail.
+        job.pdfFirstPart=repairPdfBase64(bytes);
+        await closePdfPreview(job,downloadUrl);
+        await nextReportVariant(job);
+        return;
+      }
+      if(!job.pdfFirstPart)throw new Error("No se conserva el primer PDF; vuelve a solicitar ambas copias.");
+      await tellSource(job,"Uniendo las dos variantes en un PDF…","PROGRESS");
+      downloadUrl=await mergeRepairPdfs([job.pdfFirstPart,bytes]);
+    }
     await chrome.downloads.download({
-      url: changeInfo.url || tab.url,
+      url: downloadUrl,
       filename: `parte_reparacion_OT${job.ot}.pdf`,
       saveAs: true,
       conflictAction: "uniquify"
     });
     await chrome.storage.session.remove(JOB_KEY);
-    await tellSource(job, "Selecciona dónde guardar el PDF del parte.");
+    await tellSource(job, job.variantCount===2
+      ? "PDF de Boixeres preparado con ambas variantes: con técnico y tiempo, y sin ellos."
+      : "Selecciona dónde guardar el PDF del parte.");
   } catch (error) {
     await chrome.storage.session.remove(JOB_KEY);
-    await tellSource(job, `No se pudo abrir Guardar como: ${error.message}. Puedes guardar el PDF desde la pestaña.`);
+    await tellSource(job, `No se pudo preparar o guardar el PDF: ${error.message}. Revisa las pestañas restantes o vuelve a solicitar el parte.`);
   } finally {
     pdfDownloadInProgress = false;
   }
@@ -70,7 +94,50 @@ async function closeViewerTab(job) {
   catch (_) { /* The user may already have closed the BIRT tab. */ }
 }
 
+async function closePdfPreview(job, outputUrl) {
+  // BIRT allows a single PDF preview. Close only this job's temporary windows,
+  // after capturing the bytes, before creating its second report variant.
+  const tabs=await chrome.tabs.query({});
+  const output=tabs.find(tab=>tab.id===job.outputTabId);
+  if(output){
+    if(output.id===job.sourceTabId || output.url!==outputUrl ||
+        (output.openerTabId!=null && output.openerTabId!==job.viewerTabId))
+      throw new Error("La primera vista PDF cambió; no se cerrará una ventana ajena al parte.");
+    await chrome.tabs.remove(output.id);
+  }
+  const viewer=tabs.find(tab=>tab.id===job.viewerTabId);
+  if(viewer){
+    let matches=false;
+    try{const url=new URL(viewer.url);matches=url.origin==="https://eam.indraweb.net" &&
+      url.pathname==="/maximo/report" && url.searchParams.get("__report")==="parte_reparacion.rptdesign";}catch(_){}
+    if(viewer.id===job.sourceTabId || !matches ||
+        (viewer.openerTabId!=null && viewer.openerTabId!==job.sourceTabId))
+      throw new Error("El primer visor cambió; no se cerrará una pestaña ajena al parte.");
+    await chrome.tabs.remove(viewer.id);
+  }
+}
+
+async function nextReportVariant(job) {
+  job.variantIndex = 1;
+  job.viewerTabId = null;
+  job.outputTabId = null;
+  job.startedAt = Date.now();
+  await chrome.storage.session.set({ [JOB_KEY]: job });
+  try {
+    await chrome.tabs.sendMessage(job.sourceTabId, {
+      type: "NEXT_VARIANT", jobId: job.id, variantIndex: 1,
+      variantCount: job.variantCount,
+      text: "Primera copia lista; preparando la variante sin técnico ni tiempo…"
+    });
+  } catch (_) {
+    await chrome.storage.session.remove(JOB_KEY);
+    throw new Error("No se pudo iniciar la segunda variante del parte.");
+  }
+}
+
 async function handleMessage(message, sender) {
+  if (["OPEN_PANEL", "PANEL_CONTEXT", "PANEL_ACTION", "PANEL_LAUNCHER_STATE"].includes(message.type))
+    return handlePanelMessage(message, sender);
   const tab = sender.tab;
   if (!tab?.id) throw new Error("No se ha identificado la pestaña de Maximo.");
 
@@ -84,7 +151,7 @@ async function handleMessage(message, sender) {
       id: crypto.randomUUID(), ot, outputFormat, sourceTabId: tab.id,
       viewerTabId: null, outputTabId: null, startedAt: Date.now(),
       variantIndex: 0,
-      variantCount: outputFormat === "html" && isBoixeresClient(message.client) ? 2 : 1,
+      variantCount: isBoixeresClient(message.client) ? 2 : 1,
       closeTabs: outputFormat === "html" && message.closeTabs === true
     };
     await chrome.storage.session.set({ [JOB_KEY]: job });
@@ -100,6 +167,24 @@ async function handleMessage(message, sender) {
     }
     const source = await chrome.tabs.update(job.sourceTabId, { active: true });
     await chrome.windows.update(source.windowId, { focused: true });
+    // A focused side panel can retain browser focus despite tabs/windows.update.
+    // First try the page; close only our panel if Edge still keeps focus there.
+    const focusPage = () => chrome.scripting.executeScript({
+      target: { tabId: job.sourceTabId },
+      world: "MAIN",
+      func: () => {
+        window.focus();
+        const menu = [...document.querySelectorAll("a[eventtype='RUNREPORTS']")]
+          .find(element => element.getClientRects().length);
+        menu?.focus({ preventScroll: true });
+        return { focused: document.hasFocus() };
+      }
+    });
+    const [focus] = await focusPage();
+    if (focus?.result?.focused === false && chrome.sidePanel?.close) {
+      await chrome.sidePanel.close({ windowId: source.windowId });
+      await focusPage();
+    }
     return { activated: true };
   }
 
@@ -323,7 +408,7 @@ async function handleMessage(message, sender) {
     job.viewerTabId = tab.id;
     await chrome.storage.session.set({ [JOB_KEY]: job });
     await tellSource(job, job.outputFormat === "pdf"
-      ? "Parte generado; preparando PDF…"
+      ? job.variantCount>1 ? `Parte ${job.variantIndex+1}/2 generado; preparando PDF…` : "Parte generado; preparando PDF…"
       : job.variantCount > 1
         ? `Parte ${job.variantIndex + 1}/2 generado; preparando impresión…`
         : "Parte generado; preparando impresión…", "PROGRESS");
@@ -349,21 +434,7 @@ async function handleMessage(message, sender) {
     }
     if (message.type === "FINISH" && job.variantCount === 2 && job.variantIndex === 0) {
       await closeViewerTab(job);
-      job.variantIndex = 1;
-      job.viewerTabId = null;
-      job.outputTabId = null;
-      job.startedAt = Date.now();
-      await chrome.storage.session.set({ [JOB_KEY]: job });
-      try {
-        await chrome.tabs.sendMessage(job.sourceTabId, {
-          type: "NEXT_VARIANT", jobId: job.id, variantIndex: 1,
-          variantCount: job.variantCount,
-          text: "Primera copia lista; preparando la variante sin técnico ni tiempo…"
-        });
-      } catch (_) {
-        await chrome.storage.session.remove(JOB_KEY);
-        throw new Error("No se pudo iniciar la segunda variante del parte.");
-      }
+      await nextReportVariant(job);
       return { ok: true, nextVariant: true, closeTabs: job.closeTabs };
     }
     if (message.type === "FINISH") await closeViewerTab(job);

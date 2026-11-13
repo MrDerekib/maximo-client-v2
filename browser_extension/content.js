@@ -179,6 +179,7 @@
       }
       button.textContent = buttonText;
       button.title = buttonText;
+      button.dataset.panelBusy = String(running);
     }
 
     function armReportWait(jobId) {
@@ -207,6 +208,7 @@
       ensureButton();
       const ot = workOrderNumber();
       const status = workOrderStatus();
+      button.dataset.panelBusy = String(running);
       button.hidden = !/^\d{5,12}$/.test(ot);
       button.disabled = running || !logic.canPrintStatus(status);
       button.style.opacity = button.disabled ? "0.6" : "1";

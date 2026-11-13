@@ -7,6 +7,7 @@ class WarehouseAction:
     label: str
     native_label: str
     initial_status: str
+    role: str = "warehouse"
 
 
 ACTIONS = {
@@ -14,8 +15,13 @@ ACTIONS = {
     'reject_receive': WarehouseAction('Rechazar recepción', 'Rechazar recepción', 'WAPPR'),
     'receive_sat_internal': WarehouseAction('Confirmar y enviar a SAT Interno', 'Confirmar y enviar a SAT Interno', 'WAPPR'),
     'receive_sat_external': WarehouseAction('Confirmar y enviar a SAT Externo', 'Confirmar y enviar a SAT Externo', 'WAPPR'),
+    'technician_sat_external': WarehouseAction('Enviar a SAT Externo · Técnico', 'Enviar a SAT Externo', 'APPR', 'technician'),
+    'technician_discard': WarehouseAction('Declarar irreparable · Técnico','Desechar equipo','INPRG','technician'),
+    'technician_close': WarehouseAction('Finalizar reparación · Técnico','Cerrar OT','INPRG','technician'),
     'dispatch': WarehouseAction('Dar salida del almacén', 'Dar salida activo del almacén', 'ISSUE'),
 }
+FINAL_STATES = {'technician_discard':'CLOSE','technician_close':'ISSUE','receive': 'APPR', 'dispatch': 'CLOSE', 'technician_sat_external': 'ISSUE',
+                'receive_sat_external': 'ISSUE', 'receive_sat_internal': 'ISSUE'}
 RECEIPT_ACTIONS = ('receive', 'reject_receive', 'receive_sat_internal', 'receive_sat_external')
 STEPS = ('Abrir ficha', 'Comprobar OT y estado', 'Seleccionar acción',
          'Confirmar acción', 'Verificar resultado')
@@ -45,6 +51,8 @@ class WarehouseResult:
     detail: str = ''
     completed_steps: int = 0
     verified_status: str = ''
+    operation_id: str = ''
+    local_status_saved: bool | None = None
 
 
 def freeze_items(items):
