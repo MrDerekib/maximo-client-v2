@@ -3,7 +3,8 @@
 Rama: `tecnico/sat-externo`. Acción distinta de la recepción de almacén con
 «Confirmar y enviar a SAT Externo». Comparte el procesador de lotes, el reporte,
 las prioridades y la recuperación; no comparte la acción ni el estado inicial.
-La extensión de Edge queda para fase 2 y no se ha modificado.
+El envío técnico a SAT desde la extensión de Edge queda para fase 2. El panel
+lateral y el cierre de la extensión se documentan en browser_extension/README.md.
 
 ## Uso desde MD
 
@@ -23,7 +24,9 @@ la selección. Antes de ejecutar, el usuario completa o revisa:
 
 El inicio requiere confirmación explícita con No por defecto. Cada OT se prepara
 con anomalías/soluciones, horas y un registro CLIENTNOTE con `inc: referencia`.
-La preparación se guarda y se contrasta desde una recarga antes de enrutar.
+La preparación SAT se guarda y se contrasta mediante navegación nativa en la
+misma sesión antes de enrutar. El flujo de finalizar reparación / desecho desde
+MD, distinto de este envío, prepara sus registros sin Guardar entre pasos.
 Un registro idéntico visible no se duplica. Si no se encuentra y hay más páginas
 de registro que no se han inspeccionado, se detiene para revisión en lugar de
 crear una posible incidencia duplicada.

@@ -1,5 +1,118 @@
 # Historial de cambios
 
+## 1.3.0 — Operaciones de técnico y nuevo panel de Edge
+
+### Resumen
+
+- **Técnico:** enviar a SAT externo, finalizar reparaciones y declarar equipos irreparables desde MD.
+- **Técnico:** incidencia, trabajos, pruebas, duración y fechas en una revisión previa; cierre más ágil.
+- **Edge:** nuevo panel lateral con las acciones disponibles para la OT y cierre con revisión de datos.
+- **Partes:** las dos variantes de Boixeres también se guardan juntas en un único PDF.
+- **Formularios:** se conserva lo escrito durante la consulta y se aprovecha la avería local.
+- **Roles:** menús diferenciados de Técnico y Almacén según las opciones habilitadas.
+
+### Técnico · Envío a SAT externo desde MD
+
+- Nueva acción «Enviar a SAT Externo · Técnico», individual o en lote, para OTs en
+  APPR. Es la acción del rol de técnico; no es la recepción con derivación a SAT
+  que realiza almacén.
+- Revisión previa de anomalías y soluciones, horas en múltiplos de 0,25 h,
+  incidencia de texto libre y motivo por OT. La incidencia se registra con un
+  único prefijo `inc:`; admite números, `stock`, `sin inc` u otro texto de la etiqueta.
+- El motivo se propone a partir de la avería local; Maximo solo se consulta para
+  obtener esa descripción cuando no está disponible en MD.
+- Preparación y envío en una misma sesión de Edge. Se espera la validación nativa
+  de los campos y la disponibilidad del enrutado antes de confirmar.
+- Progreso y resultado por OT, petición revisada conservada y trazas por operación.
+  Un fallo anterior a Enrutar permite abrir «Reintentar preparación…», revisar los
+  datos y confirmar otro intento. Si ya se intentó enrutar o confirmar, solo se
+  reverifica el resultado; no se repite la acción automáticamente.
+
+### Técnico · Finalizar reparación y declarar irreparable desde MD
+
+- Entradas independientes «Dar salida · Técnico» y «Declarar irreparable · Técnico»
+  en el menú contextual. Comparten revisión, con la acción invocada seleccionada.
+- Se admiten OTs APPR e INPRG. Si todavía no se han iniciado, se inicia la OT como
+  parte del proceso expresamente revisado antes de finalizarla.
+- Incidencia libre, varias entradas de Registro con resumen y detalles, anomalías
+  y soluciones, duración en cuartos de hora y fechas reales de reparación.
+- Se puede indicar inicio o finalización y calcular la otra fecha con la duración.
+  «Ahora» toma la finalización actual; el selector muestra fecha y hora y permite
+  ajustar los minutos en pasos de cinco, sin exigir segundos.
+- El motivo de desecho solo aparece al declarar irreparable. Se propone la avería
+  como texto editable y se respetan los cambios o borrados manuales, incluida una
+  edición realizada mientras se consulta la ficha.
+- La consulta inicial conserva la incidencia, duración y entradas que se hayan
+  escrito durante la carga. Los valores vacíos de Maximo no borran esos datos.
+- Preparación sin Guardar después de cada registro ni recargas entre pasos: los
+  campos se validan y el enrutado confirma los cambios. Solo se conserva el
+  guardado necesario para eliminar una jerarquía de anomalías anterior cuando
+  se sustituye por otra.
+- Confirmación explícita antes de una acción irreversible. Se comprueban equipo,
+  estado, fechas, Registro e historial; el cierre normal se verifica en ISSUE y
+  el desecho en CLOSE. Un resultado incierto queda para revisión, sin repetirlo.
+- Impresión opcional después de verificar. Un fallo al preparar el parte permite
+  volver a solicitarlo sin iniciar, cerrar ni desechar de nuevo la OT.
+
+### Almacén · Recepción y expedición
+
+- Las operaciones de almacén se agrupan en su propio submenú y siguen requiriendo
+  activar «Mostrar acciones de almacén» y los permisos de la cuenta de Maximo.
+- Se conserva su operativa de confirmar recepción, confirmar y enviar a SAT
+  interno/externo y dar salida del almacén, individualmente o en lote, con informe
+  de progreso, pendientes y reverificación.
+- Se distinguen las acciones y estados de técnico y almacén. «Dar salida · Técnico»
+  finaliza la reparación; «Dar salida del almacén» realiza la expedición posterior.
+  El seguimiento local y el estado leído en Edge se contrastan según cada acción.
+
+### Extensión de Edge · Panel lateral y cierre dinámico
+
+- Panel lateral con OT, cliente, estado, acciones disponibles y seguimiento. El
+  acceso flotante se oculta al abrirlo y reaparece al cerrarlo.
+- Icono M azul fijado en las sesiones temporales que abre MD. Se conserva el
+  arranque de Edge con el aviso habitual de navegador automatizado.
+- «Cerrar OT» consulta Registro, duración, fechas y anomalías antes de mostrar la
+  revisión. Permite completar incidencia y trabajos cuando faltan y reutiliza las
+  entradas existentes sin duplicarlas ni modificarlas.
+- La preparación del cierre no pulsa Guardar ni reabre la ficha. Se mantienen las
+  comprobaciones de campos y el resultado del enrutado.
+- Las acciones de impresión recuperan el foco de la ficha; si el panel lo retiene,
+  se cierra para permitir continuar y se muestra el progreso en el acceso flotante.
+- El panel utiliza las acciones habilitadas para el estado real de la OT. El envío
+  técnico a SAT y la preparación completa desde el menú de MD siguen disponibles
+  desde MD; no se presentan como nuevas operaciones de almacén en Edge.
+
+### Partes de reparación y PDF
+
+- Boixeres mantiene sus dos variantes HTML: una con técnico y tiempo y otra sin
+  esos datos. Funcionan desde la extensión y desde el menú contextual de MD, también
+  con una OT ya cerrada.
+- Guardar PDF de Boixeres obtiene las dos salidas PDF originales de BIRT y las une
+  localmente, en ese orden, en un único archivo y con un solo diálogo «Guardar como».
+- Se cierra la primera vista preliminar PDF y su visor temporal antes de generar
+  la siguiente, evitando el aviso de BIRT de que ya hay una vista abierta.
+- Si falla una variante, no se entrega un PDF parcial como si contuviera ambas.
+  Para los demás clientes se mantiene la descarga del PDF original de una variante.
+- La unión incluye pdf-lib con licencia MIT dentro de la aplicación; no descarga
+  código durante el uso. El script de build incluye panel, formularios, iconos y licencia.
+- Limitación de BIRT: el PDF nativo puede contener «The resource of this report item
+  is not reachable» cuando el servidor no carga un recurso del diseño. Se conserva
+  el contenido original; esta versión no modifica ni oculta esos avisos.
+
+### Validación y despliegue
+
+- Pruebas locales de preparación sin guardados, varias entradas, APPR/INPRG,
+  cierre/desecho, confirmaciones inciertas, recuperación, formularios y panel.
+- Validación de la candidata: 221 pruebas Python correctas (incluido Edge aislado)
+  y 44 pruebas JavaScript correctas. Las pruebas locales no usan cuentas reales.
+- Unión PDF comprobada con documentos locales en Node y Edge, orden de páginas,
+  continuidad entre variantes y una única selección de archivo.
+- El cierre normal y el desecho desde MD se han comprobado en operaciones reales.
+  El último ajuste de vista preliminar del PDF conjunto de Boixeres deberá
+  confirmarse en la build de prueba antes de publicar.
+- La build y su instalación/actualización se validarán localmente antes de publicar
+  este borrador. Las acciones conservan los permisos y comprobaciones de Maximo.
+
 ## 1.2.3 — Recuperación de almacén y mejoras de fluidez
 
 ### Resumen
