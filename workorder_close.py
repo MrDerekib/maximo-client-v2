@@ -290,7 +290,7 @@ class WorkorderCloser(WorkorderStarter):
                     continue
                 if dialog['id']!='inputwf-dialog_inner' or submitted:
                     raise RuntimeError(f'Maximo requiere revisión del cierre: {dialog["text"]}')
-                choices=self.driver.execute_script(r"""
+                choice_script=r"""
                     const root=document.getElementById('inputwf-dialog_inner');
                     const normalize=t=>String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'')
                       .replace(/\s+/g,' ').trim().toLowerCase();
@@ -307,26 +307,49 @@ class WorkorderCloser(WorkorderStarter):
                       }
                       return captions.some(t=>allowed.has(normalize(t)));
                     });
-                """,list(action['native_labels']))
+                """
+                labels=list(action['native_labels'])
+                choices=self.driver.execute_script(choice_script,labels)
                 if len(choices)!=1:
                     raise RuntimeError(f'Maximo no ofrece una única opción «{action["label"]}». '
                                        'No se elegirá otra acción.')
-                choices[0].click()
                 if not choices[0].is_selected():
-                    raise RuntimeError(f'Maximo no confirmó la selección «{action["label"]}». No se enviará la acción.')
-                root=self.driver.find_element(By.ID,'inputwf-dialog_inner')
-                buttons=[e for e in root.find_elements(By.CSS_SELECTOR,'button') if normalized(e.text)=='aceptar']
-                if len(buttons)!=1:
-                    raise RuntimeError('No se encontró la confirmación nativa del cierre.')
+                    choices[0].click()
+
+                def ready_to_accept(driver):
+                    dialogs=self.dialog_snapshot()
+                    if len(dialogs)!=1 or dialogs[0]['id']!='inputwf-dialog_inner':
+                        raise RuntimeError('El diálogo de Maximo cambió antes de confirmar el cierre.')
+                    current=driver.execute_script(choice_script,labels)
+                    if len(current)!=1 or not current[0].is_selected():
+                        return False
+                    root=driver.find_element(By.ID,'inputwf-dialog_inner')
+                    buttons=[b for b in root.find_elements(By.TAG_NAME,'button')
+                             if normalized(b.text)=='aceptar' and b.is_displayed() and b.is_enabled()
+                             and b.get_attribute('aria-disabled')!='true']
+                    return buttons[0] if len(buttons)==1 else False
+
+                self.idle()
+                self.wait(ready_to_accept,'opción seleccionada y Aceptar habilitado')
                 self.progress(f'OT {self.ot}: enviando «{action["label"]}» confirmado…')
                 self.before_route_accept()
+                # Identity checks can span a redraw. Resolve the live controls again.
+                button=self.wait(ready_to_accept,'confirmación nativa de la acción seleccionada')
                 submitted=True
                 try:
-                    buttons[0].click()  # Never replay this irreversible confirmation.
+                    button.click()  # Never replay this irreversible confirmation.
                 except StaleElementReferenceException:
                     logging.info('OT %s: comprobando resultado del cierre tras reemplazo del botón, sin repetirlo',self.ot)
-                self.wait(lambda d:self.value('Estado') not in (None,'','INPRG') or
-                          any(x['id']!='inputwf-dialog_inner' for x in self.dialog_snapshot()),'resultado del cierre')
+                try:
+                    self.wait(lambda d:self.value('Estado') not in (None,'','INPRG') or
+                              any(x['id']!='inputwf-dialog_inner' for x in self.dialog_snapshot()),'resultado del cierre')
+                except RuntimeError as exc:
+                    if (isinstance(exc.__cause__,TimeoutException) and route_action=='close'
+                            and self.value('Estado')=='INPRG'
+                            and any(x['id']=='inputwf-dialog_inner' for x in self.dialog_snapshot())):
+                        raise RuntimeError('La OT sigue en curso (INPRG) y «Cerrar OT» sigue abierto '
+                                           'tras intentar Aceptar. La salida está pendiente de verificación.') from exc
+                    raise
                 continue
             if submitted:
                 raise RuntimeError('No se pudo confirmar el cierre. Revisa el estado en Maximo antes de repetir la operación.')

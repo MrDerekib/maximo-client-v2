@@ -1,4 +1,5 @@
 from task_priorities import coordinator, scheduled, AUTOMATIC, MANUAL, ReadYield
+from selenium.common.exceptions import WebDriverException
 # updater.py
 from maximo_client import (
     setup_driver,
@@ -70,7 +71,11 @@ def _download_export_once(headless, download_root, attempt, progress_callback=No
     finally:
         try:
             if driver is not None:
-                driver.quit()
+                try:driver.quit()
+                except WebDriverException:
+                    # A dead tab/session may also fail to quit. Keep the original
+                    # export failure available to the bounded recovery below.
+                    logging.warning("Descarga XLS: Edge no respondió al cerrar la sesión.",exc_info=True)
         finally:
             cleanup_edge_profile(profile_dir)
             if download_dir is not None:
@@ -92,9 +97,20 @@ def run_update(headless=True, progress_callback=None):
                         try:
                             file_path = _download_export_once(headless, download_root, attempt, progress_callback)
                             break
-                        except ExportDownloadTimeout:
-                            if attempt == 2: raise
-                            logging.warning('La descarga XLS falló; se reintentará con una sesión nueva de Edge.')
+                        except WebDriverException as exc:
+                            crashed='tab crashed' in str(getattr(exc,'msg','')).lower()
+                            if not crashed and not isinstance(exc,ExportDownloadTimeout):raise
+                            if attempt==2:
+                                if crashed:
+                                    raise RuntimeError('Edge volvió a fallar al cargar el listado tras el reintento. '
+                                        'La actualización se detuvo antes de guardar datos.') from exc
+                                raise
+                            if crashed:
+                                logging.warning('Descarga XLS: pestaña de Edge caída en intento %d/2; '
+                                    'se reintentará una vez con una sesión nueva.',attempt,exc_info=True)
+                                _update_progress(progress_callback,'La pestaña de Edge falló; reintentando con una sesión nueva')
+                            else:
+                                logging.warning('La descarga XLS falló; se reintentará con una sesión nueva de Edge.')
             except ReadYield:
                 coordinator.checkpoint('Descarga aplazada por acción prioritaria')
                 continue

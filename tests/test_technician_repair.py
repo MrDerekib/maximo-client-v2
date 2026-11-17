@@ -292,7 +292,8 @@ class RepairUiTests(TestCase):
 
     def test_discard_success_saves_close_locally_and_enables_only_print_retry(self):
         d=self.dialog()
-        with patch('technician_repair_ui.apply_warehouse_status',return_value=True) as save,patch('technician_repair_ui.apply_closed_repair') as old,patch('technician_repair_ui.RecoveryStore'):
+        with patch('technician_repair_ui.apply_warehouse_status',return_value=True) as save,patch('technician_repair_ui.apply_closed_repair') as old,patch('technician_repair_ui.RecoveryStore') as recovery:
+            recovery.return_value.get.return_value=None
             d.finished_repair({'ot':'1','status':'CLOSE','operation_id':'operation','print_report':False})
         save.assert_called_once_with('1','CLOSE');old.assert_not_called()
         self.assertTrue(d.retry_print.isEnabled())
@@ -337,7 +338,8 @@ class RepairUiTests(TestCase):
         self.assertFalse(d.retry_print.isEnabled());self.assertFalse(signals)
     def test_verified_result_print_retry_never_launches_repair_again(self):
         d=self.dialog();signals=[];d.print_requested.connect(signals.append)
-        with patch('technician_repair_ui.apply_closed_repair',return_value=True),patch('technician_repair_ui.RecoveryStore'):
+        with patch('technician_repair_ui.apply_closed_repair',return_value=True),patch('technician_repair_ui.RecoveryStore') as recovery:
+            recovery.return_value.get.return_value=None
             d.finished_repair({'ot':'1','status':'ISSUE','operation_id':'operation','print_report':True})
         self.assertEqual(signals,['1']);self.assertTrue(d.retry_print.isEnabled())
         with patch.object(d,'launch') as launch:d.retry_print.click();d.execute()

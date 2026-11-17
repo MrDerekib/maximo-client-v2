@@ -114,6 +114,24 @@ def _click_pending_repair_lookup(driver) -> bool:
     return True
 
 
+def _remember_discard_for_reports(driver, result):
+    """Annotation failures never consume or hide a successfully closed OT."""
+    if result.get('action') != 'discard' or result.get('status') != 'CLOSE' or result.get('cancelled'):
+        return
+    try:
+        from report_stamp import record_verified_discard
+        record_verified_discard(result)
+        if getattr(driver, '_maximo_report_stamp_enabled', False):
+            driver.execute_script(
+                "const key='maximoDesktop.discardedOts';"
+                "const ots=JSON.parse(sessionStorage.getItem(key)||'[]');"
+                "if(!ots.includes(arguments[0]))ots.push(arguments[0]);"
+                "sessionStorage.setItem(key,JSON.stringify(ots));", str(result['ot']))
+    except Exception:
+        logging.warning('OT %s: desecho verificado, pero no se pudo preparar el sello de sesión',
+                        result.get('ot'), exc_info=True)
+
+
 def _start_ot_action_watcher(driver) -> None:
     """Attend explicit report lookups and the optional start action in this session."""
     if getattr(driver, "_maximo_ot_action_watcher", False):
@@ -133,6 +151,8 @@ def _start_ot_action_watcher(driver) -> None:
                 if getattr(driver, "_maximo_workorder_close_enabled", False):
                     from workorder_close import poll_browser_close
                     result = poll_browser_close(driver)
+                    if result:
+                        _remember_discard_for_reports(driver, result)
                     callback = getattr(driver, "_maximo_workorder_closed", None)
                     if result and callback:
                         callback(result)
@@ -152,12 +172,12 @@ def _start_ot_action_watcher(driver) -> None:
     threading.Thread(target=watch, name="maximo-ot-actions", daemon=True).start()
 
 
-def visible_ot_print_preferences():
+def visible_ot_print_preferences(color=False):
     """Initial print preview choices for each disposable interactive OT profile."""
     app_state = {
         "version": 2,
         "recentDestinations": [],
-        "isColorEnabled": False,
+        "isColorEnabled": bool(color),
         "isHeaderFooterEnabled": False,
     }
     return {"appState": json.dumps(app_state, separators=(",", ":"))}
@@ -197,7 +217,7 @@ def repair_extension_toolbar_preferences(extension):
         return {}
 
 
-def setup_driver(headless=True, profile_dir=None, download_dir=None, force_repair_extension=False):
+def setup_driver(headless=True, profile_dir=None, download_dir=None, force_repair_extension=False, report_color=False):
     cfg = load_config()
     logging.info("Inicializando Edge...")
 
@@ -241,7 +261,7 @@ def setup_driver(headless=True, profile_dir=None, download_dir=None, force_repai
     }
     prefs.update(extension_preferences)
     if not headless:
-        prefs["printing.print_preview_sticky_settings"] = visible_ot_print_preferences()
+        prefs["printing.print_preview_sticky_settings"] = visible_ot_print_preferences(color=True) if report_color else visible_ot_print_preferences()
     options.add_experimental_option("prefs", prefs)
 
     driver = webdriver.Edge(options=options)
@@ -555,12 +575,18 @@ def open_ot(
     repair_extension_loaded = not headless and (
         report_action is not None or getattr(cfg, "repair_extension_enabled", False)
     )
+    from report_stamp import verified_discard_ots
+    discarded_ots = verified_discard_ots() if repair_extension_loaded and getattr(cfg, "repair_irreparable_stamp_enabled", True) else set()
+    report_color = report_action == "print" and str(ot) in discarded_ots
     profile_dir = create_edge_profile("maximo-ot-")
     logging.info(f"OT {ot}: usando perfil temporal {profile_dir}")
 
     driver = None
     try:
         options = {"force_repair_extension": True} if report_action else {}
+        if report_color:
+            options["report_color"] = True
+        logging.info("OT %s: parte HTML con sello=%s; color=%s", ot, str(ot) in discarded_ots, report_color)
         driver = setup_driver(headless=headless, profile_dir=profile_dir, **options)
         close_after_direct_print = _should_close_after_direct_print(
             close_after_direct_print, headless,
@@ -600,6 +626,10 @@ def open_ot(
                 timeout=45,
             )
         if repair_extension_loaded:
+            driver.execute_script(
+                "window.sessionStorage.setItem('maximoDesktop.discardedOts', JSON.stringify(arguments[0]));",
+                sorted(discarded_ots),
+            )
             # Tab session storage survives Maximo reloads, including the two
             # reloads used to validate an OT closure. It expires with the tab.
             driver.execute_script(
@@ -620,6 +650,7 @@ def open_ot(
             driver._maximo_workorder_started = on_workorder_started
             driver._maximo_workorder_start_mode = getattr(cfg, "workorder_start_mode", "configured")
             driver._maximo_workorder_start_selection = getattr(cfg, "workorder_start_selection", None)
+        driver._maximo_report_stamp_enabled = bool(getattr(cfg, 'repair_irreparable_stamp_enabled', True))
         if browser_close_enabled:
             driver._maximo_workorder_close_enabled = True
             driver._maximo_workorder_closed = on_workorder_closed

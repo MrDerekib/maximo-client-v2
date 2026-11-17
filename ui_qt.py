@@ -14,20 +14,27 @@ from datetime import date, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QObject, QPointF, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal, QSignalBlocker
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen
+from PySide6.QtCore import QDate, QEvent, QObject, QPointF, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal, QSignalBlocker
+from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPalette, QPen, QPixmap, QTextCharFormat
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QButtonGroup, QCalendarWidget, QCheckBox, QComboBox,
     QDialog, QDialogButtonBox, QCompleter, QDateEdit, QFileDialog, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
-    QProgressBar, QProgressDialog, QSizePolicy, QSpinBox, QStackedWidget, QStatusBar, QTableWidget, QTableWidgetItem,
-    QTextBrowser, QStyle, QVBoxLayout, QWidget, QWidgetAction,
+    QProgressBar, QProgressDialog, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QStatusBar, QTableWidget, QTableWidgetItem,
+    QTextBrowser, QStyle, QTabWidget, QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
 
-from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DEVELOPMENT_MODE, DOWNLOAD_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR, PROFILES_PATH, UPDATE_CACHE_DIR, WAREHOUSE_DEVELOPMENT_MODE
+from column_widths import ColumnWidthHeader
+from rounded_table import RoundedTableFrame
+from ui_activity_icon import RefreshIcon, set_list_update_busy
+from native_titlebar import NativeTitleBarStyler
+from typography import FONT_OPTIONS, normalize_font, apply_font
+from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DEVELOPMENT_MODE, DOWNLOAD_DIR, PROGRAM_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR, PROFILES_PATH, UPDATE_CACHE_DIR, WAREHOUSE_DEVELOPMENT_MODE
 from config import AppConfig, credentials_configured, load_config, save_config
+from appearance import (readable_color, profile_for, custom_legibility, normalize_custom_legibility, THEME_PALETTES, THEME_LABELS, _LIGHT_HEX_ROLES, PROFILES, effective_palette,
+                        legibility_css, application_legibility_css, appearance_overrides, tracking_style, presence_style, component_css)
 from failure_catalog import resolve_selection
 from failure_picker import FailurePathPicker
 from warehouse_ui import WarehouseWindowMixin
@@ -134,53 +141,59 @@ QHeaderView::section { background: #f0f4f8; color: #486581; border: 0; border-ri
 QHeaderView::section:hover { background: #e2e8f0; }
 QTableCornerButton::section { background: #f0f4f8; border: 0; border-right: 1px solid #cbd5e1; border-bottom: 1px solid #d9e2ec; }
 QStatusBar { background: #ffffff; border-top: 1px solid #d9e2ec; color: #486581; }
+QTabWidget#settingsTabs::pane { border: 0; background: #f5f7fb; }
+QTabBar::tab { background: #e8eef5; color: #486581; padding: 10px 16px; margin-right: 5px; border-bottom: 3px solid transparent; border-top-left-radius: 6px; border-top-right-radius: 6px; font-size: 12px; font-weight: 600; }
+QTabBar::tab:selected { background: #ffffff; color: #102a43; border-bottom-color: #1976d2; }
+QTabBar::tab:hover { background: #dbeafe; }
+QToolButton#sidebarToggle, QToolButton#navigationMenu { background: transparent; color: #172033; border: none; border-radius: 6px; padding: 5px; }
+QFrame#navigationBar { border-bottom: 1px solid #bcccdc; }
+QToolButton#sidebarToggle:hover, QToolButton#navigationMenu:hover { background: #dbeafe; }
 """
 
-# Toda la interfaz parte de estos roles, no de colores de Windows.  Mantener
-# la paleta aquí permite que claro y oscuro cambien de forma coherente.
-THEME_PALETTES = {
-    "light": {
-        "canvas": "#f5f7fb", "surface": "#ffffff", "subtle": "#f8fafc", "text": "#172033",
-        "heading": "#102a43", "muted": "#627d98", "border": "#d9e2ec", "border_strong": "#bcccdc",
-        "control": "#e8eef5", "hover": "#d9e2ec", "accent": "#1976d2", "accent_hover": "#125ea7",
-        "accent_light": "#dbeafe", "sidebar": "#102a43", "sidebar_surface": "#163854",
-        "sidebar_hover": "#1e446b", "nav": "#2f80ed", "nav_border": "#4d9cff",
-        "sidebar_text": "#e6f0ff", "sidebar_muted": "#9fb3c8", "danger_bg": "#fff1f0",
-        "danger": "#c53030", "grid": "#edf2f7", "header": "#f0f4f8", "header_text": "#486581",
-        "header_hover": "#e2e8f0", "separator": "#cbd5e1", "soft_border": "#829ab1",
-        "check_hover": "#eef5ff", "success": "#2f855a", "inactive": "#718096",
-        "priority": "#b7791f", "button_text": "#243b53",
-    },
-    "dark": {
-        "canvas": "#121a26", "surface": "#1b2635", "subtle": "#223044", "text": "#edf2f7",
-        "heading": "#f7fafc", "muted": "#a8bed4", "border": "#344861", "border_strong": "#526b86",
-        "control": "#2a3b50", "hover": "#334a63", "accent": "#4595f5", "accent_hover": "#74b4ff",
-        "accent_light": "#244d78", "sidebar": "#0b1828", "sidebar_surface": "#142d47",
-        "sidebar_hover": "#204969", "nav": "#287ce4", "nav_border": "#67a8ff",
-        "sidebar_text": "#f3f7fc", "sidebar_muted": "#adc6df", "danger_bg": "#512c33",
-        "danger": "#ff9a9a", "grid": "#2a3b50", "header": "#233247", "header_text": "#aac4dd",
-        "header_hover": "#30465e", "separator": "#45617c", "soft_border": "#7190ae",
-        "check_hover": "#294b6f", "success": "#60d394", "inactive": "#a0b5c8",
-        "priority": "#f6c85f", "button_text": "#e6eef8",
-    },
-}
-_LIGHT_HEX_ROLES = {
-    "#f5f7fb": "canvas", "#ffffff": "surface", "#f8fafc": "subtle",
-    "#172033": "text", "#102a43": "heading", "#627d98": "muted", "#d9e2ec": "border",
-    "#bcccdc": "border_strong", "#e8eef5": "control", "#1976d2": "accent", "#125ea7": "accent_hover",
-    "#dbeafe": "accent_light", "#163854": "sidebar_surface", "#1e446b": "sidebar_hover",
-    "#2f80ed": "nav", "#4d9cff": "nav_border", "#e6f0ff": "sidebar_text", "#9fb3c8": "sidebar_muted",
-    "#fff1f0": "danger_bg", "#c53030": "danger", "#edf2f7": "grid", "#f0f4f8": "header",
-    "#486581": "header_text", "#e2e8f0": "header_hover", "#cbd5e1": "separator",
-    "#829ab1": "soft_border", "#eef5ff": "check_hover", "#2f855a": "success",
-    "#718096": "inactive", "#b7791f": "priority", "#243b53": "button_text",
-}
+# Los perfiles transforman los roles del tema; los widgets no conocen nombres de temas.
 ACTIVE_THEME = "light"
-ACTIVE_COLORS = THEME_PALETTES[ACTIVE_THEME]
+ACTIVE_PROFILE = "normal"
+ACTIVE_CUSTOM_LEGIBILITY = normalize_custom_legibility(None)
+ACTIVE_LEGIBILITY = profile_for("normal")
+ACTIVE_FONT_PREFERENCE = "theme"
+ACTIVE_FONT_FAMILY = ""
+ACTIVE_COLORS = effective_palette(THEME_PALETTES[ACTIVE_THEME])
+
+
+def _style_tracking_item(item, enabled, default_color, cache=None):
+    """Apply/reset only the tracking cell; selection still uses the table palette."""
+    cache = cache if cache is not None else {}
+    value = item.text()
+    if enabled and value not in cache:
+        foreground, emphasized = tracking_style(value, ACTIVE_COLORS)
+        font = QFont()
+        if emphasized:font.setWeight(QFont.DemiBold)
+        cache[value] = (QColor(foreground), emphasized, font)
+    if enabled and cache[value][1]:
+        foreground, _, font = cache[value]
+        item.setForeground(foreground);item.setBackground(QBrush());item.setFont(font)
+    else:
+        item.setForeground(default_color);item.setBackground(QBrush());item.setFont(QFont())
+
+
+def _style_presence_item(item, active, priority, enabled, cache=None):
+    cache = cache if cache is not None else {}
+    key = ('presence', active, bool(priority))
+    if enabled:
+        if key not in cache:
+            foreground, _ = presence_style(active, priority, ACTIVE_COLORS)
+            font=QFont();font.setWeight(QFont.DemiBold)
+            cache[key]=(QColor(foreground),font)
+        foreground,font=cache[key]
+        item.setForeground(foreground);item.setFont(font)
+    else:
+        role='priority' if active==1 and priority else 'success' if active==1 else 'inactive'
+        item.setForeground(QColor(ACTIVE_COLORS[role]));item.setFont(QFont())
+    item.setBackground(QBrush())
 
 
 def _resolve_theme(preference: str) -> str:
-    if preference in {"light", "dark"}:
+    if preference in THEME_PALETTES:
         return preference
     try:
         scheme = QApplication.styleHints().colorScheme()
@@ -204,22 +217,69 @@ def _theme_css(css: str, colors=None) -> str:
     )
     for role, value in colors.items():
         css = css.replace(f"__MAXIMO_{role.upper()}__", value)
-    return css
+    return legibility_css(css, ACTIVE_LEGIBILITY)
 
 
-def apply_application_theme(app, preference: str) -> str:
-    global ACTIVE_THEME, ACTIVE_COLORS
+def apply_application_theme(app, preference: str, profile="normal", font_preference="theme", custom_options=None) -> str:
+    global ACTIVE_THEME, ACTIVE_COLORS, ACTIVE_PROFILE, ACTIVE_FONT_PREFERENCE, ACTIVE_FONT_FAMILY, ACTIVE_CUSTOM_LEGIBILITY, ACTIVE_LEGIBILITY
     ACTIVE_THEME = _resolve_theme(preference)
-    ACTIVE_COLORS = THEME_PALETTES[ACTIVE_THEME]
-    app.setStyleSheet(_theme_css(STYLESHEET, ACTIVE_COLORS))
+    ACTIVE_PROFILE = profile if profile in PROFILES else "normal"
+    ACTIVE_CUSTOM_LEGIBILITY = normalize_custom_legibility(custom_options)
+    ACTIVE_LEGIBILITY = custom_legibility(ACTIVE_CUSTOM_LEGIBILITY) if ACTIVE_PROFILE == "custom" else profile_for(ACTIVE_PROFILE)
+    ACTIVE_COLORS = effective_palette(THEME_PALETTES[ACTIVE_THEME], ACTIVE_LEGIBILITY)
+    ACTIVE_FONT_PREFERENCE = normalize_font(font_preference)
+    ACTIVE_FONT_FAMILY = apply_font(app, PROGRAM_DIR / "ui_assets", ACTIVE_FONT_PREFERENCE, ACTIVE_THEME)
+    palette = QPalette(app.palette())
+    for role, key in ((QPalette.Window, "canvas"), (QPalette.WindowText, "text"),
+                      (QPalette.Base, "surface"), (QPalette.AlternateBase, "subtle"),
+                      (QPalette.Text, "text"), (QPalette.Button, "control"),
+                      (QPalette.ButtonText, "button_text"), (QPalette.Highlight, "accent_light"),
+                      (QPalette.HighlightedText, "text"), (QPalette.ToolTipBase, "surface"),
+                      (QPalette.ToolTipText, "text"), (QPalette.Link, "accent"),
+                      (QPalette.PlaceholderText, "muted"), (QPalette.LinkVisited, "accent_hover"),
+                      (QPalette.Mid, "border_strong"), (QPalette.Dark, "border_strong"),
+                      (QPalette.Light, "soft_border")):
+        palette.setColor(role, QColor(ACTIVE_COLORS[key]))
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(ACTIVE_COLORS["inactive"]))
+    app.setPalette(palette)
+    app.setStyleSheet(f'QWidget {{ font-family: "{ACTIVE_FONT_FAMILY}"; }}\n'
+                     + application_legibility_css(ACTIVE_LEGIBILITY)
+                     + _theme_css(STYLESHEET, ACTIVE_COLORS)
+                     + legibility_css(component_css(ACTIVE_COLORS, PROGRAM_DIR / "ui_assets"), ACTIVE_LEGIBILITY)
+                     + appearance_overrides(ACTIVE_COLORS))
+    if not getattr(app,'_md_titlebar_styler',None):
+        app._md_titlebar_styler=NativeTitleBarStyler(app,lambda:ACTIVE_COLORS)
+        app.installEventFilter(app._md_titlebar_styler)
+    app._md_titlebar_styler.refresh()
+    if not getattr(app,'_md_theme_polisher',None):
+        app._md_theme_polisher = ThemeControlPolisher(app)
+        app.installEventFilter(app._md_theme_polisher)
+    for calendar in app.allWidgets():
+        if isinstance(calendar, QCalendarWidget):
+            _style_calendar(calendar)
     return ACTIVE_THEME
 
 
-def show_activity_dialog(message: str, parent=None, theme_preference=None):
+class ThemeControlPolisher(QObject):
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Polish and isinstance(watched,QCalendarWidget):
+            _style_calendar(watched)
+        return False
+
+
+def _style_calendar(calendar):
+    for day in (Qt.Monday, Qt.Tuesday, Qt.Wednesday, Qt.Thursday, Qt.Friday, Qt.Saturday, Qt.Sunday):
+        fmt = QTextCharFormat()
+        role = 'danger' if day in (Qt.Saturday,Qt.Sunday) else 'text'
+        fmt.setForeground(QColor(ACTIVE_COLORS[role]));calendar.setWeekdayTextFormat(day,fmt)
+    header=QTextCharFormat();header.setForeground(QColor(ACTIVE_COLORS['header_text']))
+    calendar.setHeaderTextFormat(header)
+
+
+def show_activity_dialog(message: str, parent=None, theme_preference=None, profile_preference=None):
     """Muestra un diálogo compacto de actividad con los colores del tema activo."""
-    theme = _resolve_theme(theme_preference) if theme_preference is not None else ACTIVE_THEME
-    colors = THEME_PALETTES[theme]
     dialog = QDialog(parent)
+    dialog.setObjectName("activityDialog")
     dialog.setWindowFlags(
         Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
     )
@@ -252,7 +312,7 @@ def show_activity_dialog(message: str, parent=None, theme_preference=None):
     content.addWidget(title)
     content.addWidget(status)
 
-    progress = QProgressBar()
+    progress = QProgressBar(objectName="activityProgress")
     progress.setRange(0, 0)
     progress.setTextVisible(False)
     progress.setFixedHeight(5)
@@ -263,27 +323,6 @@ def show_activity_dialog(message: str, parent=None, theme_preference=None):
     dialog_layout = QVBoxLayout(dialog)
     dialog_layout.setContentsMargins(1, 1, 1, 1)
     dialog_layout.addWidget(card)
-    dialog.setStyleSheet(f"""
-        QFrame#activityCard {{
-            background: {colors['surface']};
-            border: 1px solid {colors['border']};
-            border-radius: 10px;
-        }}
-        QLabel#activityTitle {{
-            background: transparent; border: none; color: {colors['heading']};
-            font-size: 13px; font-weight: 700;
-        }}
-        QLabel#activityMessage {{
-            background: transparent; border: none; color: {colors['text']};
-            font-size: 11px;
-        }}
-        QProgressBar {{
-            border: none; border-radius: 2px; background: {colors['subtle']};
-        }}
-        QProgressBar::chunk {{
-            border-radius: 2px; background: {colors['accent']};
-        }}
-    """)
     dialog.adjustSize()
     if parent is not None:
         center = parent.mapToGlobal(parent.rect().center())
@@ -458,17 +497,8 @@ class MultiSelectButton(QPushButton):
         self._refresh_text()
 
     def _apply_menu_style(self):
-        self._menu.setStyleSheet(_theme_css("""
-            QMenu { background: #ffffff; color: #172033; border: 1px solid #bcccdc;
-                    border-radius: 8px; padding: 5px; }
-            QCheckBox { color: #172033; background: transparent; border: 0; border-radius: 6px;
-                        padding: 7px 10px; spacing: 9px; min-width: 190px; font-size: 12px; }
-            QCheckBox:hover { color: #102a43; background: #f0f4f8; }
-            QCheckBox::indicator { width: 15px; height: 15px; border: 1px solid #829ab1;
-                                   border-radius: 4px; background: #ffffff; }
-            QCheckBox::indicator:hover { border-color: #2f80ed; background: #eef5ff; }
-            QCheckBox::indicator:checked { border-color: #1976d2; background: #2f80ed; }
-        """))
+        self._menu.setObjectName('clientSelectionMenu')
+        self._menu.update()
 
     def refresh_theme(self):
         self._apply_menu_style()
@@ -523,26 +553,7 @@ class PriorityImportDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Importar prioridades")
         self.setMinimumWidth(620)
-        self.setStyleSheet(_theme_css("""
-            QDialog { background: #f5f7fb; color: #172033; }
-            QLabel { color: #172033; font-size: 12px; }
-            QLabel#muted { color: #627d98; }
-            QGroupBox { background: #ffffff; border: 1px solid #d9e2ec; border-radius: 9px;
-                        margin-top: 12px; padding: 14px 12px 10px; color: #102a43;
-                        font-size: 14px; font-weight: 700; }
-            QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px;
-                                background: #f5f7fb; }
-            QFrame#priorityReport { background: #f8fafc; border: 1px solid #e2e8f0;
-                                    border-radius: 7px; }
-            QDateEdit { border: 1px solid #bcccdc; border-radius: 6px; padding: 6px 9px;
-                        background: #ffffff; color: #172033; min-height: 18px; }
-            QDateEdit:focus { border: 2px solid #2f80ed; }
-            QPushButton { border: 0; border-radius: 6px; padding: 8px 13px;
-                          background: #e8eef5; color: #243b53; font-weight: 600; }
-            QPushButton:hover { background: #d9e2ec; }
-            QPushButton#dialogPrimary { background: #1976d2; color: white; }
-            QPushButton#dialogPrimary:hover { background: #125ea7; }
-        """))
+        self.setObjectName('priorityImport')
         self._reports = reports
         self._expiry_edits = {}
         grouped = {}
@@ -576,7 +587,7 @@ class PriorityImportDialog(QDialog):
             report_layout.setSpacing(5)
             heading = QHBoxLayout()
             title = QLabel(project)
-            title.setStyleSheet(_theme_css("font-size: 13px; font-weight: 700; color: #102a43;"))
+            title.setObjectName("sectionTitle")
             detail = QLabel(f"{total} OT · {sections}")
             detail.setObjectName("muted")
             heading.addWidget(title); heading.addStretch(); heading.addWidget(detail)
@@ -745,6 +756,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         self.cfg: AppConfig = load_config()
+        if (ACTIVE_THEME, ACTIVE_PROFILE, ACTIVE_FONT_PREFERENCE, ACTIVE_CUSTOM_LEGIBILITY) != (_resolve_theme(self.cfg.theme), self.cfg.legibility_profile, self.cfg.font_family, self.cfg.legibility_custom):
+            apply_application_theme(QApplication.instance(), self.cfg.theme, self.cfg.legibility_profile, self.cfg.font_family, self.cfg.legibility_custom)
         self.update_lock = JobCounter()
         self.reconcile_lock = JobCounter()
         self.fault_description_lock = JobCounter()
@@ -772,6 +785,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._restoring_column_widths = False
         self._column_widths = None
         self._column_resize_guard = False
+        self._column_widths_dirty = False
         self._column_width_save_timer = QTimer(self)
         self._column_width_save_timer.setSingleShot(True)
         self._column_width_save_timer.timeout.connect(self._save_column_widths)
@@ -814,12 +828,32 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         layout = QHBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self._build_sidebar())
+        self.sidebar = self._build_sidebar()
+        self.sidebar_splitter = QSplitter(Qt.Horizontal, root)
+        self.sidebar_splitter.setObjectName("sidebarSplitter")
+        self.sidebar_splitter.setChildrenCollapsible(False)
+        self.sidebar_splitter.setOpaqueResize(False)
+        self.sidebar_splitter.setHandleWidth(5)
+        self.sidebar_splitter.addWidget(self.sidebar)
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_list_page())
         self.pages.addWidget(self._build_settings_page())
-        layout.addWidget(self.pages, 1)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        content_layout.addWidget(self._build_navigation_bar())
+        content_layout.addWidget(self.pages, 1)
+        content.setMinimumWidth(0)
+        self.sidebar_splitter.addWidget(content)
+        self.sidebar_splitter.setStretchFactor(0, 0)
+        self.sidebar_splitter.setStretchFactor(1, 1)
+        self.sidebar_splitter.handle(1).setToolTip("Arrastra para ajustar el ancho de la barra lateral")
+        self.sidebar_splitter.handle(1).setAccessibleName("Ajustar ancho de la barra lateral")
+        self.sidebar_splitter.splitterMoved.connect(self._sidebar_resized)
+        layout.addWidget(self.sidebar_splitter, 1)
         self.setCentralWidget(root)
+        self._set_sidebar_visible(not self.cfg.sidebar_collapsed)
         self.status = UpdateStatusBar()
         self._priority_notices.event_received.connect(self.status.handle_job_event)
         self.status.showMessage("Listo para consultar la base local.")
@@ -827,25 +861,40 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
     def _build_sidebar(self):
         sidebar = QFrame(objectName="sidebar")
-        sidebar.setFixedWidth(226)
+        sidebar.setMinimumWidth(210)
+        sidebar.setMaximumWidth(420)
         box = QVBoxLayout(sidebar)
         box.setContentsMargins(16, 24, 16, 18)
+        brand_row = QHBoxLayout();brand_row.setContentsMargins(0,0,0,0);brand_row.setSpacing(12)
+        self.brand_icon = QLabel(objectName="brandIcon")
+        self.brand_icon.setFixedSize(40,40)
+        self.brand_icon.setToolTip("Maximo Desktop")
         brand = QLabel("Maximo\nDesktop", objectName="brand")
-        box.addWidget(brand)
+        brand_row.addWidget(self.brand_icon,0,Qt.AlignVCenter)
+        brand_row.addWidget(brand,1)
+        box.addLayout(brand_row)
         subtitle = QLabel("SEGUIMIENTO DE REPARACIONES", objectName="subtitle")
+        subtitle.setWordWrap(True)
         box.addWidget(subtitle)
-        box.addSpacing(30)
-        self.nav_group = QButtonGroup(self)
-        self.nav_buttons = {}
-        for index, (text, icon) in enumerate((("▦  Listado", ""), ("⚙  Configuración", ""))):
-            button = QPushButton(text, objectName="nav", checkable=True)
-            button.setChecked(index == 0)
-            button.clicked.connect(lambda _checked, page=index: self.navigate_to(page))
-            self.nav_group.addButton(button)
-            self.nav_buttons[index] = button
-            box.addWidget(button)
-        box.addSpacing(26)
-        box.addWidget(QLabel("BÚSQUEDAS GUARDADAS", objectName="sidebarSection"))
+        box.addSpacing(24)
+        self.load_excel_button=QPushButton("Cargar Excel",objectName="sidebarAction")
+        self.load_excel_button.setToolTip("Importar informes Excel de prioridades (.xls)")
+        self.load_excel_button.setIcon(QIcon(str(PROGRAM_DIR/'ui_assets'/'excel.svg')))
+        self.load_excel_button.setIconSize(QSize(20,20))
+        self.load_excel_button.clicked.connect(self.import_priorities)
+        box.addWidget(self.load_excel_button)
+        self.export_button = QPushButton("Exportar a Excel", objectName="sidebarAction")
+        self.export_button.clicked.connect(self.export_current_list)
+        box.addWidget(self.export_button)
+        box.addSpacing(10)
+        separator = QFrame(objectName="sidebarExportSeparator")
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Plain)
+        box.addWidget(separator)
+        box.addSpacing(10)
+        saved_searches_label = QLabel("BÚSQUEDAS GUARDADAS", objectName="sidebarSection")
+        saved_searches_label.setWordWrap(True)
+        box.addWidget(saved_searches_label)
         self.profile_list = QListWidget(objectName="profileList")
         self.profile_list.setMinimumHeight(140)
         self.profile_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -854,13 +903,20 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         # La lista ocupa todo el alto libre del lateral. Solo necesitará
         # desplazamiento cuando la ventana no pueda mostrar más entradas.
         box.addWidget(self.profile_list, 1)
-        save_profile = QPushButton("＋  Guardar búsqueda", objectName="sidebarAction")
+        save_profile = QPushButton("Guardar búsqueda", objectName="sidebarAction")
+        self.save_profile_button=save_profile
         save_profile.clicked.connect(self.save_current_profile)
         box.addWidget(save_profile)
         self.delete_profile_button = QPushButton("Eliminar búsqueda", objectName="sidebarAction")
         self.delete_profile_button.clicked.connect(self.delete_selected_profile)
         self.delete_profile_button.setEnabled(False)
+        self.delete_profile_button.setToolTip("Selecciona una búsqueda guardada para eliminarla")
         box.addWidget(self.delete_profile_button)
+        for button, asset in ((self.export_button,'excel.svg'),
+                              (save_profile,'save-search.svg'),
+                              (self.delete_profile_button,'delete-search.svg')):
+            button.setIcon(QIcon(str(PROGRAM_DIR / 'ui_assets' / asset)))
+            button.setIconSize(QSize(20,20))
         if DEVELOPMENT_MODE:
             mode = QLabel("MODO DESARROLLO\nDatos aislados", objectName="developmentMode")
             box.addWidget(mode)
@@ -880,6 +936,119 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if action:
             row.addWidget(action)
         return header
+
+    def _build_navigation_bar(self):
+        bar = QFrame(objectName='navigationBar')
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(16, 5, 16, 5)
+        row.setSpacing(12)
+        self.sidebar_toggle = QToolButton(objectName='sidebarToggle')
+        self.sidebar_toggle.setFixedSize(32, 30)
+        self.sidebar_toggle.setIconSize(QSize(20, 20))
+        self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
+        row.addWidget(self.sidebar_toggle)
+        self.navigation_menu_button = QToolButton(objectName='navigationMenu')
+        self.navigation_menu_button.setText('Maximo Desktop Menú')
+        self.navigation_menu_button.setPopupMode(QToolButton.InstantPopup)
+        self.navigation_menu_button.setAccessibleName('Maximo Desktop Menú')
+        menu = QMenu(self.navigation_menu_button)
+        self.navigation_actions = []
+        for page, caption in enumerate(('Listado', 'Configuración')):
+            action = menu.addAction(caption)
+            action.triggered.connect(lambda _checked=False, page=page:self.navigate_to(page))
+            self.navigation_actions.append(action)
+        menu.addSeparator()
+        load_excel_action=menu.addAction('Cargar Excel de prioridades')
+        load_excel_action.setIcon(QIcon(str(PROGRAM_DIR / 'ui_assets' / 'excel.svg')))
+        load_excel_action.triggered.connect(self.import_priorities)
+        self.export_action = menu.addAction('Exportar a Excel')
+        self.export_action.setIcon(QIcon(str(PROGRAM_DIR / 'ui_assets' / 'excel.svg')))
+        self.export_action.triggered.connect(self.export_current_list)
+        self.navigation_menu_button.setMenu(menu)
+        row.addWidget(self.navigation_menu_button)
+        row.addSpacing(24)
+        self.navigation_location = QLabel('Listado', objectName='pageSubtitle')
+        row.addWidget(self.navigation_location)
+        row.addStretch()
+        self._refresh_navigation_icon()
+        return bar
+
+    def _refresh_navigation_icon(self):
+        if not hasattr(self, "sidebar_toggle"):return
+        # Draw at double resolution: the sidebar symbol stays crisp at small sizes.
+        pixmap = QPixmap(40, 40)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor(ACTIVE_COLORS['text']), 2.5))
+        painter.drawRoundedRect(5, 7, 30, 26, 4, 4)
+        painter.drawLine(15, 8, 15, 32)
+        painter.end()
+        pixmap.setDevicePixelRatio(2)
+        self.sidebar_toggle.setIcon(QIcon(pixmap))
+        if hasattr(self,"update_icon"):self.update_icon.set_color(ACTIVE_COLORS["on_accent"])
+        if hasattr(self,"brand_icon"):
+            size = self.brand_icon.width()
+            logo = QIcon(str(PROGRAM_DIR / "ui_assets" / "md-brand.svg")).pixmap(size*2,size*2)
+            painter = QPainter(logo)
+            painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+            color = readable_color(ACTIVE_COLORS["accent"],[ACTIVE_COLORS["sidebar"]],4.5)
+            painter.fillRect(logo.rect(),QColor(color));painter.end()
+            logo.setDevicePixelRatio(2)
+            self.brand_icon.setPixmap(logo)
+        # Vector icons follow their surface text color, including light sidebars.
+        for attribute,asset,role,size in (
+                ('save_profile_button','save-search.svg','sidebar_text',20),
+                ('delete_profile_button','delete-search.svg','sidebar_text',20),
+                ('priority_only_button','priority-flag.svg','button_text',18)):
+            if not hasattr(self,attribute):continue
+            icon=QIcon(str(PROGRAM_DIR / 'ui_assets' / asset)).pixmap(size*2,size*2)
+            painter=QPainter(icon)
+            painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+            painter.fillRect(icon.rect(),QColor(ACTIVE_COLORS[role]))
+            painter.end();icon.setDevicePixelRatio(2)
+            themed_icon = QIcon(icon)
+            themed_icon.addPixmap(icon, QIcon.Disabled)
+            if attribute == 'priority_only_button':
+                active_icon = icon.copy()
+                painter = QPainter(active_icon)
+                painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+                painter.fillRect(active_icon.rect(), QColor(ACTIVE_COLORS['on_accent']))
+                painter.end()
+                for mode in (QIcon.Normal, QIcon.Active):
+                    themed_icon.addPixmap(active_icon, mode, QIcon.On)
+            getattr(self,attribute).setIcon(themed_icon)
+        # Keep large personal text readable without cutting sidebar actions.
+        required = max((button.minimumSizeHint().width() + 32 for button in
+            (self.load_excel_button, self.export_button, self.save_profile_button, self.delete_profile_button)), default=210)
+        self.sidebar.setMinimumWidth(min(420, max(210, required)))
+
+    def _set_sidebar_visible(self, visible):
+        self.sidebar.setVisible(visible)
+        if visible:
+            total = max(self.sidebar_splitter.width(), self.cfg.sidebar_width + 1)
+            with QSignalBlocker(self.sidebar_splitter):
+                self.sidebar_splitter.setSizes([self.cfg.sidebar_width, total - self.cfg.sidebar_width])
+        caption = 'Ocultar barra lateral' if visible else 'Mostrar barra lateral'
+        self.sidebar_toggle.setToolTip(caption)
+        self.sidebar_toggle.setAccessibleName(caption)
+
+    def _sidebar_resized(self, _position, _index):
+        if self.sidebar.isHidden():
+            return
+        self.cfg.sidebar_width = self.sidebar.width()
+        save_config(self.cfg)
+        self._fit_columns_to_viewport()
+        self._update_settings_content_width()
+
+    def toggle_sidebar(self):
+        visible = self.sidebar.isHidden()
+        self._set_sidebar_visible(visible)
+        self.cfg.sidebar_collapsed = not visible
+        save_config(self.cfg)
+        # The window size stays the same; its content viewport has changed.
+        QTimer.singleShot(0, self._fit_columns_to_viewport)
+        QTimer.singleShot(0, self._update_settings_content_width)
 
     def navigate_to(self, page: int) -> bool:
         """Cambia de sección sin perder ajustes aún no aplicados."""
@@ -901,10 +1070,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             elif dialog.clickedButton() is discard:
                 self._load_config()
             else:
-                self.nav_buttons[current].setChecked(True)
                 return False
         self.pages.setCurrentIndex(page)
-        self.nav_buttons[page].setChecked(True)
+        self.navigation_location.setText(("Listado", "Configuración")[page])
         if page == 1:
             # Esta página puede haber estado oculta al calcularse por primera
             # vez; ahora sí conocemos el ancho final del panel principal.
@@ -915,14 +1083,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         page = QWidget()
         outer = QVBoxLayout(page)
         outer.setContentsMargins(30, 0, 30, 18)
-        update = QPushButton("Actualizar Maximo", objectName="primary")
+        update = QPushButton("Actualizar Maximo", objectName="primary");self.update_button=update
         update_icon = Path(__file__).resolve().parent / "ui_assets" / "refresh-white.svg"
-        update.setIcon(QIcon(str(update_icon)))
+        self.update_icon=RefreshIcon(update,update_icon,ACTIVE_COLORS["on_accent"])
         update.setIconSize(QSize(22, 22))
         update.clicked.connect(self.update_now)
         outer.addWidget(self._page_header("Órdenes de trabajo", "Consulta, filtra y gestiona el seguimiento local.", update))
 
-        search_card = QFrame(objectName="filtersCard")
+        search_card = QFrame(objectName="filtersCard");self.search_card=search_card
         search_layout = QVBoxLayout(search_card)
         search_layout.setContentsMargins(18, 14, 18, 14)
         search_layout.setSpacing(10)
@@ -945,14 +1113,17 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.search_by_combo.addItem("Descripción", "Descripción")
         self.search_by_combo.currentIndexChanged.connect(self.refresh_table)
         toolbar.addWidget(self.search_by_combo, 1, 2)
-        self.filter_button = QPushButton("☷  Filtros")
+        self.filter_button = QPushButton("☷  Filtros", objectName="advancedFilter")
+        self.filter_button.setProperty("filtersActive", False)
         self.filter_button.clicked.connect(self.open_advanced_filters)
         toolbar.addWidget(self.filter_button, 1, 3)
         self.clear_button = QPushButton("Limpiar")
         self.clear_button.clicked.connect(self.clear_filters)
         self.clear_button.setVisible(False)
         toolbar.addWidget(self.clear_button, 1, 4)
-        self.priority_only_button = QPushButton("▲  Solo prioritarias")
+        self.priority_only_button = QPushButton("Prioridades", objectName="priorityFilter")
+        self.priority_only_button.setIcon(QIcon(str(PROGRAM_DIR / "ui_assets" / "priority-flag.svg")))
+        self.priority_only_button.setIconSize(QSize(18, 18))
         self.priority_only_button.setCheckable(True)
         self.priority_only_button.setVisible(False)
         self.priority_only_button.toggled.connect(self._toggle_priority_filter)
@@ -961,19 +1132,20 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         search_layout.addLayout(toolbar)
         self.filter_chips = QLabel("Sin filtros", objectName="filterChips")
         self.filter_chips.setVisible(False)
-        search_layout.addWidget(self.filter_chips)
+        filter_footer = QHBoxLayout()
+        filter_footer.setSpacing(16)
+        filter_footer.addWidget(self.filter_chips, 1)
+        search_layout.addLayout(filter_footer)
 
         outer.addWidget(search_card)
 
         results_row = QHBoxLayout()
         self.result_label = QLabel(objectName="resultLabel")
-        self.export_button = QPushButton("Exportar a Excel")
-        self.export_button.clicked.connect(self.export_current_list)
         results_row.addWidget(self.result_label)
         results_row.addStretch()
-        results_row.addWidget(self.export_button)
         outer.addLayout(results_row)
         self.table = QTableWidget(0, len(self.columns))
+        self.table.setHorizontalHeader(ColumnWidthHeader(self.table))
         self.table.setHorizontalHeaderLabels(self.columns)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -986,15 +1158,20 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setMinimumSectionSize(60)
         header.setCursor(Qt.SplitHCursor)
-        header.sectionResized.connect(self._column_resized)
+        header.manualSectionResized.connect(self._column_resized)
+        header.resizeStarted.connect(self._column_width_save_timer.stop)
+        header.resizeFinished.connect(self._schedule_column_width_save)
         for column, width in enumerate(self.default_column_widths):
             header.resizeSection(column, width)
         self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
         self._column_widths = self._current_column_widths()
-        self._workorder_selector = WorkorderSelection(self.table, self)
+        self._workorder_selector = WorkorderSelection(self.table, self, compact=True)
         self._workorder_selector.set_enabled(True)
-        outer.addWidget(self._workorder_selector.bar)
-        outer.addWidget(self.table, 1)
+        self._workorder_selector.bar.setSizePolicy(QSizePolicy.Maximum,QSizePolicy.Fixed)
+        filter_footer.addStretch()
+        filter_footer.addWidget(self._workorder_selector.bar)
+        self.table_frame=RoundedTableFrame(self.table,page)
+        outer.addWidget(self.table_frame,1)
         return page
 
     def resizeEvent(self, event):
@@ -1079,7 +1256,11 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             finally:
                 self._column_resize_guard = False
         self._column_widths = self._current_column_widths()
-        self._column_width_save_timer.start(400)
+        self._column_widths_dirty = True
+
+    def _schedule_column_width_save(self):
+        if self._column_widths_dirty:
+            self._column_width_save_timer.start(400)
 
     def _restore_column_widths(self):
         widths = self.cfg.table_column_widths or {}
@@ -1104,14 +1285,23 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         finally:
             self._restoring_column_widths = False
 
-    def _save_column_widths(self):
-        header = self.table.horizontalHeader()
-        self.cfg.table_column_widths = {
-            str(index): width for index, width in enumerate(self._current_column_widths())
-        }
+    def _store_column_width_preferences(self):
+        """Persist the user's preferred widths, never the adaptive viewport fit."""
+        if not getattr(self, "_column_widths_dirty", False):
+            return False
+        widths = {str(index): int(width) for index, width in enumerate(self._column_widths)}
+        self._column_widths_dirty = False
+        if widths == self.cfg.table_column_widths and self.cfg.table_layout_initialized:
+            return False
+        self.cfg.table_column_widths = widths
         self.cfg.table_layout_initialized = True
+        return True
+
+    def _save_column_widths(self):
+        if not self._store_column_width_preferences():
+            return
         save_config(self.cfg)
-        logging.info("Anchos de columnas guardados.")
+        logging.info("Anchos de columnas elegidos por el usuario guardados.")
 
     def _build_settings_page(self):
         page = QWidget()
@@ -1124,29 +1314,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.settings_header.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         settings_header_layout.addWidget(self.settings_header)
         layout.addWidget(settings_header_host)
-        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
-        self.settings_scroll = scroll
-        content = QWidget(objectName="settingsContent")
-        content_layout = QHBoxLayout(content); content_layout.setContentsMargins(0, 0, 0, 20)
-        self.settings_center = QWidget()
-        self.settings_center.setMaximumWidth(1280)
-        self.settings_center.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        content_layout.addWidget(self.settings_center, 0, Qt.AlignTop)
-        body = QVBoxLayout(self.settings_center); body.setContentsMargins(0, 0, 0, 0); body.setSpacing(0)
-        self.settings_columns = QBoxLayout(QBoxLayout.LeftToRight)
-        self.settings_columns.setContentsMargins(0, 0, 0, 0)
-        self.settings_columns.setSpacing(16)
-        self.settings_sections = []
-        for title in ("Aplicación y datos", "Órdenes de trabajo"):
-            column = QWidget()
-            column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-            column_layout = QVBoxLayout(column)
-            column_layout.setContentsMargins(0, 0, 0, 0)
-            column_layout.setSpacing(16)
-            column_layout.addWidget(QLabel(title, objectName="settingsSectionTitle"))
-            self.settings_columns.addWidget(column, 1, Qt.AlignTop)
-            self.settings_sections.append(column_layout)
-        self._settings_wide = None
+        self.settings_tabs = QTabWidget(objectName='settingsTabs')
+        self.settings_tabs.setDocumentMode(True)
+        self._settings_tab_layouts = []
 
         self.access_card = QGroupBox("Acceso a Maximo")
         form = QFormLayout(self.access_card)
@@ -1154,14 +1324,18 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.auto_check = QCheckBox("Actualizar el listado automáticamente")
         self.interval_spin = DecoratedSpinBox(); self.interval_spin.setRange(1, 1440); self.interval_spin.setSuffix(" min")
         form.addRow("Usuario", self.user_edit); form.addRow("Contraseña", self.password_edit)
-        form.addRow("", self.auto_check); form.addRow("Intervalo", self.interval_spin)
         self.auto_update_summary = QLabel()
         self.auto_update_summary.setObjectName("filterHint")
-        form.addRow("Estado", self.auto_update_summary)
         access_actions = QHBoxLayout()
         self.test_button = QPushButton("Probar y guardar credenciales")
         self.test_button.clicked.connect(self.test_credentials)
         access_actions.addWidget(self.test_button); access_actions.addStretch(); form.addRow(access_actions)
+
+        self.sync_card = QGroupBox('Actualización de Maximo')
+        sync_form = QFormLayout(self.sync_card)
+        sync_form.addRow('', self.auto_check)
+        sync_form.addRow('Intervalo', self.interval_spin)
+        sync_form.addRow('Estado', self.auto_update_summary)
 
         self.app_updates_card = QGroupBox("Actualizaciones de Maximo Desktop")
         update_form = QFormLayout(self.app_updates_card)
@@ -1193,12 +1367,59 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         appearance_form = QFormLayout(self.appearance_card)
         self.theme_combo = DecoratedComboBox()
         self.theme_combo.addItem("Según Windows", "system")
-        self.theme_combo.addItem("Claro", "light")
-        self.theme_combo.addItem("Oscuro", "dark")
-        self.theme_combo.currentIndexChanged.connect(self.preview_theme)
+        for key in THEME_PALETTES:
+            self.theme_combo.addItem(THEME_LABELS.get(key, key), key)
         theme_hint = QLabel("Se aplica al instante; se conserva al guardar los cambios.")
         theme_hint.setObjectName("filterHint")
+        theme_hint.setWordWrap(True)
         appearance_form.addRow("Tema", self.theme_combo)
+        self.font_combo = DecoratedComboBox()
+        for key, option in FONT_OPTIONS.items():
+            self.font_combo.addItem(option.label, key)
+        appearance_form.addRow("Tipografía", self.font_combo)
+        self.font_sample = QLabel("Reparación · OT 4433029 · Áéñ 0O 1Il")
+        self.font_sample.setWordWrap(True)
+        appearance_form.addRow("Vista previa", self.font_sample)
+        self.font_hint = QLabel()
+        self.font_hint.setObjectName("filterHint")
+        self.font_hint.setWordWrap(True)
+        appearance_form.addRow("", self.font_hint)
+        self.legibility_combo = DecoratedComboBox()
+        for key, profile in PROFILES.items():
+            self.legibility_combo.addItem(profile.label, key)
+        appearance_form.addRow("Legibilidad", self.legibility_combo)
+        self.custom_legibility_controls = QWidget()
+        custom_form = QFormLayout(self.custom_legibility_controls)
+        custom_form.setContentsMargins(0, 0, 0, 0)
+        self.custom_text_size = DecoratedSpinBox()
+        self.custom_text_size.setRange(12, 20);self.custom_text_size.setSuffix(" px")
+        self.custom_text_size.setKeyboardTracking(False)
+        self.custom_text_weight = DecoratedComboBox()
+        for caption, weight in (("Regular",400),("Seminegrita",600),("Negrita",700)):
+            self.custom_text_weight.addItem(caption,weight)
+        self.custom_text_contrast = QCheckBox("Reforzar contraste del texto")
+        self.custom_borders = QCheckBox("Resaltar bordes")
+        custom_form.addRow("Tamaño base", self.custom_text_size)
+        custom_form.addRow("Grosor", self.custom_text_weight)
+        custom_form.addRow("", self.custom_text_contrast)
+        custom_form.addRow("", self.custom_borders)
+        appearance_form.addRow(self.custom_legibility_controls)
+        self.custom_legibility_controls.hide()
+        self.tracking_colors_check = QCheckBox("Distinguir estados con colores")
+        self.tracking_colors_check.setToolTip("Resalta Estado en Maximo y Seguimiento con colores y seminegrita, sin fondo. Mantiene los textos y los indicadores.")
+        appearance_form.addRow("", self.tracking_colors_check)
+        profile_hint = QLabel("Mayor visibilidad: texto más grande y seminegrita. Alto contraste: además refuerza textos y bordes.")
+        profile_hint.setWordWrap(True)
+        profile_hint.setObjectName("filterHint")
+        appearance_form.addRow("", profile_hint)
+        self.theme_combo.currentIndexChanged.connect(self.preview_theme)
+        self.legibility_combo.currentIndexChanged.connect(self.preview_theme)
+        self.font_combo.currentIndexChanged.connect(self.preview_theme)
+        self.custom_text_size.valueChanged.connect(self.preview_theme)
+        self.custom_text_weight.currentIndexChanged.connect(self.preview_theme)
+        self.custom_text_contrast.toggled.connect(self.preview_theme)
+        self.custom_borders.toggled.connect(self.preview_theme)
+        self.tracking_colors_check.toggled.connect(self._refresh_table_colors)
         appearance_form.addRow("", theme_hint)
 
         self.edge_extension_card = QGroupBox("Extensión de Edge")
@@ -1239,24 +1460,23 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             "Añade «Cerrar OT» en las nuevas ventanas de Maximo abiertas desde MD. "
             "Pide el inicio real y revisa la duración en tramos de 15 minutos. Calcula la finalización, "
             "sin superar la hora actual, y pide confirmar antes de ejecutar el flujo hacia ISSUE. "
-            "Estas acciones solo se ejecutan desde Edge; no se ofrecen en el menú del listado."
+            "También habilita la finalización de reparaciones desde el menú Técnico del listado de MD."
         )
         close_hint.setObjectName('filterHint')
         close_hint.setWordWrap(True)
         start_form.addRow('', close_hint)
 
         edge_extension_layout.addLayout(start_form)
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        edge_extension_layout.addWidget(separator)
-        edge_extension_layout.addWidget(QLabel("Partes de reparación", objectName="settingsSectionTitle"))
+        self.printing_card = QGroupBox('Partes de reparación')
+        printing_layout = QVBoxLayout(self.printing_card)
 
         repair_form = QFormLayout()
         self.repair_extension_check = QCheckBox("Mostrar «Imprimir parte» en Edge")
         self.repair_mode_combo = DecoratedComboBox()
         self.repair_mode_combo.addItem("Mostrar diálogo de impresión", "dialog")
         self.repair_mode_combo.addItem("Imprimir directamente", "direct")
+        self.repair_stamp_check = QCheckBox("Sello «IRREPARABLE» en el parte")
+        self.repair_stamp_check.setToolTip("Solo con desecho verificado. Impresión HTML: color desde MD; blanco y negro desde Edge. No modifica el PDF nativo de BIRT.")
         self.repair_close_tabs_check = QCheckBox("Cerrar las ventanas del parte tras impresión directa")
         self.repair_hint = QLabel(
             "El modo directo usa la impresora predeterminada de Windows. "
@@ -1270,8 +1490,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         repair_form.addRow("", self.repair_extension_check)
         repair_form.addRow("Al pulsar Imprimir parte", self.repair_mode_combo)
         repair_form.addRow("", self.repair_close_tabs_check)
+        repair_form.addRow("", self.repair_stamp_check)
         repair_form.addRow("", self.repair_hint)
-        edge_extension_layout.addLayout(repair_form)
+        printing_layout.addLayout(repair_form)
         self.repair_extension_check.toggled.connect(self.repair_mode_combo.setEnabled)
 
 
@@ -1403,49 +1624,75 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         warehouse_hint.setObjectName("filterHint")
         warehouse_layout.addWidget(warehouse_hint)
 
-        for card in (self.access_card, self.app_updates_card,
-                     self.appearance_card, self.maintenance_card,
-                     self.fault_descriptions_card, self.technician_sat_card, self.paths_card):
-            self.settings_sections[0].addWidget(card)
-        for card in (self.edge_extension_card, self.warehouse_card, self.priorities_card):
-            self.settings_sections[1].addWidget(card)
-        body.addLayout(self.settings_columns)
-        body.addStretch()
+        self._add_settings_tab('General',
+            (self.access_card, self.app_updates_card), (self.appearance_card,))
+        self._add_settings_tab('Datos y sincronización',
+            (self.sync_card, self.maintenance_card, self.paths_card),
+            (self.fault_descriptions_card, self.priorities_card))
+        self._add_settings_tab('Técnico y extensión',
+            (self.edge_extension_card,), (self.printing_card, self.technician_sat_card))
+        self._add_settings_tab('Almacén', (self.warehouse_card,), ())
+        self.settings_tabs.currentChanged.connect(self._settings_tab_changed)
+        self._settings_tab_changed(0)
         save_row = QHBoxLayout()
-        save_hint = QLabel("Los cambios de esta página se aplican al guardar.")
-        save_hint.setObjectName("filterHint")
-        self.save_settings_button = QPushButton("Guardar cambios", objectName="primary")
+        self.settings_save_hint = QLabel('Los cambios se conservan al guardar.')
+        self.settings_save_hint.setObjectName('filterHint')
+        self.settings_save_hint.setWordWrap(True)
+        self.save_settings_button = QPushButton('Guardar cambios', objectName='primary')
         self.save_settings_button.clicked.connect(self.save_settings)
-        save_row.addWidget(save_hint); save_row.addStretch(); save_row.addWidget(self.save_settings_button)
-        scroll.setWidget(content); layout.addWidget(scroll, 1); layout.addLayout(save_row)
+        save_row.addWidget(self.settings_save_hint,1);save_row.addWidget(self.save_settings_button)
+        layout.addWidget(self.settings_tabs, 1);layout.addLayout(save_row)
+        for widget_type, signal in ((QLineEdit,'textChanged'),(QComboBox,'currentIndexChanged'),
+                                    (QCheckBox,'toggled'),(QSpinBox,'valueChanged'),(QDateEdit,'dateChanged')):
+            for widget in self.settings_tabs.findChildren(widget_type):
+                getattr(widget,signal).connect(self._update_settings_dirty_hint)
         QTimer.singleShot(0, self._update_settings_content_width)
         return page
 
+    def _add_settings_tab(self, title, left_cards, right_cards):
+        scroll = QScrollArea();scroll.setWidgetResizable(True);scroll.setFrameShape(QFrame.NoFrame)
+        content = QWidget(objectName='settingsContent')
+        outer = QHBoxLayout(content);outer.setContentsMargins(0,10,0,20)
+        center = QWidget();center.setMaximumWidth(1280)
+        center.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred)
+        outer.addWidget(center,1,Qt.AlignTop)
+        columns = QBoxLayout(QBoxLayout.LeftToRight)
+        columns.setContentsMargins(0,0,0,0);columns.setSpacing(16)
+        body = QVBoxLayout(center);body.setContentsMargins(0,0,0,0);body.addLayout(columns);body.addStretch()
+        for cards in (left_cards,right_cards):
+            column=QWidget();column.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Maximum)
+            box=QVBoxLayout(column);box.setContentsMargins(0,0,0,0);box.setSpacing(16)
+            for card in cards:box.addWidget(card)
+            columns.addWidget(column,1,Qt.AlignTop)
+        scroll.setWidget(content)
+        self._settings_tab_layouts.append({'scroll':scroll,'center':center,'columns':columns})
+        self.settings_tabs.addTab(scroll,title)
+
+    def _settings_tab_changed(self, index):
+        if index<0:return
+        current=self._settings_tab_layouts[index]
+        # Aliases describe the active page, including in the isolated settings harness.
+        self.settings_scroll=current['scroll'];self.settings_center=current['center'];self.settings_columns=current['columns']
+        self._update_settings_content_width()
+        QTimer.singleShot(0,self._update_settings_content_width)
+
+    def _update_settings_dirty_hint(self,*_args):
+        if not hasattr(self,'settings_save_hint'):return
+        self.settings_save_hint.setText('Hay cambios sin guardar.' if self.settings_dirty() else
+                                       'Los cambios se conservan al guardar.')
+
     def _update_settings_content_width(self):
-        """Mantiene un ancho legible en pantalla grande sin estrechar la página."""
-        if not hasattr(self, "settings_scroll"):
-            return
-        # La página apilada conserva el ancho real disponible incluso cuando
-        # el QScrollArea todavía no se ha mostrado por primera vez.
-        available = self.pages.width() - 60 if hasattr(self, "pages") else self.settings_scroll.viewport().width()
-        if available <= 0:
-            return
-        content_width = min(1280, available)
-        self.settings_center.setMaximumWidth(content_width)
-        self.settings_center.resize(content_width, self.settings_center.height())
-        if hasattr(self, "settings_header"):
-            self.settings_header.setMaximumWidth(content_width)
+        if not hasattr(self,'settings_scroll'):return
+        available=self.settings_scroll.viewport().width()
+        if available<=0:return
+        width=min(1280,available)
+        self.settings_center.setMaximumWidth(width)
+        self.settings_center.resize(width,self.settings_center.height())
         self._arrange_settings_cards()
 
     def _arrange_settings_cards(self):
-        """Muestra los grupos en dos columnas o apilados según el ancho."""
-        if not hasattr(self, "settings_columns"):
-            return
-        wide = self.settings_center.width() >= 980
-        if wide == self._settings_wide:
-            return
-        self._settings_wide = wide
-        direction = QBoxLayout.LeftToRight if wide else QBoxLayout.TopToBottom
+        if not hasattr(self,'settings_columns'):return
+        direction=QBoxLayout.LeftToRight if self.settings_center.width()>=980 else QBoxLayout.TopToBottom
         self.settings_columns.setDirection(direction)
 
     @staticmethod
@@ -1456,17 +1703,29 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
     def preview_theme(self):
         """Muestra el tema elegido antes de confirmar el resto de ajustes."""
         preference = self.theme_combo.currentData()
+        self.custom_legibility_controls.setVisible(self.legibility_combo.currentData() == "custom")
         activity = show_activity_dialog(
-            "Aplicando el esquema de colores…",
+            "Aplicando la apariencia…",
             self,
             theme_preference=preference,
+            profile_preference=self.legibility_combo.currentData(),
         )
         try:
-            self._effective_theme = apply_application_theme(QApplication.instance(), preference)
+            self._effective_theme = apply_application_theme(QApplication.instance(), preference, self.legibility_combo.currentData(), self.font_combo.currentData(), self._custom_legibility_options())
+            self._refresh_font_hint()
+            self._refresh_navigation_icon()
             self.client_combo.refresh_theme()
             self._refresh_table_colors()
         finally:
             activity.close()
+
+    def _custom_legibility_options(self):
+        return {"text_size":self.custom_text_size.value(), "weight":self.custom_text_weight.currentData(),
+                "contrast":self.custom_text_contrast.isChecked(), "borders":self.custom_borders.isChecked()}
+
+    def _refresh_font_hint(self):
+        source = "Predeterminada del tema" if self.font_combo.currentData() == "theme" else "Elección personal"
+        self.font_hint.setText(f"{source}: {ACTIVE_FONT_FAMILY}. La elección personal se mantiene al cambiar de tema.")
 
     def _refresh_priorities(self):
         """Actualiza el resumen y la gestión de fotos locales de prioridad."""
@@ -1697,6 +1956,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "Filtros", str(exc)); return
         priority_ots = current_priority_ots()
+        self._refresh_priority_button_label()
         self.priority_only_button.setVisible(bool(priority_ots))
         if not priority_ots and self.priority_only_button.isChecked():
             with QSignalBlocker(self.priority_only_button):
@@ -1718,6 +1978,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             return False
 
         detail_column = self.columns.index("Avería" if self.cfg.fault_descriptions_enabled else "Descripción")
+        tracking_colors = {}
         colors = {key: QColor(value) for key, value in ACTIVE_COLORS.items()}
         detail_icon = self.style().standardIcon(QStyle.SP_MessageBoxInformation)
         updates_enabled = self.table.updatesEnabled()
@@ -1743,9 +2004,12 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                         if column == detail_column and has_detail and self.cfg.detailed_descriptions_enabled:
                             item.setIcon(detail_icon)
                             item.setToolTip("Descripción detallada disponible. Doble clic para verla.")
+                        if column == self.columns.index("Seguimiento"):
+                            _style_tracking_item(item, self.tracking_colors_check.isChecked(),
+                                colors["text" if active == 1 else "inactive"], tracking_colors)
                         if column == 0:
                             item.setToolTip("Prioridad: marcada en el informe local vigente y todavía activa en Maximo.\n\nActivo en Maximo: aparece en el listado de reparaciones y recibe actualizaciones.\nNo activo en Maximo: ya no aparece en ese listado y no recibe nuevas actualizaciones.")
-                            item.setForeground(colors["priority" if is_priority else "success" if active == 1 else "inactive"])
+                            _style_presence_item(item,active,is_priority,self.tracking_colors_check.isChecked(),tracking_colors)
                             item.setData(Qt.UserRole + 1, is_priority)
                             item.setData(Qt.UserRole + 2, active)
                         self.table.setItem(index, column, item)
@@ -1756,16 +2020,19 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             self.table.setUpdatesEnabled(updates_enabled)
         self._table_snapshot = snapshot
         self._table_filter_key = filter_key
-        self._table_palette = dict(ACTIVE_COLORS)
+        self._table_palette = (dict(ACTIVE_COLORS), ACTIVE_LEGIBILITY, self.tracking_colors_check.isChecked())
+        self.table.verticalHeader().setDefaultSectionSize(ACTIVE_LEGIBILITY.row_height)
         self._apply_priority_filter()
         self._update_list_summary()
         return True
 
     def _refresh_table_colors(self):
         """Apply the theme to existing items without querying or rebuilding data."""
-        if not hasattr(self, 'table') or getattr(self, '_table_palette', None) == ACTIVE_COLORS:
+        signature = (dict(ACTIVE_COLORS), ACTIVE_LEGIBILITY, self.tracking_colors_check.isChecked())
+        if not hasattr(self, 'table') or getattr(self, '_table_palette', None) == signature:
             return
         colors = {key: QColor(value) for key, value in ACTIVE_COLORS.items()}
+        tracking_colors = {}
         detail_icon = self.style().standardIcon(QStyle.SP_MessageBoxInformation)
         detail_column = self.columns.index("Avería" if self.cfg.fault_descriptions_enabled else "Descripción")
         updates_enabled = self.table.updatesEnabled()
@@ -1784,10 +2051,15 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                             item.setForeground(colors["text" if active == 1 else "inactive"])
                             if column == detail_column and not item.icon().isNull():
                                 item.setIcon(detail_icon)
-                    status.setForeground(colors["priority" if priority else "success" if active == 1 else "inactive"])
+                    _style_presence_item(status,active,priority,self.tracking_colors_check.isChecked(),tracking_colors)
+                    tracking = self.table.item(row, self.columns.index("Seguimiento"))
+                    if tracking is not None:
+                        _style_tracking_item(tracking, self.tracking_colors_check.isChecked(),
+                            colors["text" if active == 1 else "inactive"], tracking_colors)
         finally:
             self.table.setUpdatesEnabled(updates_enabled)
-        self._table_palette = dict(ACTIVE_COLORS)
+        self._table_palette = signature
+        self.table.verticalHeader().setDefaultSectionSize(ACTIVE_LEGIBILITY.row_height)
 
     def warehouse_row_updated(self, ot, tracking):
         """Refresh a verified operation without rebuilding thousands of unchanged rows."""
@@ -1812,6 +2084,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                     self.table.removeRow(row)
                 else:
                     self.table.item(row, 7).setText(allowed[ot])
+                    active=self.table.item(row,0).data(Qt.UserRole+2)
+                    _style_tracking_item(self.table.item(row,7),self.tracking_colors_check.isChecked(),
+                                         QColor(ACTIVE_COLORS['text' if active==1 else 'inactive']))
             finally:
                 self.table.setSortingEnabled(sorting)
             self._update_list_summary()
@@ -1820,6 +2095,15 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         except Exception:
             logging.exception('Estado local guardado; no se pudo refrescar la fila de almacén %s', ot)
             self.status.showMessage('Estado guardado. Actualiza el listado para refrescar la tabla.', 7000)
+
+    def _refresh_priority_button_label(self):
+        projects = {item["project"] for item in current_priority_snapshots()
+                    if item["is_current"] and item["item_count"] > 0}
+        aliases = {"TMB": "TMB", "Línea 9": "L9", "RENFE": "RENFE"}
+        ordered = [aliases[project] for project in aliases if project in projects]
+        ordered.extend(sorted(projects - aliases.keys()))
+        suffix = "/".join(ordered)
+        self.priority_only_button.setText("Prioridades" + (" " + suffix if suffix else ""))
 
     def _toggle_priority_filter(self, _checked):
         """Shows or hides existing table rows without querying SQLite or rebuilding cells."""
@@ -1846,6 +2130,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._table_snapshot = None
         priority_ots = current_priority_ots()
         self._priority_ots = priority_ots
+        self._refresh_priority_button_label()
         self.priority_only_button.setVisible(bool(priority_ots))
         if not priority_ots and self.priority_only_button.isChecked():
             self.priority_only_button.blockSignals(True)
@@ -1854,6 +2139,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         sorting_enabled = self.table.isSortingEnabled()
         self.table.setSortingEnabled(False)
         self.table.setUpdatesEnabled(False)
+        presence_colors = {}
         try:
             for row in range(self.table.rowCount()):
                 item = self.table.item(row, 0)
@@ -1866,10 +2152,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                 item.setText("▲ Prioridad · ✓ Activo en Maximo" if is_priority else
                              "✓ Activo en Maximo" if active == 1 else
                              "× No activo en Maximo" if active == 0 else "? Estado desconocido")
-                item.setForeground(QColor(
-                    ACTIVE_COLORS["priority"] if is_priority else
-                    ACTIVE_COLORS["success"] if active == 1 else ACTIVE_COLORS["inactive"]
-                ))
+                _style_presence_item(item,active,is_priority,self.tracking_colors_check.isChecked(),presence_colors)
         finally:
             self.table.setUpdatesEnabled(True)
             self.table.setSortingEnabled(sorting_enabled)
@@ -1883,11 +2166,18 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.filter_chips.setVisible(bool(summary))
         self.filter_chips.setText("Filtros activos · " + "   •   ".join(summary))
         advanced_count = sum(bool(value) for value in self.advanced_state.values())
+        active = advanced_count > 0
+        if self.filter_button.property("filtersActive") != active:
+            self.filter_button.setProperty("filtersActive", active)
+            self.filter_button.style().unpolish(self.filter_button)
+            self.filter_button.style().polish(self.filter_button)
+            self.filter_button.update()
         self.filter_button.setText(f"☷  Filtros ({advanced_count})" if advanced_count else "☷  Filtros")
         self.clear_button.setVisible(bool(summary))
         visible_count = sum(not self.table.isRowHidden(row) for row in range(self.table.rowCount()))
         self.result_label.setText(f"{visible_count:,} resultados · {'Filtros aplicados' if summary else 'Sin filtros'}")
         self.export_button.setEnabled(visible_count > 0)
+        if hasattr(self,"export_action"):self.export_action.setEnabled(visible_count > 0)
 
     def clear_filters(self):
         self.search_edit.clear()
@@ -1926,7 +2216,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if self.table.item(row, 0).text() == "○ No activo":
             menu.addAction("Eliminar registro local…", lambda: self.delete_inactive(ot))
         self.add_role_action_menus(menu)
-        menu.exec(self.table.viewport().mapToGlobal(position))
+        try:menu.exec(self.table.viewport().mapToGlobal(position))
+        finally:self._workorder_selector.clear_context()
 
     def delete_inactive(self, ot):
         if QMessageBox.question(self, "Eliminar registro", f"¿Eliminar la OT no activa {ot} de la base local?") == QMessageBox.Yes:
@@ -1992,10 +2283,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                 QMessageBox.information(self, "Actualización", "Ya hay una actualización del listado en curso o pendiente de comenzar.")
             return
         if self._closing or not self._credentials_ready() or not self.update_lock.acquire(False): return
-        self._list_update_pending = True
+        set_list_update_busy(self,True)
         self.status.begin_progress()
         def done(result):
-            self._list_update_pending = False
+            set_list_update_busy(self,False)
             self.status.finish_progress()
             self.update_lock.release(); new, changed = result; self.refresh_choices(); self.refresh_table(); self._refresh_reconciliation_summary()
             sync_summary = (
@@ -2011,15 +2302,19 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                 after=lambda summary: self.start_background_fault_descriptions(summary),
             )
         def failed(error):
-            self._list_update_pending = False
+            set_list_update_busy(self,False)
             self.status.finish_progress()
             self.update_lock.release()
             if not self._closing:
                 QMessageBox.critical(self, "Actualización", f"No se pudo actualizar:\n{error}")
             self.status.showMessage("La actualización falló.")
-        self._start_task(lambda progress: run_update(headless=True,
-            job_priority=AUTOMATIC if automatic else MANUAL, progress_callback=progress), done, failed,
-            progress=lambda _completed, _total, phase: self.status.update_progress(phase), coordinated=True)
+        try:
+            self._start_task(lambda progress: run_update(headless=True,
+                job_priority=AUTOMATIC if automatic else MANUAL, progress_callback=progress), done, failed,
+                progress=lambda _completed, _total, phase: self.status.update_progress(phase), coordinated=True)
+        except Exception as exc:
+            if self._list_update_pending:failed(str(exc))
+            else:raise
 
     def start_background_reconcile(self, sync_summary=None, after=None):
         if self._closing:
@@ -2247,11 +2542,6 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         layout = QVBoxLayout(dialog)
         viewer = QTextBrowser()
         viewer.setOpenExternalLinks(False)
-        viewer.setStyleSheet(
-            f"QTextBrowser {{ background: {ACTIVE_COLORS['surface']}; "
-            f"color: {ACTIVE_COLORS['text']}; border: 1px solid {ACTIVE_COLORS['border']}; }}"
-        )
-        viewer.document().setDefaultStyleSheet(f"body {{ color: {ACTIVE_COLORS['text']}; }}")
         viewer.setHtml(safe_html) if safe_html else viewer.setPlainText(text)
         layout.addWidget(viewer)
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
@@ -2383,7 +2673,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if not ot:
             return
         self.pages.setCurrentIndex(0)
-        self.nav_buttons[0].setChecked(True)
+        self.navigation_location.setText("Listado")
         self.open_ot_number(ot)
 
     def activate_window(self):
@@ -2409,11 +2699,26 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.warehouse_details_check.setChecked(self.cfg.warehouse_ask_sat_details)
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
         self.repair_close_tabs_check.setChecked(self.cfg.repair_close_tabs_after_direct_print)
+        self.repair_stamp_check.setChecked(self.cfg.repair_irreparable_stamp_enabled)
         self.repair_mode_combo.setEnabled(self.cfg.repair_extension_enabled)
         self.fault_batch_spin.setValue(self.cfg.fault_description_batch_size)
         theme_signals_blocked = self.theme_combo.blockSignals(True)
         self._set_combo_value(self.theme_combo, self.cfg.theme)
         self.theme_combo.blockSignals(theme_signals_blocked)
+        with QSignalBlocker(self.font_combo):
+            self._set_combo_value(self.font_combo, self.cfg.font_family)
+        with QSignalBlocker(self.custom_text_size), QSignalBlocker(self.custom_text_weight), QSignalBlocker(self.custom_text_contrast), QSignalBlocker(self.custom_borders):
+            self.custom_text_size.setValue(self.cfg.legibility_custom["text_size"])
+            self._set_combo_value(self.custom_text_weight, self.cfg.legibility_custom["weight"])
+            self.custom_text_contrast.setChecked(self.cfg.legibility_custom["contrast"])
+            self.custom_borders.setChecked(self.cfg.legibility_custom["borders"])
+        self.custom_legibility_controls.setVisible(self.cfg.legibility_profile == "custom")
+        if (ACTIVE_THEME, ACTIVE_PROFILE, ACTIVE_FONT_PREFERENCE, ACTIVE_CUSTOM_LEGIBILITY) != (_resolve_theme(self.cfg.theme), self.cfg.legibility_profile, self.cfg.font_family, self.cfg.legibility_custom):
+            apply_application_theme(QApplication.instance(), self.cfg.theme, self.cfg.legibility_profile, self.cfg.font_family, self.cfg.legibility_custom)
+        self._refresh_font_hint()
+        with QSignalBlocker(self.legibility_combo), QSignalBlocker(self.tracking_colors_check):
+            self._set_combo_value(self.legibility_combo, self.cfg.legibility_profile)
+            self.tracking_colors_check.setChecked(self.cfg.tracking_colors)
         self._set_combo_value(self.priority_tmb_validity, self.cfg.priority_tmb_validity)
         self._set_combo_value(self.priority_l9_validity, self.cfg.priority_l9_validity)
         self._set_combo_value(self.priority_renfe_validity, self.cfg.priority_renfe_validity)
@@ -2423,6 +2728,11 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._refresh_fault_description_summary()
         self._update_fault_description_controls()
         self._refresh_priorities()
+        self._refresh_navigation_icon()
+        if hasattr(self, "client_combo"):
+            self.client_combo.refresh_theme()
+        self._refresh_table_colors()
+        self._update_settings_dirty_hint()
 
     def _restore_window_state(self):
         if self.cfg.window_size:
@@ -2436,15 +2746,12 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
     def _save_window_state(self):
         self._column_width_save_timer.stop()
-        self.cfg.table_column_widths = {
-            str(index): width for index, width in enumerate(self._current_column_widths())
-        }
-        self.cfg.table_layout_initialized = True
+        self._store_column_width_preferences()
         geometry = self.normalGeometry() if self.isMaximized() else self.geometry()
         self.cfg.window_size = [geometry.width(), geometry.height()]
         self.cfg.window_maximized = self.isMaximized()
         save_config(self.cfg)
-        logging.info("Estado de ventana y anchos de columnas guardados.")
+        logging.info("Estado de ventana y preferencias de columnas guardados.")
 
     def settings_dirty(self):
         return (
@@ -2466,11 +2773,16 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             or self.warehouse_details_check.isChecked() != self.cfg.warehouse_ask_sat_details
             or self.repair_mode_combo.currentData() != self.cfg.repair_print_mode
             or self.repair_close_tabs_check.isChecked() != self.cfg.repair_close_tabs_after_direct_print
+            or self.repair_stamp_check.isChecked() != self.cfg.repair_irreparable_stamp_enabled
             or self.fault_batch_spin.value() != self.cfg.fault_description_batch_size
             or self.priority_tmb_validity.currentData() != self.cfg.priority_tmb_validity
             or self.priority_l9_validity.currentData() != self.cfg.priority_l9_validity
             or self.priority_renfe_validity.currentData() != self.cfg.priority_renfe_validity
             or self.theme_combo.currentData() != self.cfg.theme
+            or self.font_combo.currentData() != self.cfg.font_family
+            or self._custom_legibility_options() != self.cfg.legibility_custom
+            or self.legibility_combo.currentData() != self.cfg.legibility_profile
+            or self.tracking_colors_check.isChecked() != self.cfg.tracking_colors
         )
 
     def save_settings(self, show_feedback=True):
@@ -2498,11 +2810,16 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.cfg.warehouse_ask_sat_details = self.warehouse_details_check.isChecked()
         self.cfg.repair_print_mode = self.repair_mode_combo.currentData()
         self.cfg.repair_close_tabs_after_direct_print = self.repair_close_tabs_check.isChecked()
+        self.cfg.repair_irreparable_stamp_enabled = self.repair_stamp_check.isChecked()
         self.cfg.fault_description_batch_size = self.fault_batch_spin.value()
         self.cfg.priority_tmb_validity = self.priority_tmb_validity.currentData()
         self.cfg.priority_l9_validity = self.priority_l9_validity.currentData()
         self.cfg.priority_renfe_validity = self.priority_renfe_validity.currentData()
         self.cfg.theme = self.theme_combo.currentData()
+        self.cfg.legibility_profile = self.legibility_combo.currentData()
+        self.cfg.legibility_custom = self._custom_legibility_options()
+        self.cfg.font_family = self.font_combo.currentData()
+        self.cfg.tracking_colors = self.tracking_colors_check.isChecked()
         save_config(self.cfg)
         logging.info("Inicio de OT habilitado: %s; modo: %s", self.cfg.workorder_start_enabled, self.cfg.workorder_start_mode)
         logging.info("Cierre de OT en Edge habilitado: %s", self.cfg.workorder_close_enabled)
@@ -2514,15 +2831,16 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._refresh_priorities()
         self.refresh_table()
         logging.info(
-            "Configuración UI guardada: auto_update=%s, intervalo=%d, conciliación=%s, lote=%d, averías=%s, lote_averías=%d, prioridad TMB=%s, L9=%s, RENFE=%s, tema=%s.",
+            "Configuración UI guardada: auto_update=%s, intervalo=%d, conciliación=%s, lote=%d, averías=%s, lote_averías=%d, prioridad TMB=%s, L9=%s, RENFE=%s, tema=%s, legibilidad=%s, tipografía=%s, colores_seguimiento=%s.",
             self.cfg.auto_update_enabled, self.cfg.auto_update_interval_min,
             self.cfg.reconciliation_enabled, self.cfg.reconciliation_batch_size,
             self.cfg.fault_descriptions_enabled, self.cfg.fault_description_batch_size,
             self.cfg.priority_tmb_validity, self.cfg.priority_l9_validity, self.cfg.priority_renfe_validity,
-            self.cfg.theme,
+            self.cfg.theme, self.cfg.legibility_profile, self.cfg.font_family, self.cfg.tracking_colors,
         )
         if show_feedback:
             QMessageBox.information(self, "Configuración", "Configuración guardada correctamente.")
+        self._update_settings_dirty_hint()
         self.status.showMessage("Configuración guardada y aplicada.", 4000)
         return True
 
@@ -2952,12 +3270,13 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Maximo Desktop")
-    startup_theme = load_config().theme
+    startup_config = load_config()
+    startup_theme = startup_config.theme
+    apply_application_theme(app, startup_theme, startup_config.legibility_profile, startup_config.font_family, startup_config.legibility_custom)
     activity_dialog = show_activity_dialog(
         "Iniciando Maximo Desktop…\nCargando datos locales",
         theme_preference=startup_theme,
     )
-    apply_application_theme(app, startup_theme)
     activity_message = activity_dialog.findChild(QLabel, "activityMessage")
 
     def installation_progress(message):

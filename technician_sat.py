@@ -10,6 +10,7 @@ from selenium.webdriver.common.keys import Keys
 from workorder_start import WorkorderStarter, SaveConfirmationMissing, normalized
 from task_priorities import coordinator, scheduled, HIGH
 
+from worklog_limits import validate_worklog_summary
 from db import get_fault_description
 from failure_catalog import resolve_selection
 from warehouse import WarehouseItem, freeze_items
@@ -24,7 +25,7 @@ def format_incident(value):
     text=str(value or '').strip()
     text=re.sub(r'^(?:inc\s*:\s*)+', '', text, flags=re.IGNORECASE).strip()
     if not text:raise ValueError('Introduce la incidencia (texto libre).')
-    return 'inc: '+text
+    return validate_worklog_summary('inc: '+text, 'Incidencia (incluido «inc: »)')
 
 
 @dataclass(frozen=True)

@@ -29,6 +29,17 @@ def preparation_retry_allowed(record):
         and not record.get('verified_status'))
 
 
+def repair_retry_allowed(record):
+    """Only resume before a possible final route/accept; never infer failure from INPRG."""
+    return bool(record and record.get('action') in ('technician_close','technician_discard')
+        and record.get('phase') not in ('verified','complete')
+        and record.get('confirmation_attempted') is False
+        and record.get('details_attempted') is False
+        and not record.get('verified_status')
+        and (record.get('route_attempted') is False or record.get('final_route_attempted') is False)
+        and isinstance(record.get('reviewed_request'),dict))
+
+
 class RecoveryStore:
     def __init__(self, folder=None, *, origin_report=''):
         self.origin_report = origin_report
@@ -133,6 +144,18 @@ class RecoveryStore:
                 raise PendingOperationError('La preparación cambió o ya se intentó Enrutar; revisa de nuevo la OT.')
             return self.update(current,'preparing',reviewed_request=reviewed_request,
                                retry_count=current.get('retry_count',0)+1)
+
+    def resume_repair_preparation(self, record, reviewed_request):
+        with _guard:
+            current = self.get(record['item']['ot'])
+            if (not repair_retry_allowed(current)
+                    or current['operation_id'] != record['operation_id']
+                    or reviewed_request.get('item') != current['item']
+                    or ('technician_discard' if reviewed_request.get('action') == 'discard'
+                        else 'technician_close') != current['action']):
+                raise PendingOperationError('La reparación cambió o ya pudo confirmarse; reverifica antes de reintentar.')
+            return self.update(current, 'preparing', reviewed_request=reviewed_request,
+                               final_route_attempted=False, retry_count=current.get('retry_count',0)+1)
 
     def update_report(self, record, result):
         """Refresh an older report after recovery, without trusting paths from JSON."""

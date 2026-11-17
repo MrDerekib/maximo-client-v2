@@ -1,5 +1,96 @@
 # Historial de cambios
 
+## 1.4.0 — Nueva apariencia y mayor control
+
+### Resumen
+
+En esta actualización nos centramos en mejorar la interfaz de Maximo Desktop: más personalización, mejor legibilidad y una navegación más cómoda, junto con correcciones de fiabilidad.
+
+- **Nuevos temas:** Dracula, Catppuccin, Tokyo Night, SynthWave ’84 y más, con colores coherentes en toda la app.
+- **A tu medida:** nuevas tipografías y perfiles de legibilidad, incluido uno personalizado para ajustar tamaño, negrita, contraste y bordes.
+- **Más espacio:** barra lateral ocultable y redimensionable; configuración organizada en pestañas y acceso directo a cargar y exportar Excel.
+- **Listado más cómodo:** selección múltiple mejorada, filtros activos más visibles y columnas que respetan tus ajustes al cambiar el tamaño de la ventana.
+- **Reparaciones más fiables:** reverificación y reintento revisado desde la ventana de progreso, sin repetir confirmaciones inciertas.
+- **Partes de irreparables:** sello opcional «IRREPARABLE», en color al imprimir desde MD con la opción activada.
+
+### Apariencia y legibilidad · Todos los roles
+
+- Nuevos temas Dracula, Catppuccin Mocha, Catppuccin Latte, SynthWave ’84,
+  Tokyo Night, Gruvbox Dark, Rosé Pine Dawn y Nord, junto con Claro, Oscuro y Según Windows.
+- Paletas compartidas para listado, configuración, formularios, menús contextuales,
+  calendarios, confirmaciones, avisos y ventanas de progreso. Correcciones de contraste
+  y fondos claros que aparecían dentro del tema oscuro.
+- Barra de título coloreada en Windows y marca de la barra lateral adaptada al tema.
+- Tipografías incluidas: Inter, IBM Plex Sans, JetBrains Mono,
+  Atkinson Hyperlegible Next y Space Grotesk. Cada tema propone una fuente;
+  se puede elegir otra o conservar la del sistema, sin instalar fuentes aparte.
+- Perfiles Normal, Mayor visibilidad, Alto contraste y Personalizado.
+  El perfil personalizado permite combinar tamaño, peso, contraste del texto
+  y refuerzo de bordes independientemente del tema y la fuente.
+- Colores opcionales para Estado en Maximo y Seguimiento, con mayor diferenciación
+  entre taller, pendiente de salida, cerrada, retenida y otros estados.
+- Corrección de las esquinas redondeadas de las tablas del listado y de los diálogos.
+
+### Navegación, configuración y listado · Todos los roles
+
+- Menú superior «Maximo Desktop Menú» y navegación con más espacio para el listado.
+  La barra lateral se puede ocultar y recuperar desde la cabecera, redimensionar
+  y restaurar con su preferencia guardada.
+- Accesos a Cargar Excel de prioridades y Exportar a Excel en la barra lateral;
+  guardar y eliminar búsquedas mantienen su propia zona e iconos.
+- Configuración organizada en General, Datos y sincronización, Técnico y extensión
+  y Almacén, con disposición de dos columnas cuando el espacio lo permite.
+- Selección múltiple mediante una columna de casillas con superficie de pulsación
+  amplia, independiente de la fila activa. Se conservan Ctrl y Mayús; Escape y
+  las zonas vacías permiten limpiar la selección.
+- El filtro de prioridades muestra los proyectos con prioridades vigentes cargadas,
+  por ejemplo «Prioridades TMB/L9» o «Prioridades RENFE», con icono de bandera.
+  Prioridades y Filtros se resaltan cuando están activos.
+- El icono de actualización gira mientras se actualiza el listado.
+- Los ajustes automáticos de columnas al cambiar el tamaño de la ventana,
+  colapsar o redimensionar el panel no sobrescriben los anchos elegidos por el usuario.
+  Solo los cambios manuales generan un guardado, tras terminar el arrastre,
+  evitando escrituras duplicadas y conservando los cambios pendientes al cerrar.
+
+### Reparaciones y recuperación · Técnico
+
+- Mejoras de espera y localización de controles antes de confirmar el cierre o desecho.
+- Una respuesta incierta tras el enrutado final activa una reverificación de solo
+  lectura, contrastando estado, identidad, historial y datos de reparación;
+  no se vuelve a pulsar Aceptar automáticamente.
+- «Reverificar resultado» permite comprobar una operación pendiente desde su ventana
+  de progreso. «Revisar y reintentar…» recupera la preparación únicamente cuando
+  es seguro hacerlo, con nueva revisión y confirmación explícita.
+- Se conservan los datos revisados y se comprueban las entradas de Registro para
+  evitar duplicados. Un inicio o una confirmación inciertos no se repiten sin verificar.
+- Margen adicional de espera para reconocer el estado final de un desecho,
+  con trazas del tiempo y último estado observado.
+- Formularios de finalización con más espacio, mejores controles de fecha/hora
+  y progreso separado del formulario de revisión.
+- El Resumen del Registro respeta el límite de 100 caracteres comprobado en Maximo.
+  La incidencia incluye el prefijo `inc:` dentro de ese límite; los textos largos
+  pueden escribirse en Detalles. El editor de Resumen queda dentro de su celda.
+
+### Sello en partes de irreparables · Técnico
+
+- Sello «IRREPARABLE» sobre el parte HTML, activado por defecto y deshabilitable
+  en Técnico y extensión → Partes de reparación.
+- Solo se aplica cuando MD dispone de evidencia local de un desecho verificado;
+  CLOSE por sí solo no identifica un irreparable. Se recuperan también resultados
+  históricos verificados de operaciones realizadas desde MD.
+- Desde MD se prepara la impresión en color solo si el parte lleva el sello.
+  Con el sello desactivado se mantiene blanco y negro.
+- Desde la extensión se mantiene la impresión en blanco y negro, sin abrir otra sesión.
+- El sello se aplica a ambas variantes HTML de Boixeres cuando corresponde.
+  El PDF nativo de BIRT se conserva sin modificar.
+
+### Actualización del listado · Todos los roles
+
+- Si la pestaña de Edge falla con «tab crashed» al descargar el listado,
+  se realiza un único reintento con una sesión limpia y se informa del avance.
+- Si tampoco se obtiene una descarga válida, la actualización se detiene antes
+  de importar datos. Un error al cerrar una sesión caída no oculta el fallo original.
+
 ## 1.3.0 — Operaciones de técnico y nuevo panel de Edge
 
 ### Resumen

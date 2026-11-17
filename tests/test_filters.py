@@ -239,7 +239,7 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(load_profiles(path), {})
 
     @contextmanager
-    def qt_window(self):
+    def qt_window(self, cfg=None):
         import logging
         import os
         from config import AppConfig
@@ -248,7 +248,7 @@ class FilterTests(unittest.TestCase):
             import ui_qt
         FilterTests.qt_app = ui_qt.QApplication.instance() or ui_qt.QApplication([])
         with ExitStack() as patches:
-            patches.enter_context(patch.object(ui_qt, "load_config", return_value=AppConfig()))
+            patches.enter_context(patch.object(ui_qt, "load_config", return_value=cfg or AppConfig()))
             patches.enter_context(patch.object(ui_qt, "save_config"))
             patches.enter_context(patch.object(ui_qt, "PROFILES_PATH", Path(self.temp_path) / "profiles.json"))
             patches.enter_context(patch.object(ui_qt, "DEVELOPMENT_MODE", False))

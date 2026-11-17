@@ -604,3 +604,22 @@ test("PDF cleanup never closes a preview the user navigated elsewhere", async ()
     assert.equal(h.sent.filter(e=>e.message.type==='NEXT_VARIANT').length,0);
   } finally {global.fetch=previousFetch;}
 });
+
+
+test("the stamp survives both Boixeres variants and is excluded from native PDF", async () => {
+  for(const format of ["html","pdf"]) {
+    const h=chromeHarness();
+    const source={tab:{id:1}},viewer={tab:{id:2,openerTabId:1}},output={tab:{id:3,openerTabId:2}};
+    const start=await h.handleMessage({type:"START",ot:"4443840",client:"TMB BOIXERES",outputFormat:format,irreparableStamp:true},source);
+    assert.equal(start.variantCount,2);
+    await h.handleMessage({type:"CLAIM_VIEWER"},viewer);
+    let claim=await h.handleMessage({type:"CLAIM_OUTPUT"},output);
+    assert.equal(claim.irreparableStamp,format==="html");
+    if(format==="html") {
+      await h.handleMessage({type:"FINISH",jobId:start.jobId},output);
+      await h.handleMessage({type:"CLAIM_VIEWER"},viewer);
+      claim=await h.handleMessage({type:"CLAIM_OUTPUT"},output);
+      assert.equal(claim.irreparableStamp,true);
+    }
+  }
+});

@@ -14,6 +14,8 @@ from app_paths import (
     create_unique_file, ensure_user_directories,
 )
 from credential_store import load_credentials, save_credentials
+from appearance import PROFILES, THEME_PALETTES, default_custom_legibility, normalize_custom_legibility
+from typography import normalize_font
 from failure_catalog import default_selection
 from release_notes import STATE_FILENAME, initialize_history
 import version
@@ -41,6 +43,10 @@ class AppConfig:
     priority_l9_validity: str = "daily"
     priority_renfe_validity: str = "weekly"
     theme: str = "system"
+    legibility_profile: str = "normal"
+    legibility_custom: dict = field(default_factory=default_custom_legibility)
+    font_family: str = "theme"
+    tracking_colors: bool = False
     repair_extension_enabled: bool = False
     workorder_start_enabled: bool = False
     workorder_start_mode: str = "configured"
@@ -51,6 +57,7 @@ class AppConfig:
     warehouse_ask_sat_details: bool = False
     repair_print_mode: str = "dialog"
     repair_close_tabs_after_direct_print: bool = False
+    repair_irreparable_stamp_enabled: bool = True
     filters: dict | None = None
     last_status: dict | None = None
     latest_release_tag: str = ""
@@ -60,6 +67,8 @@ class AppConfig:
     table_layout_initialized: bool = False
     window_size: list | None = None
     window_maximized: bool = False
+    sidebar_collapsed: bool = False
+    sidebar_width: int = 226
 
     def __post_init__(self):
         self.download_dir = str(DOWNLOAD_DIR)
@@ -80,8 +89,20 @@ class AppConfig:
         ):
             if getattr(self, attribute) not in {"daily", "weekly"}:
                 setattr(self, attribute, default)
-        if self.theme not in {"system", "light", "dark"}:
+        if self.theme != "system" and self.theme not in THEME_PALETTES:
             self.theme = "system"
+        if not isinstance(self.legibility_profile, str) or self.legibility_profile not in PROFILES:
+            self.legibility_profile = "normal"
+        try:
+            self.sidebar_width = min(420, max(210, int(self.sidebar_width)))
+        except (TypeError, ValueError, OverflowError):
+            self.sidebar_width = 226
+        self.legibility_custom = normalize_custom_legibility(self.legibility_custom)
+        self.font_family = normalize_font(self.font_family)
+        if not isinstance(self.sidebar_collapsed, bool):
+            self.sidebar_collapsed = False
+        if not isinstance(self.tracking_colors, bool):
+            self.tracking_colors = False
         if self.repair_print_mode not in {"dialog", "direct"}:
             self.repair_print_mode = "dialog"
         if not isinstance(self.workorder_start_enabled, bool):
@@ -98,6 +119,8 @@ class AppConfig:
             self.warehouse_enabled = False
         if not isinstance(self.warehouse_ask_sat_details, bool):
             self.warehouse_ask_sat_details = False
+        if not isinstance(self.repair_irreparable_stamp_enabled, bool):
+            self.repair_irreparable_stamp_enabled = True
         if not isinstance(self.repair_close_tabs_after_direct_print, bool):
             self.repair_close_tabs_after_direct_print = False
         if self.filters is None:

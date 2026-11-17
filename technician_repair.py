@@ -1,5 +1,6 @@
 """Reviewed repair completion, shared by normal closure and irreparable assets."""
 from dataclasses import dataclass, asdict
+from worklog_limits import validate_worklog_summary
 from datetime import datetime, timedelta
 from copy import deepcopy
 from threading import Event
@@ -16,7 +17,7 @@ from failure_catalog import resolve_selection
 from task_priorities import scheduled, HIGH
 from warehouse import WarehouseItem
 from warehouse_transport import WarehouseSession
-from warehouse_recovery import RecoveryStore
+from warehouse_recovery import RecoveryStore, repair_retry_allowed
 from warehouse_diagnostics import sanitize,log_exception
 
 
@@ -62,6 +63,7 @@ def reviewed_repair(item, values, selection, now=None):
         summary=str(value.get('summary') or '').strip();details=str(value.get('details') or '').strip()
         if not summary and not details:continue
         if not summary:raise ValueError('Cada entrada de registro necesita un resumen.')
+        validate_worklog_summary(summary)
         entries.append(RepairEntry(summary,details))
     summaries=[format_incident(reference),*[entry.summary for entry in entries]]
     if len({normalized(s) for s in summaries})!=len(summaries):
@@ -208,7 +210,7 @@ class RepairCloser(WorkorderCloser):
 
     def before_route_click(self):
         self.session.check('INPRG',self.expected_identity)
-        self.mark('route_attempted',route_attempted=True)
+        self.mark('route_attempted',route_attempted=True,final_route_attempted=True)
     def before_route_accept(self):
         self.session.check('INPRG',self.expected_identity)
         self.mark('confirmation_attempted',confirmation_attempted=True)
@@ -226,12 +228,26 @@ class RepairCloser(WorkorderCloser):
         self.session.rich_details('Desechar Activo',self.plan.justification,'INPRG',
             self.expected_identity,lambda:self.mark('details_attempted',details_attempted=True),
             expected_id=dialog['id'])
-        self.wait(lambda _:self.value('Estado')=='CLOSE','resultado de Desechar Activo en CLOSE')
+        # Give this final, irreversible transition a short grace period. Poll only;
+        # a timeout still uses read-only recovery and never repeats the OK.
+        started = time.monotonic()
+        last_state = None
+        def closed(_):
+            nonlocal last_state
+            last_state = self.value('Estado')
+            return last_state == 'CLOSE'
+        try:
+            self.wait(closed,'resultado de Desechar Activo en CLOSE',timeout=40)
+        except Exception:
+            logging.warning('OT %s: desecho sin confirmar tras %.1fs (límite 40s); último estado de la ficha=%s. Se conserva la reverificación sin repetir OK.',
+                self.ot,time.monotonic()-started,last_state)
+            raise
+        logging.info('OT %s: estado CLOSE del desecho reconocido en %.1fs en la misma sesión',self.ot,time.monotonic()-started)
         return True
 
 
 @scheduled('Finalizar reparación desde MD',HIGH)
-def run_repair(plan, *, progress=None, stop=None, session_factory=WarehouseSession, store=None, journal=None, stage_progress=None):
+def run_repair(plan, *, progress=None, stop=None, session_factory=WarehouseSession, store=None, journal=None, stage_progress=None, retry_record=None):
     """No unattended retry after any route/confirmation; printing is a separate UI action."""
     progress=progress or (lambda text:None);stop=stop or Event();store=store or RecoveryStore()
     stage_progress=stage_progress or (lambda index,text:None)
@@ -252,16 +268,33 @@ def run_repair(plan, *, progress=None, stop=None, session_factory=WarehouseSessi
         progress('OT '+plan.item.ot+' · '+caption)
     try:
         if stop.is_set():raise RuntimeError('Operación detenida antes de comenzar.')
-        if store.get(plan.item.ot):raise RuntimeError('Esta OT tiene una operación pendiente. Revisa su resultado antes de otra acción.')
+        current=store.get(plan.item.ot)
+        if retry_record is not None:
+            if (not repair_retry_allowed(current)
+                    or current['operation_id']!=retry_record['operation_id']
+                    or current['item']!=asdict(plan.item) or current['action']!=action):
+                raise RuntimeError('No se permite repetir una reparación que ya pudo confirmarse. Usa Reverificar.')
+        elif current:
+            raise RuntimeError('Esta OT tiene una operación pendiente. Revisa su resultado antes de otra acción.')
         stage_progress(0,'Abrir OT y comprobar estado e identidad')
         progress('Abriendo OT y comprobando estado e identidad…')
         session=session_factory();state=session.open(plan.item.ot)
         if state not in ('APPR','INPRG'):raise RuntimeError('La OT debe estar en APPR o INPRG.')
+        if retry_record is not None and current.get('start_attempted') and state=='APPR':
+            raise RuntimeError('El inicio anterior sigue sin confirmar. No se repetirá; comprueba su resultado antes de continuar.')
         identity=session.identity()
         journal({'event':'initial_state_read','ot':plan.item.ot,'state':state,'identity':identity})
         if not identity.get('Activo') or not identity.get('Planta') or (plan.item.serial and identity.get('Nº de serie')!=plan.item.serial):
             raise RuntimeError('No se pudo contrastar la identidad del equipo.')
-        record=store.begin(plan.item,action,identity,state,preparing=True,reviewed_request=asdict(plan))
+        if retry_record is not None:
+            if identity!=current['identity']:
+                raise RuntimeError('La identidad cambió desde el intento anterior. No se reintentará.')
+            record=store.resume_repair_preparation(current,asdict(plan))
+            journal({'event':'repair_preparation_resumed','ot':plan.item.ot,'operation_id':record['operation_id'],
+                     'retry_count':record['retry_count']})
+        else:
+            record=store.begin(plan.item,action,identity,state,preparing=True,reviewed_request=asdict(plan))
+            record=store.update(record,'preparing',final_route_attempted=False)
         preparer=RepairPreparer(session.driver,plan.item.ot,state,progress);session.reader=preparer
         stage_progress(1,'Preparar anomalías y entradas de Registro')
         preparer.apply_anomalies(plan.selection)
@@ -303,7 +336,27 @@ def run_repair(plan, *, progress=None, stop=None, session_factory=WarehouseSessi
         journal({'event':'repair_error','ot':plan.item.ot,'error_type':type(exc).__name__,'message':str(exc)[:1200],
                  'phase':record['phase'] if record else 'before_preparation','context':context})
         if record:
-            store.update(record,record['phase'],last_error=str(exc)[:600])
+            record=store.update(record,record['phase'],last_error=str(exc)[:600])
+            if record.get('confirmation_attempted') or record.get('final_route_attempted'):
+                # A possible server-side effect is never replayed. Reopen only for reads,
+                # with the same evidence used by the manual recheck/restart recovery.
+                progress('Respuesta sin confirmar. Comprobando de nuevo estado, historial y datos sin repetir la acción…')
+                stage_progress(5,'Reverificación automática sin volver a confirmar')
+                journal({'event':'repair_auto_recheck','ot':plan.item.ot,'operation_id':record['operation_id'],
+                         'confirmation_replayed':False})
+                if session:
+                    try:session.close()
+                    except Exception:logging.exception('No se pudo cerrar la sesión de reparación tras el fallo')
+                    session=None
+                try:
+                    from warehouse_transport import _recover_one
+                    recovered=_recover_one(record,store,session_factory,journal,Event())
+                    if recovered.status=='success':
+                        return {'ot':plan.item.ot,'status':recovered.verified_status,'action':plan.action,
+                                'operation_id':record['operation_id'],'print_report':plan.print_report,
+                                'recovered_after_error':True}
+                except Exception:
+                    logging.exception('No se pudo completar la reverificación automática de reparación')
         raise
     finally:
         if session:session.close()
