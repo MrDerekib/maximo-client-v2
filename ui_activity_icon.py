@@ -23,7 +23,8 @@ class RefreshIcon(QObject):
         self._render()
 
     def _frame(self):
-        self.angle=(self.elapsed.elapsed()%1200)*360/1200
+        # The SVG arrows point counterclockwise; Qt positive angles rotate clockwise.
+        self.angle=-(self.elapsed.elapsed()%1200)*360/1200
         if self.button.isVisible():self._render()
 
     def _render(self):

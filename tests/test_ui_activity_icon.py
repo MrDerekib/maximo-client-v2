@@ -18,7 +18,7 @@ class ActivityIconTests(TestCase):
             ticks=QSignalSpy(icon.timer.timeout)
             icon.set_running(True)
             self.assertTrue(ticks.wait(2000))
-            self.assertTrue(icon.timer.isActive());self.assertGreater(icon.angle,0)
+            self.assertTrue(icon.timer.isActive());self.assertLess(icon.angle,0)
             icon.set_color('#202020');self.assertTrue(icon.running)
             icon.set_running(False)
             self.assertFalse(icon.timer.isActive());self.assertEqual(icon.angle,0)
