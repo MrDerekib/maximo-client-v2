@@ -46,6 +46,10 @@ En esta actualización nos centramos en mejorar la interfaz de Maximo Desktop: m
 - El filtro de prioridades muestra los proyectos con prioridades vigentes cargadas,
   por ejemplo «Prioridades TMB/L9» o «Prioridades RENFE», con icono de bandera.
   Prioridades y Filtros se resaltan cuando están activos.
+- Pegar directamente una columna de OTs o números de serie desde Excel o correo
+  convierte filas y tabulaciones en búsquedas alternativas y aplica la búsqueda
+  sin pulsar Enter. Se omiten duplicados y filas vacías; los espacios internos
+  conservan la búsqueda parcial, como `AB 456`.
 - El icono de actualización gira mientras se actualiza el listado.
 - Los ajustes automáticos de columnas al cambiar el tamaño de la ventana,
   colapsar o redimensionar el panel no sobrescriben los anchos elegidos por el usuario.

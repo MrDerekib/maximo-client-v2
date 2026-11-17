@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QTextBrowser, QStyle, QTabWidget, QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
 
+from search_input import SearchLineEdit
 from column_widths import ColumnWidthHeader
 from rounded_table import RoundedTableFrame
 from ui_activity_icon import RefreshIcon, set_list_update_busy
@@ -1101,10 +1102,11 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.client_combo.selection_changed.connect(self.refresh_table)
         toolbar.addWidget(self.client_combo, 1, 0)
         toolbar.addWidget(QLabel("Buscar"), 0, 1)
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("OT, nº de serie o descripción · separa varios valores con comas…")
-        self.search_edit.setToolTip("Comas: busca cualquiera de los valores. Espacios: todas las partes dentro del mismo valor.")
+        self.search_edit = SearchLineEdit()
+        self.search_edit.setPlaceholderText("OT, nº de serie o descripción · pega una columna o separa valores con comas…")
+        self.search_edit.setToolTip("Pega una columna de Excel o correo para buscar todos sus valores automáticamente. Comas: cualquiera de los valores. Espacios: todas las partes dentro del mismo valor.")
         self.search_edit.returnPressed.connect(self.refresh_table)
+        self.search_edit.pasted.connect(self.refresh_table)
         toolbar.addWidget(self.search_edit, 1, 1)
         toolbar.addWidget(QLabel("Buscar por"), 0, 2)
         self.search_by_combo = DecoratedComboBox()
