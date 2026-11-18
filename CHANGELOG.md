@@ -4,6 +4,8 @@
 
 ### Correcciones
 
+- El menú contextual permite copiar una fila completa o las filas seleccionadas,
+  con encabezados y columnas visibles en su orden actual, para pegar en Excel o correo.
 - «Actualizar datos desde Maximo» incluye ahora el Seguimiento además de avería y
   descripción ampliada, reutilizando la ficha abierta. Cada campo se guarda de
   forma independiente; una lectura fallida no impide actualizar los demás.

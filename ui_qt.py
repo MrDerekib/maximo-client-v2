@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QTextBrowser, QStyle, QTabWidget, QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
 
+from table_clipboard import row_copy_mime
 from search_input import SearchLineEdit
 from column_widths import ColumnWidthHeader
 from rounded_table import RoundedTableFrame
@@ -2198,14 +2199,17 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if row < 0: return
         prepare_row_context_selection(self.table, self.table.indexAt(position))
         ot = self.selected_ot(row)
+        context_items = self.warehouse_items() if hasattr(self, 'warehouse_items') else ()
+        context_ots = tuple(item.ot for item in context_items) or (ot,)
         menu = QMenu(self); menu.addAction("Copiar valor", lambda: QApplication.clipboard().setText(self.table.currentItem().text()))
         menu.addAction("Copiar OT", lambda: QApplication.clipboard().setText(ot))
         menu.addAction("Copiar número de serie", lambda: QApplication.clipboard().setText(self.table.item(row, 3).text()))
+        row_copy = menu.addAction("Copiar fila completa" if len(context_ots)==1 else f"Copiar {len(context_ots)} filas seleccionadas",
+            lambda checked=False, ots=context_ots: self.copy_rows(ots))
+        row_copy.setToolTip("Copia las columnas visibles con encabezados, en formato de tabla para Excel o correo.")
         menu.addSeparator()
         if self.cfg.detailed_descriptions_enabled and get_detailed_description(ot)[0]:
             menu.addAction("Ver descripción detallada", lambda: self.show_detailed_description(ot))
-        context_items = self.warehouse_items() if hasattr(self, 'warehouse_items') else ()
-        context_ots = tuple(item.ot for item in context_items) or (ot,)
         information_action = menu.addAction("Actualizar datos desde Maximo" +
             (f" ({len(context_ots)} OT)" if len(context_ots) > 1 else ""),
             lambda checked=False, ots=context_ots: self.refresh_selected_information(ots))
@@ -2226,6 +2230,17 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.add_role_action_menus(menu)
         try:menu.exec(self.table.viewport().mapToGlobal(position))
         finally:self._workorder_selector.clear_context()
+
+    def copy_rows(self, ots):
+        requested = set(ots)
+        rows = [row for row in range(self.table.rowCount()) if not self.table.isRowHidden(row)
+                and self.table.item(row,1) is not None and self.table.item(row,1).text() in requested]
+        mime = row_copy_mime(self.table, rows)
+        if mime is None:
+            self.status.showMessage("No hay filas visibles que copiar.", 4000)
+            return
+        QApplication.clipboard().setMimeData(mime)
+        self.status.showMessage(f"{len(rows)} fila{'s' if len(rows)!=1 else ''} copiada{'s' if len(rows)!=1 else ''} con encabezados.", 4000)
 
     def delete_inactive(self, ot):
         if QMessageBox.question(self, "Eliminar registro", f"¿Eliminar la OT no activa {ot} de la base local?") == QMessageBox.Yes:
