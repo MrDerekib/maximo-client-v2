@@ -11,7 +11,7 @@ from workorder_start import WorkorderStarter, SaveConfirmationMissing, normalize
 from task_priorities import coordinator, scheduled, HIGH
 
 from worklog_limits import validate_worklog_summary
-from db import get_fault_description
+from db import get_fault_description, fault_description_checked
 from failure_catalog import resolve_selection
 from warehouse import WarehouseItem, freeze_items
 from workorder_close import repair_seconds
@@ -307,6 +307,7 @@ def technician_sat_defaults(items, *, stop=None, progress=None, session_factory=
             coordinator.checkpoint('Consulta SAT técnico', item.ot, index, len(items))
             progress(f'Consultando datos reales · OT {item.ot} ({index + 1}/{len(items)})')
             state = session.open(item.ot)
+            if stop.is_set():break
             reader = session.reader
             reader.tab('Orden de trabajo')
             identity = session.identity()
@@ -314,8 +315,11 @@ def technician_sat_defaults(items, *, stop=None, progress=None, session_factory=
                 raise RuntimeError(f'OT {item.ot}: no se pudo contrastar equipo y planta.')
             if item.serial and item.serial.strip() != (identity.get('Nº de serie') or '').strip():
                 raise RuntimeError(f'OT {item.ot}: el número de serie no coincide.')
-            reason = get_fault_description(item.ot) or reader.value('Resumen') or ''
+            cached = get_fault_description(item.ot)
+            reason = cached if cached or fault_description_checked(item.ot) else reader.value('Resumen') or ''
+            if stop.is_set():break
             reader.tab('Consumos Actuales')
+            if stop.is_set():break
             duration = reader.value('Horas totales de reparación') or ''
             values[item.ot] = {'reason':reason, 'duration':duration, 'status':state}
             if read_reference and state == 'APPR':

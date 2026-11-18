@@ -476,7 +476,7 @@ class WarehouseWindowMixin:
         if not getattr(self.cfg, 'warehouse_enabled', False) or getattr(self, '_closing', False):
             return
         dialogs = getattr(self, '_warehouse_dialogs', [])
-        active = next((dialog for dialog in dialogs if dialog.is_running()), None)
+        active = next((dialog for dialog in dialogs if dialog.is_running() and not getattr(dialog,'_preview_closed',False)), None)
         if active is not None:
             active.show(); active.raise_(); active.activateWindow()
             return
@@ -553,7 +553,7 @@ class WarehouseWindowMixin:
     def open_repair_completion(self,item,default_action='discard'):
         if not getattr(self.cfg,'workorder_close_enabled',False) or getattr(self,'_closing',False):return
         dialogs=getattr(self,'_warehouse_dialogs',[])
-        active=next((d for d in dialogs if d.is_running()),None)
+        active=next((d for d in dialogs if d.is_running() and not getattr(d,'_preview_closed',False)),None)
         if active:active.show();active.raise_();return
         from technician_repair_ui import RepairDialog
         dialog=RepairDialog(item,self.cfg.workorder_start_selection,self,default_action=default_action)
@@ -565,7 +565,7 @@ class WarehouseWindowMixin:
         if not getattr(self.cfg, 'technician_sat_enabled', False) or getattr(self, '_closing', False):
             return
         dialogs = getattr(self, '_warehouse_dialogs', [])
-        active = next((d for d in dialogs if d.is_running()), None)
+        active = next((d for d in dialogs if d.is_running() and not getattr(d,'_preview_closed',False)), None)
         if active:
             active.show(); active.raise_(); active.activateWindow(); return
         from technician_sat_ui import TechnicianSatDialog

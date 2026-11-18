@@ -7,13 +7,14 @@ from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabe
     QTableWidget,QTableWidgetItem,QStyledItemDelegate,QPushButton,QComboBox,QDateTimeEdit,QPlainTextEdit,
     QCheckBox,QMessageBox,QScrollArea,QWidget,QSizePolicy,QHeaderView,QApplication,QProgressBar,QAbstractItemView,QStyle,QCalendarWidget)
 from failure_picker import FailurePathPicker
+from preview_lifecycle import cancel_readonly_preview
 from rounded_table import RoundedTableFrame
 from worklog_limits import WORKLOG_SUMMARY_MAX_LENGTH,summary_length
 from technician_repair import reviewed_repair,run_repair,RepairPreparer
 from warehouse_transport import WarehouseSession
 from warehouse_recovery import RecoveryStore, repair_retry_allowed
 from warehouse import WarehouseResult
-from db import get_fault_description,apply_closed_repair,apply_warehouse_status
+from db import get_fault_description,fault_description_checked,apply_closed_repair,apply_warehouse_status
 from dataclasses import asdict
 import json,logging
 from uuid import uuid4
@@ -23,16 +24,24 @@ from task_priorities import scheduled,HIGH
 
 
 @scheduled('Consultar reparación para revisión',HIGH)
-def repair_defaults(item):
+def repair_defaults(item, *, stop=None):
+    stop = stop or Event()
+    def check_cancelled():
+        if stop.is_set():raise RuntimeError('Consulta cancelada.')
+    check_cancelled()
     session=WarehouseSession()
     try:
         state=session.open(item.ot)
+        check_cancelled()
         if state not in ('APPR','INPRG'):raise RuntimeError('Solo se puede finalizar una OT APPR o INPRG.')
         identity=session.identity()
         if item.serial and identity.get('Nº de serie')!=item.serial:raise RuntimeError('El número de serie no coincide.')
         r=RepairPreparer(session.driver,item.ot,state);session.reader=r
-        fault=get_fault_description(item.ot) or r.value('Resumen') or ''
+        cached=get_fault_description(item.ot)
+        fault=cached if cached or fault_description_checked(item.ot) else r.value('Resumen') or ''
+        check_cancelled()
         r.tab('Consumos Actuales');duration=r.value('Horas totales de reparación') or ''
+        check_cancelled()
         r.tab('Registro');snapshot=r.worklog_snapshot()
         if not snapshot['totals'] or len(set(snapshot['totals']))!=1 or snapshot['totals'][0]>len(snapshot['rows']):
             raise RuntimeError('Registro con paginación incompleta; requiere revisión antes de proponer entradas.')
@@ -44,6 +53,7 @@ def repair_defaults(item):
         from technician_repair import RepairEntry
         notes=[];reference=''
         for summary in summaries:
+            check_cancelled()
             if summary.lower().startswith('inc:') and not reference:reference=summary;continue
             entry=RepairEntry(summary)
             if not r.open_entry(entry):raise RuntimeError('El registro cambió durante la consulta.')
@@ -192,7 +202,7 @@ class RepairWorker(QThread):
         super().__init__(parent);self.item=item;self.plan=plan;self.retry_record=retry_record;self.stop_requested=Event()
     def run(self):
         try:
-            if self.plan is None:result=repair_defaults(self.item,job_waiting=self.progress.emit,job_cancel_event=self.stop_requested)
+            if self.plan is None:result=repair_defaults(self.item,stop=self.stop_requested,job_waiting=self.progress.emit,job_cancel_event=self.stop_requested)
             else:
                 folder=LOG_DIR/'almacen-operaciones';folder.mkdir(parents=True,exist_ok=True)
                 batch='repair-'+uuid4().hex
@@ -309,6 +319,7 @@ class RepairDialog(QDialog):
     def __init__(self,item,selection,parent=None,*,autoload=True,default_action='discard'):
         if default_action not in ('close','discard'):raise ValueError('Acción de reparación no válida.')
         super().__init__(parent);self.item=item;self._worker=None;self._reviewed=False;self._verified=None;self.progress_dialog=None;self._retry_record=None
+        self._preview_closed=False
         self._preview_edited=set();self._applying_preview=False
         self.setWindowTitle('Finalizar reparación · OT '+item.ot)
         self.setObjectName('repairReview')
@@ -401,6 +412,7 @@ class RepairDialog(QDialog):
     def is_running(self):return self._worker is not None and self._worker.isRunning()
 
     def launch(self,plan=None):
+        if self._preview_closed:return
         if self.is_running():return
         self._worker=RepairWorker(self.item,plan,self,retry_record=self._retry_record)
         self._worker.progress.connect(self.progress_message)
@@ -470,6 +482,7 @@ class RepairDialog(QDialog):
         if self.progress_dialog:self.progress_dialog.message.setText(text)
 
     def preview_ready(self,data):
+        if self._preview_closed:return
         self._reviewed=True;self.submit.setEnabled(True)
         self.fault.setText('Avería: '+data['fault'])
         if data['fault'] and not self._justification_edited:
@@ -528,6 +541,7 @@ class RepairDialog(QDialog):
         if result.get('print_report'):self.print_requested.emit(self.item.ot)
 
     def failed(self,message):
+        if self._preview_closed:return
         self.submit.setEnabled(False)
         self.status.setText('Proceso detenido: '+message+'. Revisa el registro de operaciones pendientes antes de repetir.')
         if self.progress_dialog:self.progress_dialog.failure(message)
@@ -541,10 +555,15 @@ class RepairDialog(QDialog):
             self.progress_dialog.show();self.progress_dialog.raise_()
 
     def closeEvent(self,event):
+        if getattr(self._worker,'plan',False) is None and cancel_readonly_preview(self,self._worker):
+            event.accept();return
         if self.is_running():
             self.request_stop();event.ignore();return
+        self._preview_closed=True
         super().closeEvent(event)
 
     def reject(self):
+        if getattr(self._worker,'plan',False) is None and cancel_readonly_preview(self,self._worker):return
         if self.is_running():self.request_stop();return
+        self._preview_closed=True
         super().reject()

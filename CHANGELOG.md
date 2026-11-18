@@ -4,6 +4,12 @@
 
 ### Correcciones
 
+- Revisión de SAT técnico con filas y columnas redimensionables, número de serie
+  en una segunda línea y texto completo al pasar el ratón. La avería local se
+  muestra inmediatamente y no se vuelve a consultar si ya se comprobó, incluso vacía.
+- Los diálogos de consulta previa de reparación y SAT pueden cerrarse sin esperar
+  a la lectura. La consulta se cancela de forma cooperativa; los envíos reales
+  mantienen la protección de cierre y los hilos siguen vivos hasta terminar.
 - Los avisos temporales, como «Configuración guardada y aplicada», devuelven después
   el progreso más reciente de la tarea en curso. Las tareas terminadas no reaparecen.
 - Las lecturas automáticas de avería y descripción ampliada dejan fuera los campos

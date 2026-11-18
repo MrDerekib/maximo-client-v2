@@ -210,6 +210,17 @@ def get_fault_description(ot: str) -> str:
         return ''
 
 
+def fault_description_checked(ot: str) -> bool:
+    """A successful empty local fault must not trigger an extra Maximo read."""
+    try:
+        with closing(get_connection()) as conn:
+            row = conn.execute('SELECT Ultima_lectura_averia FROM maximo WHERE OT = ?',
+                               (str(ot).strip(),)).fetchone()
+            return bool(row and row[0] is not None)
+    except sqlite3.Error:
+        return False
+
+
 def get_detailed_description(ot: str) -> tuple[str, str]:
     conn = get_connection()
     try:
