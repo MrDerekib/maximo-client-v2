@@ -10,6 +10,8 @@ class ColumnWidthHeader(QHeaderView):
 
     def __init__(self, parent=None):
         super().__init__(Qt.Horizontal, parent)
+        # QTableWidget enables this on its original header, not on replacements.
+        self.setSectionsClickable(True)
         self._pointer_down = False
         self._resized = False
         self.sectionResized.connect(self._section_resized)

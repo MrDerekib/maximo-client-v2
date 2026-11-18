@@ -107,3 +107,30 @@ class ColumnWidthTests(TestCase):
                 count=save.call_count
                 QTest.qWait(450)
                 self.assertEqual(save.call_count,count)
+
+    def test_header_clicks_sort_both_directions_without_saving_widths_or_losing_marks(self):
+        with self.f.qt_window() as (w,qt):
+            w.show();qt.QApplication.processEvents();w._fit_columns_to_viewport()
+            w.table.sortItems(1,Qt.DescendingOrder)
+            w._workorder_selector._toggle_row(w.table.model().index(0,1),Qt.NoModifier)
+            marked={w.table.item(row,1).text() for row in w._workorder_selector.selected_rows()}
+            header=w.table.horizontalHeader();viewport=header.viewport()
+            def click(col):
+                x=header.sectionViewportPosition(col)+header.sectionSize(col)//2
+                QTest.mouseClick(viewport,Qt.LeftButton,pos=QPoint(x,viewport.height()//2))
+                qt.QApplication.processEvents()
+            with patch.object(qt,'save_config') as save,patch.object(qt,'fetch_data') as fetch:
+                click(1)
+                self.assertEqual(header.sortIndicatorOrder(),Qt.AscendingOrder)
+                self.assertEqual([w.table.item(row,1).text() for row in range(w.table.rowCount())],['1','2','3','4'])
+                click(1)
+                self.assertEqual(header.sortIndicatorOrder(),Qt.DescendingOrder)
+                self.assertEqual([w.table.item(row,1).text() for row in range(w.table.rowCount())],['4','3','2','1'])
+                for col in (2,3,5,7):
+                    click(col);first=header.sortIndicatorOrder()
+                    self.assertEqual(header.sortIndicatorSection(),col)
+                    click(col);self.assertNotEqual(header.sortIndicatorOrder(),first)
+                QTest.qWait(450)
+                save.assert_not_called();fetch.assert_not_called()
+                self.assertFalse(w._column_widths_dirty)
+                self.assertEqual({w.table.item(row,1).text() for row in w._workorder_selector.selected_rows()},marked)

@@ -4,6 +4,8 @@
 
 ### Correcciones
 
+- Restaurada la ordenación ascendente y descendente al pulsar las cabeceras,
+  compatible con el guardado manual de anchos y la selección múltiple.
 - El menú contextual permite copiar una fila completa o las filas seleccionadas,
   con encabezados y columnas visibles en su orden actual, para pegar en Excel o correo.
 - «Actualizar datos desde Maximo» incluye ahora el Seguimiento además de avería y
