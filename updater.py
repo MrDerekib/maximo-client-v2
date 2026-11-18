@@ -17,7 +17,7 @@ from maximo_client import (
     process_html_table,
 )
 from db import (
-    apply_fault_description, apply_reconciled_status, fault_description_candidates,
+    apply_fault_description, apply_observed_status, apply_reconciled_status, fault_description_candidates,
     mark_fault_description_attempt, inactive_tracking_candidates, update_database_from_df,
     detailed_description_candidates, apply_detailed_description, mark_detailed_description_attempt,
 )
@@ -267,6 +267,21 @@ def enrich_fault_descriptions(limit=FAULT_DESCRIPTION_LIMIT,
                         break
                     mark_fault_description_attempt(ot)
                     logging.warning("No se pudo leer la avería de la OT %s: %s", ot, exc)
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            if forced:
+                try:
+                    status = read_workorder_status(driver, ot, already_loaded=loaded, cancel_event=cancel_event)
+                    loaded = True
+                    if apply_observed_status(ot, status):
+                        completed += 1
+                        logging.info('Actualización manual OT %s: seguimiento leído en Maximo=%s', ot, status)
+                    else:
+                        logging.warning('Actualización manual OT %s: estado vacío o registro ausente; se conserva el seguimiento anterior', ot)
+                except Exception as exc:
+                    if cancel_event is not None and cancel_event.is_set():
+                        break
+                    logging.warning('No se pudo leer el seguimiento de la OT %s; se conserva el anterior: %s', ot, exc)
             if cancel_event is not None and cancel_event.is_set():
                 break
             if ot in detail_set:

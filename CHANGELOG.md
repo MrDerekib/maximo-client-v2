@@ -4,6 +4,9 @@
 
 ### Correcciones
 
+- «Actualizar datos desde Maximo» incluye ahora el Seguimiento además de avería y
+  descripción ampliada, reutilizando la ficha abierta. Cada campo se guarda de
+  forma independiente; una lectura fallida no impide actualizar los demás.
 - Revisión de SAT técnico con filas y columnas redimensionables, número de serie
   en una segunda línea y texto completo al pasar el ratón. La avería local se
   muestra inmediatamente y no se vuelve a consultar si ya se comprobó, incluso vacía.

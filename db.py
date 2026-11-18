@@ -377,6 +377,14 @@ def apply_warehouse_status(ot: str, status: str, checked_at: str | None = None) 
         return cursor.rowcount == 1
 
 
+def apply_observed_status(ot: str, status: str, checked_at: str | None = None) -> bool:
+    """Store a successful explicit read; list membership remains owned by XLS sync."""
+    status = normalize_filter_value(status)
+    if not status:
+        return False
+    return apply_warehouse_status(ot, status, checked_at)
+
+
 def update_database_from_df(df):
     init_db()  # Incluye la migración antes de importar.
     conn = get_connection()

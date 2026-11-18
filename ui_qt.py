@@ -2206,10 +2206,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             menu.addAction("Ver descripción detallada", lambda: self.show_detailed_description(ot))
         context_items = self.warehouse_items() if hasattr(self, 'warehouse_items') else ()
         context_ots = tuple(item.ot for item in context_items) or (ot,)
-        information_action = menu.addAction("Actualizar avería y descripción ampliada" +
+        information_action = menu.addAction("Actualizar datos desde Maximo" +
             (f" ({len(context_ots)} OT)" if len(context_ots) > 1 else ""),
             lambda checked=False, ots=context_ots: self.refresh_selected_information(ots))
-        information_action.setToolTip("Volver a leer ambos campos de las OTs seleccionadas, aunque ya estén guardados. No modifica la OT en Maximo.")
+        information_action.setToolTip("Consultar Seguimiento, avería y descripción ampliada de las OTs seleccionadas, aunque ya estén guardados. No modifica la OT en Maximo.")
         menu.addAction("Abrir OT en Maximo", lambda: self.open_ot_for_row(row))
         tracking = self.table.item(row, 7).text().strip().upper()
         report_enabled = tracking in REPAIR_REPORT_STATUSES
@@ -2472,12 +2472,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             if completed:
                 self.refresh_table()
             detail = 'cancelada' if cancel_event.is_set() else 'completada'
-            self.status.showMessage(f'Información {detail}: {completed}/{len(ots)*2} campos leídos en {len(ots)} OT.', 10000)
+            self.status.showMessage(f'Información {detail}: {completed}/{len(ots)*3} campos leídos en {len(ots)} OT.', 10000)
         def failed(error):
             release()
+            # Earlier fields/OTs may already have been committed successfully.
+            self.refresh_table()
             logging.warning('Actualización manual de información fallida: %s', error)
             self.status.showMessage('No se pudo completar la lectura. Los campos no leídos conservan su información anterior; consulta el log.', 10000)
-        self.status.showMessage(f'Actualizando avería y descripción ampliada de {len(ots)} OT…')
+        self.status.showMessage(f'Actualizando Seguimiento, avería y descripción ampliada de {len(ots)} OT…')
         try:
             self._start_task(lambda report: enrich_fault_descriptions(
                 limit=None, force_ots=ots, cancel_event=cancel_event,

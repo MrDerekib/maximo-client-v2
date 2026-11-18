@@ -353,32 +353,26 @@ def open_workorders_app(driver, headless=True):
     logging.info("Sección de filtros abierta.")
 
 
-def read_workorder_status(driver, ot: str) -> str:
-    """Busca una OT y devuelve el valor actual del campo de estado mx73-tb."""
-    search_box = wait_for(
-        driver, EC.element_to_be_clickable((By.ID, "quicksearch")),
-        "búsqueda rápida de OT para conciliación",
-    )
-    search_box.clear()
-    search_box.send_keys(ot)
-    search_box.send_keys(Keys.RETURN)
-    # El estado de la ficha anterior puede permanecer visible durante la
-    # navegación. Primero se verifica el campo de OT de la ficha (mx45-tb)
-    # para no leer mx73-tb hasta que Maximo haya cargado la OT solicitada.
+def read_workorder_status(driver, ot: str, *, already_loaded=False, cancel_event=None) -> str:
+    """Read the verified OT status, reusing its open page when requested."""
+    options = {"cancel_event": cancel_event, "timeout": 20} if cancel_event is not None else {}
+    if not already_loaded:
+        search_box = wait_for(
+            driver, EC.element_to_be_clickable((By.ID, "quicksearch")),
+            "búsqueda rápida de OT para conciliación", **options,
+        )
+        search_box.clear()
+        search_box.send_keys(ot)
+        search_box.send_keys(Keys.RETURN)
     target_ot = str(ot).strip()
-
     def current_workorder_is_loaded(browser):
         current_ot = browser.find_element(By.ID, "mx45-tb").get_attribute("value")
         return str(current_ot or "").strip() == target_ot
-
-    wait_for(
-        driver,
-        current_workorder_is_loaded,
-        f"carga de la OT {target_ot} para conciliación",
-    )
+    wait_for(driver, current_workorder_is_loaded,
+             f"carga de la OT {target_ot} para conciliación", **options)
     status_field = wait_for(
         driver, EC.visibility_of_element_located((By.ID, "mx73-tb")),
-        f"estado real de la OT {ot}",
+        f"estado real de la OT {ot}", **options,
     )
     value = status_field.get_attribute("value") or status_field.text
     return " ".join((value or "").split())
