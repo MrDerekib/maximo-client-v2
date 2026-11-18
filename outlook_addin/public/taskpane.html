@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maximo · Correo</title><link rel="stylesheet" href="style.css"></head>
+<body><main>
+<header><span class="logo">MD</span><div><strong>Maximo Desktop</strong><small>Órdenes desde tu correo · MVP</small></div></header>
+<p id="context" class="muted">Conectando con Outlook…</p>
+<section class="card"><label for="ot">Orden de trabajo</label>
+<input id="ot" inputmode="numeric" autocomplete="off" placeholder="Número de OT" maxlength="20">
+<label for="candidates" id="candidates-label" hidden>OTs detectadas en el mensaje</label><select id="candidates" hidden></select>
+<p id="detection" class="muted">Leyendo el correo seleccionado.</p>
+<a id="web" class="button primary" aria-disabled="true" target="_blank" rel="noopener noreferrer">Abrir en Maximo <span>↗</span></a>
+<p class="hint">Muestra la OT en un listado filtrado. Pulsa su fila para abrir la ficha.</p>
+<a id="md" class="button" aria-disabled="true">Abrir con MD <span>↗</span></a>
+<a id="bridge" class="small-link" aria-disabled="true" target="_blank" rel="noopener noreferrer">Si Outlook bloquea MD, probar desde el navegador</a>
+<p class="hint">MD debe estar instalado y haberse abierto al menos una vez. Outlook o Windows pueden pedir confirmación.</p>
+</section>
+<p id="status" role="status" aria-live="polite"></p>
+<details><summary>Opciones de prueba</summary><label class="check"><input type="checkbox" id="development"> Usar MD de desarrollo</label><button id="refresh">Volver a leer el correo</button><p class="hint">Planta: LAB-BAD. El complemento solo abre fichas; no modifica OTs ni correos.</p></details>
+<section id="demo" class="card" hidden><label for="sample">Correo de prueba</label><textarea id="sample" rows="6">La orden de trabajo: '4448382 ' con descripcion: 'Reparar equipo 1815-UI73 - CJTO VAL ETH' le ha sido asignada a su grupo.
+https://eam.indraweb.net/maximo/ui/?event=loadapp&amp;value=wo_tr&amp;workorderid=4483953</textarea><button id="parse-demo">Detectar OT</button></section>
+<footer>Lectura del mensaje en el cliente. Sin envío de su contenido al servidor.</footer>
+</main><script type="module" src="app.mjs"></script></body></html>

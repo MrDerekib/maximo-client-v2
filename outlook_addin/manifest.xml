@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" xsi:type="MailApp">
+ <Id>58d7b6f1-45cc-4de4-9a64-65216cf71939</Id><Version>0.1.0.0</Version><ProviderName>Maximo Desktop</ProviderName><DefaultLocale>es-ES</DefaultLocale>
+ <DisplayName DefaultValue="Maximo · Abrir OT"/><Description DefaultValue="MVP de consulta de OTs desde el correo: Maximo web o Maximo Desktop."/>
+ <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png"/><HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-64.png"/><SupportUrl DefaultValue="https://github.com/MrDerekib/maximo-client-v2"/>
+ <AppDomains><AppDomain>https://localhost:3000</AppDomain><AppDomain>https://eam.indraweb.net</AppDomain></AppDomains>
+ <Hosts><Host Name="Mailbox"/></Hosts><Requirements><Sets><Set Name="Mailbox" MinVersion="1.1"/></Sets></Requirements>
+ <FormSettings><Form xsi:type="ItemRead"><DesktopSettings><SourceLocation DefaultValue="https://localhost:3000/taskpane.html"/><RequestedHeight>450</RequestedHeight></DesktopSettings></Form></FormSettings>
+ <Permissions>ReadItem</Permissions><Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/><DisableEntityHighlighting>false</DisableEntityHighlighting>
+ <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
+ <Requirements><bt:Sets DefaultMinVersion="1.3"><bt:Set Name="Mailbox"/></bt:Sets></Requirements>
+ <Hosts><Host xsi:type="MailHost"><DesktopFormFactor><FunctionFile resid="Taskpane.Url"/>
+ <ExtensionPoint xsi:type="MessageReadCommandSurface"><OfficeTab id="TabDefault"><Group id="Maximo.Group"><Label resid="Group.Label"/>
+ <Control xsi:type="Button" id="Maximo.Open"><Label resid="Button.Label"/><Supertip><Title resid="Button.Label"/><Description resid="Button.Description"/></Supertip>
+ <Icon><bt:Image size="16" resid="Icon.16"/><bt:Image size="32" resid="Icon.32"/><bt:Image size="80" resid="Icon.80"/></Icon>
+ <Action xsi:type="ShowTaskpane"><SourceLocation resid="Taskpane.Url"/></Action>
+ </Control></Group></OfficeTab></ExtensionPoint></DesktopFormFactor></Host></Hosts>
+ <Resources><bt:Images><bt:Image id="Icon.16" DefaultValue="https://localhost:3000/assets/icon-16.png"/><bt:Image id="Icon.32" DefaultValue="https://localhost:3000/assets/icon-32.png"/><bt:Image id="Icon.80" DefaultValue="https://localhost:3000/assets/icon-80.png"/></bt:Images>
+ <bt:Urls><bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html"/></bt:Urls>
+ <bt:ShortStrings><bt:String id="Group.Label" DefaultValue="Maximo Desktop"/><bt:String id="Button.Label" DefaultValue="Maximo · Abrir OT"/></bt:ShortStrings>
+ <bt:LongStrings><bt:String id="Button.Description" DefaultValue="Detectar la OT del correo y abrirla en Maximo o con MD."/></bt:LongStrings></Resources>
+ <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1" xsi:type="VersionOverridesV1_1"><Requirements><bt:Sets DefaultMinVersion="1.5"><bt:Set Name="Mailbox"/></bt:Sets></Requirements>
+ <Hosts><Host xsi:type="MailHost"><DesktopFormFactor><FunctionFile resid="Taskpane.Url"/>
+ <ExtensionPoint xsi:type="MessageReadCommandSurface"><OfficeTab id="TabDefault"><Group id="Maximo.Group"><Label resid="Group.Label"/>
+ <Control xsi:type="Button" id="Maximo.Open"><Label resid="Button.Label"/><Supertip><Title resid="Button.Label"/><Description resid="Button.Description"/></Supertip>
+ <Icon><bt:Image size="16" resid="Icon.16"/><bt:Image size="32" resid="Icon.32"/><bt:Image size="80" resid="Icon.80"/></Icon>
+ <Action xsi:type="ShowTaskpane"><SourceLocation resid="Taskpane.Url"/><SupportsPinning>true</SupportsPinning></Action>
+ </Control></Group></OfficeTab></ExtensionPoint></DesktopFormFactor></Host></Hosts>
+ <Resources><bt:Images><bt:Image id="Icon.16" DefaultValue="https://localhost:3000/assets/icon-16.png"/><bt:Image id="Icon.32" DefaultValue="https://localhost:3000/assets/icon-32.png"/><bt:Image id="Icon.80" DefaultValue="https://localhost:3000/assets/icon-80.png"/></bt:Images>
+ <bt:Urls><bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html"/></bt:Urls>
+ <bt:ShortStrings><bt:String id="Group.Label" DefaultValue="Maximo Desktop"/><bt:String id="Button.Label" DefaultValue="Maximo · Abrir OT"/></bt:ShortStrings>
+ <bt:LongStrings><bt:String id="Button.Description" DefaultValue="Detectar la OT del correo y abrirla en Maximo o con MD."/></bt:LongStrings></Resources></VersionOverrides>
+ </VersionOverrides>
+</OfficeApp>
