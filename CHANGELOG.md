@@ -1,8 +1,24 @@
 # Historial de cambios
 
-## Sin publicar
+## 1.4.1 — Consultas más eficientes y mejoras del listado
 
-### Correcciones
+### Resumen
+
+Esta actualización mejora el trabajo con el listado y reduce las consultas innecesarias a Maximo, con correcciones en el seguimiento y en las ventanas de revisión.
+
+- **Búsquedas y copiado:** pega una columna de OTs o números de serie directamente en el buscador y copia filas completas para Excel o correo.
+- **Listado:** vuelve la ordenación desde las cabeceras y se corrige el sentido de giro del indicador de actualización.
+- **Datos de Maximo:** la actualización desde el menú contextual consulta también el Seguimiento. Las averías ya comprobadas dejan de consultarse automáticamente.
+- **Conciliación:** se revisan las OTs no activas que siguen pendientes de salida para recuperar su estado real.
+- **Técnico:** revisión de SAT más legible, con número de serie visible y filas y columnas ajustables. Las consultas previas pueden cerrarse sin esperar a que terminen.
+- **Progreso:** tras un aviso temporal, la barra de estado vuelve a mostrar la tarea en curso.
+
+### Listado y consultas · Todos los roles
+
+- Pegar filas o tabulaciones desde Excel o correo convierte la columna en búsquedas
+  alternativas, sin necesidad de añadir comas ni pulsar Enter. Se omiten duplicados
+  y filas vacías; los espacios internos conservan la búsqueda parcial, como `AB 456`.
+- El indicador de actualización gira en el sentido de sus flechas.
 
 - Restaurada la ordenación ascendente y descendente al pulsar las cabeceras,
   compatible con el guardado manual de anchos y la selección múltiple.
@@ -11,12 +27,6 @@
 - «Actualizar datos desde Maximo» incluye ahora el Seguimiento además de avería y
   descripción ampliada, reutilizando la ficha abierta. Cada campo se guarda de
   forma independiente; una lectura fallida no impide actualizar los demás.
-- Revisión de SAT técnico con filas y columnas redimensionables, número de serie
-  en una segunda línea y texto completo al pasar el ratón. La avería local se
-  muestra inmediatamente y no se vuelve a consultar si ya se comprobó, incluso vacía.
-- Los diálogos de consulta previa de reparación y SAT pueden cerrarse sin esperar
-  a la lectura. La consulta se cancela de forma cooperativa; los envíos reales
-  mantienen la protección de cierre y los hilos siguen vivos hasta terminar.
 - Los avisos temporales, como «Configuración guardada y aplicada», devuelven después
   el progreso más reciente de la tarea en curso. Las tareas terminadas no reaparecen.
 - Las lecturas automáticas de avería y descripción ampliada dejan fuera los campos
@@ -26,6 +36,16 @@
 - Las OTs no activas cuyo último seguimiento es DAR SALIDA o ISSUE vuelven a
   entrar en conciliación para consultar su estado real. Desaparecer del listado
   no se interpreta automáticamente como CLOSE; se respeta el estado que devuelve Maximo.
+
+### Revisión y consultas previas · Técnico
+
+- Revisión de SAT con filas y columnas redimensionables, número de serie en la
+  primera línea y equipo en la segunda; texto completo al pasar el ratón.
+- La avería local se muestra inmediatamente y no se vuelve a consultar si ya se
+  comprobó, incluso vacía. Se conserva la escritura manual durante la consulta.
+- Los diálogos de consulta previa de reparación y SAT pueden cerrarse sin esperar
+  a la lectura. La consulta se cancela de forma cooperativa; los envíos reales
+  mantienen la protección de cierre y los hilos siguen vivos hasta terminar.
 
 ## 1.4.0 — Nueva apariencia y mayor control
 
