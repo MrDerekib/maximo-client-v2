@@ -198,12 +198,19 @@ def reconcile_inactive_tracking(limit=INACTIVE_RECONCILIATION_LIMIT,
 @scheduled("Información ampliada", AUTOMATIC)
 def enrich_fault_descriptions(limit=FAULT_DESCRIPTION_LIMIT,
                               minimum_age_hours=FAULT_DESCRIPTION_HOURS,
-                              include_fault=True, include_detail=False, cancel_event=None):
+                              include_fault=True, include_detail=False, cancel_event=None,
+                              force_ots=None, progress_callback=None):
     """Read optional fault and full details in the same Maximo session/OT visit."""
-    faults = (fault_description_candidates(limit=None, minimum_age_hours=minimum_age_hours)
-              if include_fault else [])
-    details = (detailed_description_candidates(limit=None, minimum_age_hours=minimum_age_hours)
-               if include_detail else [])
+    forced = force_ots is not None
+    if forced:
+        # Explicit selection only: never reset read timestamps or scan all rows.
+        faults = list(dict.fromkeys(str(ot).strip() for ot in force_ots if str(ot).strip()))
+        details = list(faults)
+    else:
+        faults = (fault_description_candidates(limit=None, minimum_age_hours=minimum_age_hours)
+                  if include_fault else [])
+        details = (detailed_description_candidates(limit=None, minimum_age_hours=minimum_age_hours)
+                   if include_detail else [])
     candidates = list(dict.fromkeys(
         ot for pair in zip_longest(faults, details) for ot in pair if ot is not None
     ))
@@ -218,7 +225,7 @@ def enrich_fault_descriptions(limit=FAULT_DESCRIPTION_LIMIT,
     driver = None
     completed = 0
     try:
-        logging.info("Información ampliada: revisando hasta %d OT activas.", len(candidates))
+        logging.info("Información ampliada: revisando hasta %d OT.", len(candidates))
         driver = setup_driver(headless=True, profile_dir=profile_dir)
         login(driver, headless=True)
         open_workorders_app(driver, headless=True)
@@ -253,7 +260,7 @@ def enrich_fault_descriptions(limit=FAULT_DESCRIPTION_LIMIT,
                 try:
                     description = read_workorder_fault_description(driver, ot, cancel_event=cancel_event)
                     loaded = True
-                    if apply_fault_description(ot, description):
+                    if apply_fault_description(ot, description, **({"force": True} if forced else {})):
                         completed += 1
                 except Exception as exc:
                     if cancel_event is not None and cancel_event.is_set():
@@ -268,7 +275,7 @@ def enrich_fault_descriptions(limit=FAULT_DESCRIPTION_LIMIT,
                         driver, ot, already_loaded=loaded, cancel_event=cancel_event,
                     )
                     # A complete read is committed before honoring a late cancel.
-                    if apply_detailed_description(ot, text, safe_html):
+                    if apply_detailed_description(ot, text, safe_html, **({"force": True} if forced else {})):
                         completed += 1
                     detail_failures = 0
                     if cancel_event is not None and cancel_event.is_set():
@@ -286,6 +293,8 @@ def enrich_fault_descriptions(limit=FAULT_DESCRIPTION_LIMIT,
                         ) from exc
                 finally:
                     reset_view = True
+            if progress_callback is not None:
+                progress_callback(position, len(candidates), str(ot))
     finally:
         try:
             if driver is not None:

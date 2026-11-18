@@ -138,7 +138,7 @@ def _migrate_detailed_descriptions(conn):
 
 def detailed_description_candidates(limit: int | None = 5,
                                     minimum_age_hours: int | None = 24) -> List[str]:
-    """Active OTs not yet checked, retrying failures when the new queue empties."""
+    """Active OTs never successfully read; failed attempts respect the cooldown."""
     conn = get_connection()
     try:
         base = "SELECT OT FROM maximo WHERE Activo = 1 AND Ultima_lectura_detallada IS NULL"
@@ -154,10 +154,7 @@ def detailed_description_candidates(limit: int | None = 5,
             query += " LIMIT ?"
             params.append(limit)
         rows = conn.execute(query, params).fetchall()
-        if rows or minimum_age_hours is None:
-            return [row[0] for row in rows]
-        fallback = base + order + (" LIMIT ?" if limit is not None else "")
-        return [row[0] for row in conn.execute(fallback, (limit,) if limit is not None else ()).fetchall()]
+        return [row[0] for row in rows]
     finally:
         conn.close()
 
@@ -167,16 +164,17 @@ def detailed_description_candidate_count(minimum_age_hours: int | None = 24) -> 
 
 
 def apply_detailed_description(ot: str, text: str, safe_html: str,
-                               read_at: str | None = None) -> bool:
+                               read_at: str | None = None, *, force: bool = False) -> bool:
     """An empty long description is a successful read, not a perpetual retry."""
     read_at = read_at or datetime.now().isoformat(timespec="seconds")
     text = (text or "").strip()
     conn = get_connection()
     try:
+        guard = "" if force else " AND Activo = 1 AND Ultima_lectura_detallada IS NULL"
         cur = conn.execute(
-            """UPDATE maximo SET Descripcion_detallada_texto = ?, Descripcion_detallada_html = ?,
+            f"""UPDATE maximo SET Descripcion_detallada_texto = ?, Descripcion_detallada_html = ?,
                Ultima_lectura_detallada = ?, Ultimo_intento_detallada = ?
-               WHERE OT = ? AND Activo = 1 AND Ultima_lectura_detallada IS NULL""",
+               WHERE OT = ?{guard}""",
             (text, safe_html if text else "", read_at, read_at, ot),
         )
         conn.commit()
@@ -553,7 +551,7 @@ def apply_reconciled_status(ot: str, status: str, checked_at: str | None = None)
 
 def fault_description_candidates(limit: int | None = 5,
                                  minimum_age_hours: int | None = 24) -> List[str]:
-    """OT activas sin avería; si no quedan nuevas, recupera el reintento más antiguo."""
+    """OT activas nunca leídas correctamente; los errores respetan la espera."""
     conn = get_connection()
     try:
         query = "SELECT OT FROM maximo WHERE Activo = 1 AND Ultima_lectura_averia IS NULL"
@@ -567,17 +565,7 @@ def fault_description_candidates(limit: int | None = 5,
             query += " LIMIT ?"
             params.append(limit)
         rows = conn.execute(query, params).fetchall()
-        if rows or minimum_age_hours is None:
-            return [row[0] for row in rows]
-
-        # Si todas las pendientes fallaron hace poco, se reintenta la más
-        # antigua. Así el aplazamiento no deja el proceso sin trabajo.
-        fallback = "SELECT OT FROM maximo WHERE Activo = 1 AND Ultima_lectura_averia IS NULL ORDER BY COALESCE(Ultimo_intento_averia, ''), OT"
-        fallback_params = []
-        if limit is not None:
-            fallback += " LIMIT ?"
-            fallback_params.append(limit)
-        return [row[0] for row in conn.execute(fallback, fallback_params).fetchall()]
+        return [row[0] for row in rows]
     finally:
         conn.close()
 
@@ -586,15 +574,16 @@ def fault_description_candidate_count(minimum_age_hours: int | None = 24) -> int
     return len(fault_description_candidates(limit=None, minimum_age_hours=minimum_age_hours))
 
 
-def apply_fault_description(ot: str, description: str, read_at: str | None = None) -> bool:
+def apply_fault_description(ot: str, description: str, read_at: str | None = None, *, force: bool = False) -> bool:
     """Guarda una lectura válida, incluso si Maximo informa una avería vacía."""
     read_at = read_at or datetime.now().isoformat(timespec="seconds")
     description = " ".join((description or "").split())
     conn = get_connection()
     try:
+        guard = "" if force else " AND Activo = 1 AND Ultima_lectura_averia IS NULL"
         cur = conn.execute(
-            """UPDATE maximo SET Descripcion_averia = ?, Ultima_lectura_averia = ?, Ultimo_intento_averia = ?
-               WHERE OT = ? AND Activo = 1 AND Ultima_lectura_averia IS NULL""",
+            f"""UPDATE maximo SET Descripcion_averia = ?, Ultima_lectura_averia = ?, Ultimo_intento_averia = ?
+               WHERE OT = ?{guard}""",
             (description, read_at, read_at, ot),
         )
         conn.commit()

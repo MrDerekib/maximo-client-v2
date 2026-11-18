@@ -2204,6 +2204,12 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         menu.addSeparator()
         if self.cfg.detailed_descriptions_enabled and get_detailed_description(ot)[0]:
             menu.addAction("Ver descripción detallada", lambda: self.show_detailed_description(ot))
+        context_items = self.warehouse_items() if hasattr(self, 'warehouse_items') else ()
+        context_ots = tuple(item.ot for item in context_items) or (ot,)
+        information_action = menu.addAction("Actualizar avería y descripción ampliada" +
+            (f" ({len(context_ots)} OT)" if len(context_ots) > 1 else ""),
+            lambda checked=False, ots=context_ots: self.refresh_selected_information(ots))
+        information_action.setToolTip("Volver a leer ambos campos de las OTs seleccionadas, aunque ya estén guardados. No modifica la OT en Maximo.")
         menu.addAction("Abrir OT en Maximo", lambda: self.open_ot_for_row(row))
         tracking = self.table.item(row, 7).text().strip().upper()
         report_enabled = tracking in REPAIR_REPORT_STATUSES
@@ -2440,6 +2446,46 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             limit=batch, include_fault=self.cfg.fault_descriptions_enabled,
             include_detail=self.cfg.detailed_descriptions_enabled,
             cancel_event=cancel_event), done, failed, coordinated=True)
+
+    def refresh_selected_information(self, ots):
+        if self._closing or not self._credentials_ready():
+            return
+        if getattr(self, '_manual_information_pending', False):
+            self.status.showMessage("Ya hay una actualización manual de información solicitada.", 7000)
+            return
+        ots = tuple(dict.fromkeys(str(ot).strip() for ot in ots if str(ot).strip()))
+        if not ots:
+            return
+        self._manual_information_pending = True
+        self.update_lock.acquire(False)
+        self.fault_description_lock.acquire(False)
+        cancel_event = threading.Event()
+        self.enrichment_cancel_event = cancel_event
+        self.fault_cancel_button.setEnabled(True)
+        def release():
+            self._manual_information_pending = False
+            self.fault_description_lock.release(); self.update_lock.release()
+            self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
+            self._refresh_fault_description_summary()
+        def done(completed):
+            release()
+            if completed:
+                self.refresh_table()
+            detail = 'cancelada' if cancel_event.is_set() else 'completada'
+            self.status.showMessage(f'Información {detail}: {completed}/{len(ots)*2} campos leídos en {len(ots)} OT.', 10000)
+        def failed(error):
+            release()
+            logging.warning('Actualización manual de información fallida: %s', error)
+            self.status.showMessage('No se pudo completar la lectura. Los campos no leídos conservan su información anterior; consulta el log.', 10000)
+        self.status.showMessage(f'Actualizando avería y descripción ampliada de {len(ots)} OT…')
+        try:
+            self._start_task(lambda report: enrich_fault_descriptions(
+                limit=None, force_ots=ots, cancel_event=cancel_event,
+                progress_callback=report, job_priority=MANUAL), done, failed,
+                progress=lambda current,total,ot: self.status.showMessage(f'Actualizando información: {current}/{total} OT · {ot}'),
+                coordinated=True)
+        except Exception as exc:
+            failed(str(exc))
 
     def start_priority_fault_descriptions(self):
         if not self._credentials_ready():

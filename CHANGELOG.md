@@ -4,6 +4,10 @@
 
 ### Correcciones
 
+- Las lecturas automáticas de avería y descripción ampliada dejan fuera los campos
+  comprobados correctamente, incluso vacíos, y respetan las 24 horas entre intentos fallidos.
+  El menú contextual permite volver a consultar ambos campos de las OTs seleccionadas,
+  incluidas las no activas, conservando los datos previos cuando una lectura falla.
 - Las OTs no activas cuyo último seguimiento es DAR SALIDA o ISSUE vuelven a
   entrar en conciliación para consultar su estado real. Desaparecer del listado
   no se interpreta automáticamente como CLOSE; se respeta el estado que devuelve Maximo.
