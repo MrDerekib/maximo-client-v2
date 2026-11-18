@@ -26,7 +26,7 @@ Los enlaces se construyen con destino fijo y número exclusivamente numérico.
 
 ## 1. Prueba visual sin instalar nada en Outlook
 
-Requiere Node.js en PATH o el runtime de Node incluido en la instalación de Codex. El lanzador intenta ambos. No requiere `npm install`.
+Requiere Node.js en PATH o el runtime de Node incluido en la instalación de Codex. El lanzador intenta ambos, incluidas las instalaciones de Codex cuyo runtime tiene un nombre con versión. Si fuera necesario, acepta `-NodePath` con la ruta del ejecutable. `Start-Mvp.ps1 -CheckRuntime` comprueba la detección sin arrancar el servidor ni instalar certificados. No requiere `npm install`.
 
 En PowerShell, desde esta carpeta:
 

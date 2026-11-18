@@ -1,15 +1,34 @@
-[CmdletBinding()]
-param([switch]$TrustCertificate, [switch]$Demo)
+﻿[CmdletBinding()]
+param([switch]$TrustCertificate, [switch]$Demo, [string]$NodePath, [switch]$CheckRuntime)
 $ErrorActionPreference='Stop'
-$node=(Get-Command node.exe -ErrorAction SilentlyContinue).Source
-if (-not $node) {
-    $runtime=Get-AppxPackage -Name 'OpenAI.CodexPrimaryRuntime' -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($runtime) {
-        $bundled=Join-Path $runtime.InstallLocation 'dependencies\node\bin\node.exe'
-        if (Test-Path -LiteralPath $bundled) { $node=$bundled }
+$node=$null
+if ($NodePath) {
+    if (-not (Test-Path -LiteralPath $NodePath -PathType Leaf)) { throw "No existe el ejecutable indicado: $NodePath" }
+    $node=(Resolve-Path -LiteralPath $NodePath).Path
+} else {
+    $command=Get-Command node.exe -ErrorAction SilentlyContinue
+    if ($command) { $node=$command.Source }
+    if (-not $node) {
+        # Runtime packages include their build in Name; an exact name matches none.
+        $runtimes=Get-AppxPackage -Name 'OpenAI.CodexPrimaryRuntime*' -ErrorAction SilentlyContinue | Sort-Object Version -Descending
+        foreach ($runtime in $runtimes) {
+            $bundled=Join-Path $runtime.InstallLocation 'dependencies\node\bin\node.exe'
+            if (Test-Path -LiteralPath $bundled -PathType Leaf) { $node=$bundled; break }
+        }
+    }
+    if (-not $node) {
+        foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)) {
+            if (-not $base) { continue }
+            foreach ($relative in @('nodejs\node.exe','Programs\nodejs\node.exe')) {
+                $candidate=Join-Path $base $relative
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) { $node=$candidate; break }
+            }
+            if ($node) { break }
+        }
     }
 }
-if (-not $node) { throw 'Necesitas Node.js instalado o disponible en PATH.' }
+if (-not $node) { throw 'No se encuentra Node.js ni el runtime de Codex. Puedes indicar su ejecutable con -NodePath.' }
+if ($CheckRuntime) { & $node --version; if ($LASTEXITCODE -ne 0) { throw 'El runtime encontrado no se puede ejecutar.' }; Write-Output $node; exit 0 }
 if ($Demo) { & $node (Join-Path $PSScriptRoot 'server.mjs') --http; exit $LASTEXITCODE }
 $localDir=Join-Path $PSScriptRoot '.local'
 New-Item -ItemType Directory -Path $localDir -Force | Out-Null
