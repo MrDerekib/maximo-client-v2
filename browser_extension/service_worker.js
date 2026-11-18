@@ -152,6 +152,7 @@ async function handleMessage(message, sender) {
       viewerTabId: null, outputTabId: null, startedAt: Date.now(),
       variantIndex: 0,
       variantCount: isBoixeresClient(message.client) ? 2 : 1,
+      irreparableStamp: outputFormat === "html" && message.irreparableStamp === true,
       closeTabs: outputFormat === "html" && message.closeTabs === true
     };
     await chrome.storage.session.set({ [JOB_KEY]: job });
@@ -424,7 +425,7 @@ async function handleMessage(message, sender) {
     }
     job.outputTabId = tab.id;
     await chrome.storage.session.set({ [JOB_KEY]: job });
-    return { ot: job.ot, jobId: job.id };
+    return { ot: job.ot, jobId: job.id, irreparableStamp: job.irreparableStamp === true };
   }
 
   if (message.type === "FINISH" || message.type === "FAIL") {

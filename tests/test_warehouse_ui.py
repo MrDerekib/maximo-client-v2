@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import QApplication, QCheckBox, QMainWindow, QMenu, QTableWidget, QTableWidgetItem
 
 from config import AppConfig
 from tests.test_support import temporary_directory
@@ -22,6 +22,7 @@ class Host(WarehouseWindowMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         self.cfg = AppConfig(warehouse_enabled=True)
+        self.tracking_colors_check = QCheckBox()
         self.table = QTableWidget(4, 8, self)
         for row in range(4):
             for column in range(8):

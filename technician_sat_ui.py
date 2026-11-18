@@ -1,5 +1,7 @@
 """Technician SAT review uses the shared batch report, never warehouse reception."""
 from threading import Event
+from db import get_fault_description, fault_description_checked
+from preview_lifecycle import cancel_readonly_preview
 from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import QLabel, QLineEdit, QTableWidgetItem, QMessageBox, QHeaderView
 from failure_picker import FailurePathPicker
@@ -46,6 +48,8 @@ class TechnicianSatDialog(WarehouseBatchDialog):
         super().__init__(items, 'technician_sat_external', open_ot, parent, report_folder)
         self.technician_plans = None
         self.inputs = {}
+        self._edited_fields = set()
+        self._cached_reasons = {}
         self.table.setColumnCount(9)
         for column, caption in ((6,'Horas'),(7,'Incidencia'),(8,'Motivo SAT (editable)')):
             self.table.setHorizontalHeaderItem(column,QTableWidgetItem(caption))
@@ -53,20 +57,43 @@ class TechnicianSatDialog(WarehouseBatchDialog):
             duration, incident, reason = QLineEdit(), QLineEdit(), QLineEdit()
             duration.setPlaceholderText('Ejemplo: 0,5')
             incident.setPlaceholderText('Número o stock')
-            reason.setPlaceholderText('Se consultará la avería en Maximo')
+            cached = get_fault_description(item.ot)
+            self._cached_reasons[item.ot] = bool(cached) or fault_description_checked(item.ot)
+            reason.setText(cached)
+            reason.setPlaceholderText('Escribe el motivo del envío' if self._cached_reasons[item.ot] else 'Se consultará la avería si no está en MD')
             reason.setMinimumWidth(200)
             self.inputs[item.ot] = {'duration':duration,'incident':incident,'reason':reason}
             self.details_inputs[item.ot] = reason
+            for key, field in self.inputs[item.ot].items():
+                field.textEdited.connect(lambda _text, ot=item.ot, name=key: self._edited_fields.add((ot,name)))
+                field.textChanged.connect(lambda _text, control=field: self._field_tooltip(control))
+                self._field_tooltip(field)
+            equipment = self.table.item(row,1)
+            equipment.setText(f"N/S: {item.serial or 'Sin indicar'}\n{item.equipment}")
+            for column in range(6):
+                cell = self.table.item(row,column)
+                if cell is not None:cell.setToolTip(cell.text())
             for column, field in zip((6,7,8),(duration,incident,reason)):
                 self.table.setCellWidget(row,column,field)
         # During review, show editable inputs rather than empty report columns.
         for column in (3,4,5):
             self.table.setColumnHidden(column,True)
         header = self.table.horizontalHeader()
-        for column,width in ((0,80),(1,240),(2,90),(6,90),(7,170)):
-            header.setSectionResizeMode(column,QHeaderView.Fixed)
+        for column,width in ((0,85),(1,280),(2,115),(6,115),(7,190)):
+            header.setSectionResizeMode(column,QHeaderView.Interactive)
             self.table.setColumnWidth(column,width)
-        header.setSectionResizeMode(8,QHeaderView.Stretch)
+        header.setSectionResizeMode(8,QHeaderView.Interactive)
+        self.table.setColumnWidth(8,420)
+        header.setMinimumSectionSize(65)
+        self.table.setWordWrap(True)
+        self.table.itemChanged.connect(lambda item: item.setToolTip(item.text())
+            if item.toolTip()!=item.text() else None)
+        vertical = self.table.verticalHeader()
+        vertical.setVisible(True)
+        vertical.setSectionResizeMode(QHeaderView.Interactive)
+        vertical.setMinimumSectionSize(42)
+        vertical.setDefaultSectionSize(68)
+        for row in range(self.table.rowCount()):self.table.setRowHeight(row,68)
         self.anomaly_label = QLabel('Combinación de anomalías para este lote')
         self.failure_picker = FailurePathPicker()
         if selection is not None:
@@ -83,10 +110,17 @@ class TechnicianSatDialog(WarehouseBatchDialog):
         self.start_button.setEnabled(False)
         self.start_button.setText('Consultar datos antes de enviar')
         self.steps.setText('Consultar → Revisar → Preparar anomalías, horas e incidencia → Enviar → Verificar')
-        self.current_step.setText('Se consultarán las OTs sin modificarlas para proponer el motivo y las horas actuales.')
+        self.current_step.setText('Motivo propuesto desde MD cuando esté disponible. Se validarán estado, equipo y horas en Maximo, sin modificar las OTs.')
         self.resize(1250,780)
         if autoload:
             QTimer.singleShot(0,self,self.start_preview)
+
+    @staticmethod
+    def _field_tooltip(field):
+        current = field.text()
+        proposed = field.property('preview_value')
+        origin = field.property('preview_origin') or 'Maximo'
+        field.setToolTip(current + (f'\n\nPropuesta ({origin}): {proposed}' if proposed is not None else ''))
 
     def start_preview(self):
         if self._preview_closed or self.is_running():
@@ -104,6 +138,7 @@ class TechnicianSatDialog(WarehouseBatchDialog):
         self._preview_worker.start()
 
     def _defaults_ready(self, data):
+        if self._preview_closed:return
         if self._preview_worker is not None and self._preview_worker.stop_requested.is_set():
             self.current_step.setText('Consulta detenida. No se ha enviado ninguna OT.')
             return
@@ -116,10 +151,12 @@ class TechnicianSatDialog(WarehouseBatchDialog):
             defaults = data[item.ot]
             fields = self.inputs[item.ot]
             for key in ('duration','reason','incident'):
-                if not fields[key].text():
+                if not fields[key].text() and (item.ot,key) not in self._edited_fields:
                     fields[key].setText(defaults.get(key,''))
                 if defaults.get(key) is not None:
-                    fields[key].setToolTip('Valor actual en Maximo: '+str(defaults[key]))
+                    fields[key].setProperty('preview_value',str(defaults[key]))
+                    fields[key].setProperty('preview_origin','MD' if key=='reason' and self._cached_reasons[item.ot] else 'Maximo')
+                    self._field_tooltip(fields[key])
             self.table.item(row,3).setText('Datos consultados')
             self.table.item(row,5).setText('Estado real: '+defaults['status'])
         self.start_button.setEnabled(self._preview_complete)
@@ -130,6 +167,7 @@ class TechnicianSatDialog(WarehouseBatchDialog):
             self.current_step.setText(('Reintento: revisa la petición recuperada. Los valores actuales de Maximo aparecen al situarte sobre los campos. ' if self.retry_records else '')+'Completa horas e incidencia por OT y revisa el motivo.')
 
     def _preview_failed(self, message):
+        if self._preview_closed:return
         self.current_step.setText('No se pudieron consultar los datos: '+message)
         self.start_button.setEnabled(False)
 
@@ -167,16 +205,19 @@ class TechnicianSatDialog(WarehouseBatchDialog):
             self.table.setColumnHidden(column,True)
         header = self.table.horizontalHeader()
         for column in range(5):
-            header.setSectionResizeMode(column,QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(column,QHeaderView.Interactive)
         header.setSectionResizeMode(5,QHeaderView.Stretch)
         super()._launch_worker(recoveries)
 
     def closeEvent(self,event):
+        if cancel_readonly_preview(self,self._preview_worker):
+            event.accept();return
         if not self.is_running():
             self._preview_closed = True
         super().closeEvent(event)
 
     def reject(self):
+        if cancel_readonly_preview(self,self._preview_worker):return
         if not self.is_running():
             self._preview_closed = True
         super().reject()

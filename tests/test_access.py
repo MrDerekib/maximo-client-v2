@@ -175,7 +175,7 @@ class AccessTests(unittest.TestCase):
                      patch.object(client, "wait_for", side_effect=lambda d, condition, *_a, **_k: condition(d)):
                     session = client.open_ot("4384025", close_after_direct_print=requested)
                 self.assertIs(session[0], driver)
-                driver.execute_script.assert_called_once_with(
+                driver.execute_script.assert_any_call(
                     "window.sessionStorage.setItem('maximoDesktop.closeReportTabs', "
                     "arguments[0] ? 'true' : 'false');", expected)
 

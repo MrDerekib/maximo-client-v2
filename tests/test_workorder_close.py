@@ -439,6 +439,28 @@ class BrowserCloseTests(TestCase):
         self.assertEqual([e[0] for e in self.state()['events']].count('confirm-close'),1)
         self.assertEqual(self.state()['routes'],1)
 
+    def test_replaced_accept_becomes_enabled_after_choice_validation(self):
+        def redraw():
+            self.browser.execute_script("""
+                const old=document.querySelector('#inputwf-dialog_inner button');
+                const live=old.cloneNode(true);
+                live.disabled=true;
+                old.replaceWith(live);
+                setTimeout(()=>{live.disabled=false},350);
+            """)
+        with patch.object(self.closer,'before_route_accept',side_effect=redraw):
+            self.assertEqual(self.closer.route_close(),'ISSUE')
+        self.assertEqual(self.state()['events'].count(['confirm-close']),1)
+
+    def test_close_dialog_still_open_reports_pending_exit(self):
+        self.browser.execute_script("""
+            window.confirmClose=()=>{state.events.push(['confirm-close']);persist()};
+        """)
+        with self.assertRaisesRegex(RuntimeError,'INPRG.*salida está pendiente'):
+            self.closer.route_close()
+        self.assertEqual(self.state()['events'].count(['confirm-close']),1)
+        self.assertEqual(self.state()['routes'],1)
+
     def test_stale_after_final_accept_checks_result_without_replaying(self):
         original=WebElement.click
         def clicked(element):

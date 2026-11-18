@@ -22,6 +22,7 @@
       ],
       "js": [
         "workflow_logic.js",
+        "report_stamp.js",
         "content.js",
         "panel_content.js"
       ],

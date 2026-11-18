@@ -80,3 +80,69 @@ class UpdateStatusTests(TestCase):
                 'Abriendo listado de OTs','Esperando exportación y descarga del listado',
                 'Preparando archivo descargado','Procesando listado descargado',
                 'Guardando cambios en la base de datos','Finalizando actualización'])
+
+
+class GenericTaskStatusTests(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app=QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.bar=UpdateStatusBar();self.addCleanup(self.bar.deleteLater)
+
+    def event(self,kind,ident='reading',label='Información ampliada'):
+        self.bar.handle_job_event({'kind':kind,'id':ident,'label':label})
+
+    def test_settings_notice_restores_latest_progress_of_running_task(self):
+        self.event('started')
+        self.bar.showMessage('Lectura 1/10 · OT 100')
+        self.bar.showMessage('Configuración guardada y aplicada',20)
+        self.bar.showMessage('Lectura 2/10 · OT 200')
+        self.assertEqual(self.bar.currentMessage(),'Configuración guardada y aplicada')
+        QTest.qWait(80)
+        self.assertEqual(self.bar.currentMessage(),'Lectura 2/10 · OT 200')
+
+    def test_generic_job_without_explicit_progress_returns_with_elapsed_time(self):
+        self.event('started',label='Conciliación de OTs')
+        self.bar.showMessage('Búsqueda guardada',20)
+        QTest.qWait(80)
+        self.assertIn('Conciliación de OTs',self.bar.currentMessage())
+        self.assertIn('transcurridos',self.bar.currentMessage())
+        self.assertTrue(self.bar._timer.isActive())
+
+    def test_job_finishing_during_notice_is_never_restored(self):
+        self.event('started')
+        self.bar.showMessage('Leyendo OT 100')
+        self.bar.showMessage('Configuración guardada',20)
+        self.event('finished')
+        QTest.qWait(80)
+        self.assertEqual(self.bar.currentMessage(),'')
+        self.assertFalse(self.bar._timer.isActive())
+
+    def test_finished_job_result_replaces_progress_under_temporary_notice(self):
+        self.event('started')
+        self.bar.showMessage('Configuración guardada',20)
+        self.event('finished')
+        self.bar.showMessage('Información ampliada: 10 campos completados')
+        QTest.qWait(80)
+        self.assertEqual(self.bar.currentMessage(),'Información ampliada: 10 campos completados')
+
+    def test_priority_job_finishes_then_resumed_job_returns_after_notice(self):
+        self.event('started','background','Conciliación de OTs')
+        self.bar.showMessage('Conciliación 2/10')
+        self.event('paused','background','Conciliación de OTs')
+        self.event('started','manual','Actualizar avería')
+        self.bar.showMessage('Actualizando avería 1/2')
+        self.bar.showMessage('Configuración guardada',20)
+        self.event('finished','manual','Actualizar avería')
+        self.event('resumed','background','Conciliación de OTs')
+        QTest.qWait(80)
+        self.assertEqual(self.bar.currentMessage(),'Conciliación 2/10')
+        self.event('finished','background','Conciliación de OTs')
+        self.assertNotIn('Conciliación 2/10',self.bar.currentMessage())
+
+    def test_idle_summary_survives_temporary_notice(self):
+        self.bar.showMessage('Última sincronización: completada')
+        self.bar.showMessage('Configuración guardada',20)
+        QTest.qWait(80)
+        self.assertEqual(self.bar.currentMessage(),'Última sincronización: completada')

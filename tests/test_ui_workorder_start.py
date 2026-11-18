@@ -98,6 +98,7 @@ class WorkorderStartUiTests(TestCase):
     def test_desktop_context_menu_only_opens_workorders_and_does_not_start_them(self):
         ui = window()
         ui.table = Mock()
+        ui._workorder_selector = Mock()
         ui.table.indexAt.return_value.row.return_value = 0
         ui.table.indexAt.return_value.column.return_value = 1
         ui.table.item.side_effect = lambda row,col: SimpleNamespace(text=lambda: 'APPR' if col==7 else 'Activo')

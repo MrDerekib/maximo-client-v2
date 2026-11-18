@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_paths import LOG_DIR
+from rounded_table import RoundedTableFrame
 from warehouse import ACTIONS, RECEIPT_ACTIONS, STEPS, WarehouseItem, WarehouseResult, freeze_items
 from warehouse_diagnostics import log_exception, sanitize
 from warehouse_recovery import RecoveryStore, recovery_item, preparation_retry_allowed
@@ -151,7 +152,7 @@ class WarehouseBatchDialog(QDialog):
         self.setMinimumSize(760, 520)
         layout = QVBoxLayout(self)
         title = QLabel(f'{ACTIONS[action].label} · {len(self.items)} OT')
-        title.setStyleSheet('font-size: 20px; font-weight: 600')
+        title.setObjectName('dialogTitle')
         layout.addWidget(title)
         banner = QLabel('Se ejecutarán operaciones reales con la cuenta de almacén. '
                         'Revisa la acción y las OTs antes de confirmar. Se comprobará su estado en Maximo.')
@@ -181,7 +182,8 @@ class WarehouseBatchDialog(QDialog):
                     font = cell.font(); font.setUnderline(True); cell.setFont(font)
                     cell.setToolTip('Abrir esta OT en Edge para revisión manual. No ejecuta ninguna operación.')
                 self.table.setItem(index, column, cell)
-        layout.addWidget(self.table, 1)
+        self.table_frame = RoundedTableFrame(self.table, self)
+        layout.addWidget(self.table_frame, 1)
         if not recovery_only and ask_sat_details and action in ('receive_sat_internal', 'receive_sat_external'):
             self.table.setColumnCount(7)
             self.table.setHorizontalHeaderItem(6, QTableWidgetItem('Detalles SAT (opcional)'))
@@ -433,7 +435,8 @@ class WarehouseWindowMixin:
     """Small integration surface so warehouse work can be discarded independently."""
     def warehouse_items(self):
         table = self.table
-        rows = sorted({index.row() for index in table.selectionModel().selectedRows()})
+        from workorder_selection import action_rows
+        rows = action_rows(table)
         def text(row, column):
             cell = table.item(row, column)
             return cell.text().strip() if cell else ''
@@ -473,7 +476,7 @@ class WarehouseWindowMixin:
         if not getattr(self.cfg, 'warehouse_enabled', False) or getattr(self, '_closing', False):
             return
         dialogs = getattr(self, '_warehouse_dialogs', [])
-        active = next((dialog for dialog in dialogs if dialog.is_running()), None)
+        active = next((dialog for dialog in dialogs if dialog.is_running() and not getattr(dialog,'_preview_closed',False)), None)
         if active is not None:
             active.show(); active.raise_(); active.activateWindow()
             return
@@ -550,7 +553,7 @@ class WarehouseWindowMixin:
     def open_repair_completion(self,item,default_action='discard'):
         if not getattr(self.cfg,'workorder_close_enabled',False) or getattr(self,'_closing',False):return
         dialogs=getattr(self,'_warehouse_dialogs',[])
-        active=next((d for d in dialogs if d.is_running()),None)
+        active=next((d for d in dialogs if d.is_running() and not getattr(d,'_preview_closed',False)),None)
         if active:active.show();active.raise_();return
         from technician_repair_ui import RepairDialog
         dialog=RepairDialog(item,self.cfg.workorder_start_selection,self,default_action=default_action)
@@ -562,7 +565,7 @@ class WarehouseWindowMixin:
         if not getattr(self.cfg, 'technician_sat_enabled', False) or getattr(self, '_closing', False):
             return
         dialogs = getattr(self, '_warehouse_dialogs', [])
-        active = next((d for d in dialogs if d.is_running()), None)
+        active = next((d for d in dialogs if d.is_running() and not getattr(d,'_preview_closed',False)), None)
         if active:
             active.show(); active.raise_(); active.activateWindow(); return
         from technician_sat_ui import TechnicianSatDialog

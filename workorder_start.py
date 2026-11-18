@@ -149,9 +149,9 @@ class WorkorderStarter:
             logging.exception("No se pudo registrar la incidencia de anomalías de la OT %s", self.ot)
             return None
 
-    def wait(self, condition, description):
+    def wait(self, condition, description, *, timeout=None):
         try:
-            return WebDriverWait(self.driver, self.timeout, poll_frequency=0.25,
+            return WebDriverWait(self.driver, self.timeout if timeout is None else timeout, poll_frequency=0.25,
                                  ignored_exceptions=(StaleElementReferenceException,)).until(condition)
         except TimeoutException as exc:
             raise RuntimeError(f"Tiempo agotado: {description}. No se continuará el {self.operation} de la OT.") from exc
