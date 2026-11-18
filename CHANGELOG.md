@@ -90,6 +90,9 @@ En esta actualización nos centramos en mejorar la interfaz de Maximo Desktop: m
 
 ### Actualización del listado · Todos los roles
 
+- Las OTs no activas cuyo último seguimiento es DAR SALIDA o ISSUE vuelven a
+  entrar en conciliación para consultar su estado real. Desaparecer del listado
+  no se interpreta automáticamente como CLOSE; se respeta el estado que devuelve Maximo.
 - Si la pestaña de Edge falla con «tab crashed» al descargar el listado,
   se realiza un único reintento con una sesión limpia y se informa del avance.
 - Si tampoco se obtiene una descarga válida, la actualización se detiene antes

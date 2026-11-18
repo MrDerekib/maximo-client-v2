@@ -465,16 +465,20 @@ def delete_all_inactive_records() -> int:
     return deleted
 
 
-INACTIVE_RECONCILIATION_TRACKING = ("PDTE CONFIRMAR", "EN TALLER", "APPR", "INPRG")
+# Local start/repair transitions must never overwrite a later warehouse state.
+_REPAIR_PREPARATION_TRACKING = ("PDTE CONFIRMAR", "EN TALLER", "APPR", "INPRG")
+# ISSUE/DAR SALIDA are not terminal: after disappearing from the export they
+# still need a read of Maximo, just like pending/in-progress historical OTs.
+INACTIVE_RECONCILIATION_TRACKING = (*_REPAIR_PREPARATION_TRACKING, "DAR SALIDA", "ISSUE")
 
 
 def apply_started_workorder(ot: str) -> bool:
     """Reflect a confirmed start without overwriting a later local lifecycle state."""
     with closing(get_connection()) as connection:
-        placeholders = ", ".join("?" for _ in INACTIVE_RECONCILIATION_TRACKING)
+        placeholders = ", ".join("?" for _ in _REPAIR_PREPARATION_TRACKING)
         cursor = connection.execute(
             f"UPDATE maximo SET Seguimiento = ? WHERE OT = ? AND Seguimiento IN ({placeholders})",
-            ("INPRG", ot, *INACTIVE_RECONCILIATION_TRACKING),
+            ("INPRG", ot, *_REPAIR_PREPARATION_TRACKING),
         )
         connection.commit()
         return cursor.rowcount == 1
@@ -483,10 +487,10 @@ def apply_started_workorder(ot: str) -> bool:
 def apply_closed_repair(ot: str) -> bool:
     """Reflect a confirmed repair release; never overwrite a later warehouse CLOSE."""
     with closing(get_connection()) as connection:
-        placeholders = ", ".join("?" for _ in INACTIVE_RECONCILIATION_TRACKING)
+        placeholders = ", ".join("?" for _ in _REPAIR_PREPARATION_TRACKING)
         cursor = connection.execute(
             f"UPDATE maximo SET Seguimiento = ? WHERE OT = ? AND Seguimiento IN ({placeholders})",
-            ("ISSUE", ot, *INACTIVE_RECONCILIATION_TRACKING),
+            ("ISSUE", ot, *_REPAIR_PREPARATION_TRACKING),
         )
         connection.commit()
         return cursor.rowcount == 1
