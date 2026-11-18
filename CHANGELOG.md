@@ -4,6 +4,8 @@
 
 ### Correcciones
 
+- Los avisos temporales, como «Configuración guardada y aplicada», devuelven después
+  el progreso más reciente de la tarea en curso. Las tareas terminadas no reaparecen.
 - Las lecturas automáticas de avería y descripción ampliada dejan fuera los campos
   comprobados correctamente, incluso vacíos, y respetan las 24 horas entre intentos fallidos.
   El menú contextual permite volver a consultar ambos campos de las OTs seleccionadas,
