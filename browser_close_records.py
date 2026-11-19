@@ -7,6 +7,7 @@ from technician_repair import RepairPreparer, RepairEntry
 from technician_sat import format_incident
 from workorder_start import normalized
 from workorder_close import actual_datetime
+from worklog_details import details_match
 
 
 class BrowserRecordReader(RepairPreparer):
@@ -29,7 +30,7 @@ class BrowserRecordReader(RepairPreparer):
         if before is None:before=self.read_records()
         existing=[row for row in before['entries'] if normalized(row['type'])=='clientnote' and normalized(row['summary'])==normalized(entry.summary)]
         if existing:
-            if any(row['details'].strip()!=entry.details.strip() for row in existing):
+            if any(not details_match(entry.details,row['details']) for row in existing):
                 raise RuntimeError('El resumen ya existe con otros detalles. No se sobrescribirá.')
             return
         self.require_approved()
@@ -186,7 +187,7 @@ def validate_record_approval(approval, records, anomalies):
         seen.add(key)
         existing=[row for row in records['entries'] if normalized(row['type'])=='clientnote' and normalized(row['summary'])==key]
         if existing:
-            if any(row['details'].strip()!=details for row in existing):
+            if any(not details_match(details,row['details']) for row in existing):
                 raise ValueError('Ese resumen ya existe con otros detalles. No se sobrescribirá el Registro.')
             matched_activity = True
             continue  # Exact existing entry: no duplicate on a retry.
@@ -236,7 +237,7 @@ def verify_browser_closed_records(closer, pending, status):
     if any(actual[key]<count for key,count in expected.items()):
         raise RuntimeError('El flujo finalizó, pero cambió una entrada existente. Revisa Registro; no se repetirá el cierre.')
     for entry in pending['expected_entries']:
-        if not any(row['summary']==entry['summary'] and row['details']==entry['details']
+        if not any(row['summary']==entry['summary'] and details_match(entry['details'],row['details'])
                    and normalized(row['type'])=='clientnote' for row in records['entries']):
             raise RuntimeError('El flujo finalizó, pero no se confirmaron todos los trabajos. Revisa Registro; no se repetirá el cierre.')
     logging.info('OT %s: Registro confirmado tras el enrutado; %s trabajos nuevos, sin guardados intermedios',

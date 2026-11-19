@@ -1,6 +1,7 @@
 """Reviewed repair completion, shared by normal closure and irreparable assets."""
 from dataclasses import dataclass, asdict
 from worklog_limits import validate_worklog_summary
+from worklog_details import details_match
 from datetime import datetime, timedelta
 from copy import deepcopy
 from threading import Event
@@ -163,9 +164,20 @@ class RepairPreparer(TechnicianSatPreparer):
         marker=self.response_sequence()
         try:
             self.driver.switch_to.frame(frames[0]);body=self.driver.find_element(By.ID,'dijitEditorBody')
-            if text is None:return body.text.strip()
-            body.click();body.send_keys(Keys.CONTROL,'a');body.send_keys(text,Keys.TAB)
-            if body.text.strip()!=text.strip():raise RuntimeError('El editor no contiene los detalles revisados.')
+            if text is None:return body.get_property('innerText').strip()
+            body.click();body.send_keys(Keys.CONTROL,'a')
+            # Insert plain text in one native browser input operation. Typing an
+            # Excel tab with send_keys navigates focus instead of inserting text.
+            # Never replay this insertion or fall back to typing after uncertainty.
+            self.driver.execute_cdp_cmd('Input.insertText',{'text':text})
+            actual=body.get_property('innerText')
+            if not details_match(text,actual):
+                logging.error('OT %s: Detalles no coinciden antes de validar; esperados_chars=%s; leidos_chars=%s; tabulaciones=%s; lineas_esperadas=%s; lineas_leidas=%s',
+                    self.ot,len(text),len(actual),text.count('\t'),len(text.splitlines()),len(actual.splitlines()))
+                raise RuntimeError('El editor no contiene todos los detalles revisados. No se continuará el cierre.')
+            body.send_keys(Keys.TAB)  # A single explicit blur validates the complete text.
+            logging.info('OT %s: Detalles insertados y comprobados; caracteres=%s; tabulaciones=%s; lineas=%s',
+                self.ot,len(text),text.count('\t'),len(text.splitlines()))
         finally:self.driver.switch_to.default_content()
         self.wait(lambda _:self.response_sequence()>marker,'validación de detalles del registro')
         self.require_approved()
@@ -174,21 +186,21 @@ class RepairPreparer(TechnicianSatPreparer):
         if self.active_status not in ('APPR','INPRG'):
             raise RuntimeError('No se permite añadir registros después de finalizar la reparación.')
         if self.open_entry(entry):
-            if self.details()!=entry.details.strip():
+            if not details_match(entry.details,self.details()):
                 raise RuntimeError('El resumen ya existe con otros detalles; revísalo antes de continuar.')
             return
         self.ensure_incident(entry.summary)
         self.wait(lambda _:self.value('Resumen')==entry.summary,'nueva entrada de registro')
         if entry.details:self.details(entry.details)
         self.idle();self.require_approved()
-        if self.value('Resumen')!=entry.summary or self.details()!=entry.details.strip():
+        if self.value('Resumen')!=entry.summary or not details_match(entry.details,self.details()):
             raise RuntimeError('Maximo no validó la entrada de Registro. No se continuará el proceso.')
         logging.info('OT %s: Registro validado sin Guardar; pendiente del enrutado',self.ot)
 
     def verify_entries(self, entries):
         """Read-only confirmation after the workflow committed its drafts."""
         for entry in entries:
-            if not self.open_entry(entry) or self.details()!=entry.details.strip():
+            if not self.open_entry(entry) or not details_match(entry.details,self.details()):
                 raise RuntimeError('El flujo finalizó, pero no se confirmó todo el Registro; revisa la OT sin repetir la acción.')
 
 

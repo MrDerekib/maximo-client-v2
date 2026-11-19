@@ -130,6 +130,26 @@ class BrowserDynamicCloseTests(TestCase):
         self.assertEqual(self.browser.execute_script('return state.events'),[])
         self.assertEqual(self.browser.execute_script('return state.routes'),0)
 
+    def test_pasted_excel_table_preserves_all_work_before_any_routing(self):
+        from worklog_details import details_match
+        text='Cliente\t0000\nCPU\t\nAVERÍA\t\nAlimentaciones\t\n\t\nCONTROLADORA\t\nAVERÍA\t\nAlimentaciones\t\nCircuito impresora\t\n\t\nFA\t\nPREVENTIVO\t\n\t\nMECÁNICA\tCONCEPTO\nImpresora\tSUSTITUCIÓN\nZumbador\tAJUSTE AVERÍA\nNotas:\t\nRecordatorio de prueba\t\nSegunda línea\t\nÚltima línea'
+        self.browser.execute_script("state.logs=[];persist();render('main')")
+        dialog=self.prepare()
+        dialog.find_element(By.NAME,'reference').send_keys('stock')
+        dialog.find_element(By.NAME,'addEntry').click()
+        row=dialog.find_element(By.CSS_SELECTOR,'.close-new-entry')
+        row.find_element(By.TAG_NAME,'input').send_keys('Reparación')
+        self.browser.execute_script("arguments[0].value=arguments[1];arguments[0].dispatchEvent(new Event('input',{bubbles:true}))",row.find_element(By.TAG_NAME,'textarea'),text)
+        dialog.find_element(By.NAME,'confirm').click()
+        request=self.browser.execute_script('return JSON.parse(document.documentElement.dataset.maximoCloseOtRequest)')
+        pending=self.browser._maximo_close_review;pending['approved']=True
+        FixtureCloser(self.browser,'4378677').prepare_close(request,pending)
+        logs=self.browser.execute_script('return draft.logs')
+        self.assertEqual([item['summary'] for item in logs],['inc: stock','Reparación'])
+        self.assertTrue(details_match(text,logs[1]['details']))
+        self.assertEqual(self.browser.execute_script('return state.routes'),0)
+        self.assertFalse(any(event[0]=='save' for event in self.browser.execute_script('return state.events')))
+
     def test_missing_records_are_prepared_without_saving_or_reopening(self):
         self.browser.execute_script("state.logs=[];persist();render('main')")
         dialog=self.prepare();self.assertTrue(dialog.find_element(By.NAME,'confirm').get_property('disabled'))

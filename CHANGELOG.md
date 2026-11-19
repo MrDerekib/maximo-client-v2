@@ -20,6 +20,19 @@
   indica cuando se navega a un mes sin elegir un día y aclara que los cambios se
   aplican con «Aplicar fecha y hora». Cancelar conserva la fecha anterior.
 
+### Detalles de Registro desde Excel · Técnico
+
+- La preparación de reparaciones desde MD y la extensión de Edge inserta el texto
+  completo mediante una operación nativa de entrada. Las tabulaciones copiadas de
+  Excel dejan de actuar como navegación entre controles.
+- La lectura del editor conserva los saltos de línea y las filas vacías. La
+  comparación admite diferencias de espacios y tabulaciones introducidas por el
+  editor, pero rechaza pérdidas de contenido o cambios en el orden de las líneas.
+- La inserción no se repite tras una respuesta incierta. Se registran longitudes,
+  tabulaciones y líneas para diagnóstico sin volcar el texto de la reparación.
+- Esta corrección conserva texto y estructura por líneas; no incorpora todavía
+  pegado de tablas HTML ni preservación del formato visual de Excel.
+
 ## 1.4.1 — Consultas más eficientes y mejoras del listado
 
 ### Resumen
