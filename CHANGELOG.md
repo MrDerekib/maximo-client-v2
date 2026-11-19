@@ -13,6 +13,13 @@
 - Los enlaces existentes siguen abriendo Edge. Las nuevas opciones requieren una
   versión de MD compatible; la build publicada 1.4.1 todavía no las interpreta.
 
+### Calendarios y revisión · Técnico
+
+- Día seleccionado con resaltado de mayor contraste en todos los temas.
+- El selector de reparación muestra la fecha y hora elegidas mientras se edita,
+  indica cuando se navega a un mes sin elegir un día y aclara que los cambios se
+  aplican con «Aplicar fecha y hora». Cancelar conserva la fecha anterior.
+
 ## 1.4.1 — Consultas más eficientes y mejoras del listado
 
 ### Resumen
