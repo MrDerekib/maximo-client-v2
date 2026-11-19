@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 from selenium import webdriver
 from selenium.webdriver.edge.options import Options
 from failure_catalog import default_selection,resolve_selection
-from technician_repair import RepairPreparer,RepairCloser,RepairEntry,reviewed_repair,run_repair
+from technician_repair import RepairPreparer,RepairCloser,RepairEntry,reviewed_repair,run_repair,inspect_repair_recovery,repair_plan_from_record
 from warehouse import WarehouseItem
 from warehouse_recovery import RecoveryStore
 from tests.test_support import temporary_directory
@@ -115,6 +115,30 @@ class RepairInPlaceBrowserTests(TestCase):
                 self.assertEqual([r['summary'] for r in data['logs']],['inc: stock','Prueba','Inspección'])
                 self.assertEqual(data['duration'],'1');self.assertEqual(data['end'],'2026-10-26T11:00:00')
                 self.assertEqual(session.readbacks,1);self.assertTrue(session.closed)
+
+    def test_start_timeout_then_continue_closes_once_without_duplicate_worklogs(self):
+        self.browser.get(FIXTURE)
+        self.browser.execute_script("resetState({status:'APPR',logs:[],duration:'',end:'',resultStatus:'ISSUE'})")
+        with temporary_directory() as folder:
+            store=RecoveryStore(Path(folder));plan=self.plan('close');session=FixtureSession(self.browser)
+            original=FixturePreparer.run
+            def delayed_start(preparer,*args,**kwargs):
+                original(preparer,*args,**kwargs)
+                raise TimeoutError('Respuesta a iniciar perdida después del cambio a INPRG')
+            with patch('technician_repair.RepairPreparer',FixturePreparer),patch('technician_repair.RepairCloser',FixtureRepairCloser):
+                with patch.object(FixturePreparer,'run',delayed_start),self.assertLogs(level='ERROR'),self.assertRaises(TimeoutError):
+                    run_repair(plan,session_factory=lambda:session,store=store)
+                record=store.get(plan.item.ot);operation=record['operation_id']
+                assessment=inspect_repair_recovery(record,store=store,session_factory=lambda:FixtureSession(self.browser))
+                self.assertEqual(assessment['kind'],'resume');self.assertEqual(assessment['state'],'INPRG')
+                result=run_repair(repair_plan_from_record(record),store=store,session_factory=lambda:FixtureSession(self.browser),
+                    retry_record={**record,'resume_state':assessment['state']})
+            data=self.browser.execute_script('return state')
+            self.assertEqual(result['status'],'ISSUE');self.assertEqual(result['operation_id'],operation)
+            self.assertEqual(sum(e[0]=='confirm-start' for e in data['events']),1)
+            self.assertEqual(sum(e[0]=='confirm-close' for e in data['events']),1)
+            self.assertEqual([r['summary'] for r in data['logs']],['inc: stock','Prueba','Inspección'])
+            self.assertFalse(any(e[0]=='save' for e in data['events']))
 
     def test_missing_committed_worklog_stops_without_repeating_route(self):
         self.browser.get(FIXTURE)

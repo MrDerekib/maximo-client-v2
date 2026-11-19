@@ -10,7 +10,7 @@ from failure_picker import FailurePathPicker
 from preview_lifecycle import cancel_readonly_preview
 from rounded_table import RoundedTableFrame
 from worklog_limits import WORKLOG_SUMMARY_MAX_LENGTH,summary_length
-from technician_repair import reviewed_repair,run_repair,RepairPreparer
+from technician_repair import reviewed_repair,run_repair,RepairPreparer,inspect_repair_recovery,repair_plan_from_record
 from warehouse_transport import WarehouseSession
 from warehouse_recovery import RecoveryStore, repair_retry_allowed
 from warehouse import WarehouseResult
@@ -106,7 +106,7 @@ class RepairProgressDialog(QDialog):
         self.bar=QProgressBar();self.bar.setRange(0,len(self.STAGES));self.bar.setValue(0);layout.addWidget(self.bar)
         self.print_status=QLabel('El parte se solicitará únicamente tras verificar la operación.');self.print_status.setWordWrap(True);layout.addWidget(self.print_status)
         buttons=QHBoxLayout();self.stop_button=QPushButton('Detener antes de confirmar');self.stop_button.clicked.connect(self.stop)
-        self.review_button=QPushButton('Ver datos revisados');self.review_button.clicked.connect(owner.show)
+        self.review_button=QPushButton('Ver datos revisados');self.review_button.clicked.connect(owner.show_reviewed_data)
         self.print_button=QPushButton('Preparar impresión del parte');self.print_button.setEnabled(False);self.print_button.clicked.connect(lambda:owner.retry_print.click())
         self.close_button=QPushButton('Cerrar');self.close_button.setEnabled(False);self.close_button.clicked.connect(self.close)
         for button in (self.stop_button,self.review_button,self.print_button,self.close_button):buttons.addWidget(button)
@@ -115,8 +115,8 @@ class RepairProgressDialog(QDialog):
         self.recheck_button=QPushButton('Reverificar resultado')
         self.recheck_button.setToolTip('Consulta estado, identidad, historial y datos sin ejecutar Enrutar ni Aceptar.')
         self.recheck_button.clicked.connect(owner.recheck_repair)
-        self.retry_button=QPushButton('Revisar y reintentar…')
-        self.retry_button.clicked.connect(owner.review_retry)
+        self.retry_button=QPushButton('Comprobar y continuar…')
+        self.retry_button.clicked.connect(owner.continue_repair)
         self.recheck_button.setEnabled(False);self.retry_button.setEnabled(False)
         recovery_buttons.addWidget(self.recheck_button);recovery_buttons.addWidget(self.retry_button);recovery_buttons.addStretch()
         layout.addLayout(recovery_buttons)
@@ -141,9 +141,15 @@ class RepairProgressDialog(QDialog):
             return
         self.recheck_button.setEnabled(bool(record))
         safe=self.has_failed and not self.owner._verified and (record is None or repair_retry_allowed(record))
+        assessment=getattr(self.owner,'_resume_assessment',None)
+        ready=bool(safe and record and assessment and assessment.get('kind')=='resume'
+                   and assessment.get('operation_id')==record['operation_id'])
         self.retry_button.setEnabled(bool(safe))
-        self.retry_button.setToolTip('Reabre tus datos y pide una nueva confirmación.' if safe else
-            'El cierre ya pudo enviarse. Usa Reverificar; no se repetirá una confirmación incierta.')
+        label='Continuar desecho…' if record and record['action']=='technician_discard' else 'Continuar cierre…'
+        self.retry_button.setText(label if ready else 'Comprobar y continuar…')
+        self.recheck_button.setText('Comprobar estado actual' if record and repair_retry_allowed(record) else 'Reverificar resultado')
+        self.retry_button.setToolTip('Consulta el punto real de recuperación y pide confirmación antes de continuar.' if safe else
+            'La acción final ya pudo enviarse. Solo se permite comprobar el resultado; no se reenviará.')
 
     def completed_row(self,index):
         cell=self.table.item(index,1);cell.setText('Completado');cell.setIcon(self.style().standardIcon(QStyle.SP_DialogApplyButton))
@@ -178,7 +184,7 @@ class RepairProgressDialog(QDialog):
         if self.current>=0:
             cell=self.table.item(self.current,1);cell.setText('Revisar resultado');cell.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxWarning))
         self.stop_button.setEnabled(False)
-        self.print_status.setText('Usa Reverificar para consultar sin repetir. Reintentar solo estará habilitado si no se pudo enviar la acción final.')
+        self.print_status.setText('Comprobar y continuar consulta el paso pendiente. La continuación pide confirmación; una acción final incierta solo se reverifica.')
 
     def worker_finished(self):
         self.close_button.setEnabled(True);self.stop_button.setEnabled(False)
@@ -236,10 +242,18 @@ class RepairRecheckWorker(QThread):
             batch='repair-recheck-'+uuid4().hex
             with (folder/(batch+'-events.jsonl')).open('a',encoding='utf-8') as stream:
                 journal=WarehouseJournal(stream,batch)
-                results=reverify_pending([self.record],recovery_store=RecoveryStore(folder),
-                    stop=self.stop_requested,progress=lambda i,row:self.progress.emit(row.step+': '+row.detail),
-                    journal=journal,job_waiting=self.progress.emit,job_cancel_event=self.stop_requested)
-            self.ready.emit(results[0])
+                assessment=None
+                if repair_retry_allowed(self.record):
+                    assessment=inspect_repair_recovery(self.record,store=RecoveryStore(folder),stop=self.stop_requested,
+                        journal=journal,job_waiting=self.progress.emit,job_cancel_event=self.stop_requested)
+                if assessment and assessment['kind']!='verify_final':
+                    result=assessment
+                else:
+                    results=reverify_pending([self.record],recovery_store=RecoveryStore(folder),
+                        stop=self.stop_requested,progress=lambda i,row:self.progress.emit(row.step+': '+row.detail),
+                        journal=journal,job_waiting=self.progress.emit,job_cancel_event=self.stop_requested)
+                    result=results[0]
+            self.ready.emit(result)
         except Exception as exc:
             logging.exception('Error de reverificación de reparación sin reenviar')
             self.failed.emit(str(exc))
@@ -339,6 +353,7 @@ class RepairDialog(QDialog):
         if default_action not in ('close','discard'):raise ValueError('Acción de reparación no válida.')
         super().__init__(parent);self.item=item;self._worker=None;self._reviewed=False;self._verified=None;self.progress_dialog=None;self._retry_record=None
         self._preview_closed=False
+        self._resume_assessment=None
         self._preview_edited=set();self._applying_preview=False
         self.setWindowTitle('Finalizar reparación · OT '+item.ot)
         self.setObjectName('repairReview')
@@ -438,6 +453,7 @@ class RepairDialog(QDialog):
         self._worker.ready.connect(self.preview_ready if plan is None else self.finished_repair)
         self._worker.failed.connect(self.failed)
         if plan is not None:
+            self._resume_assessment=None
             if self.progress_dialog is None:self.progress_dialog=RepairProgressDialog(self)
             else:self.progress_dialog.reset()
             self._worker.stage.connect(self.progress_dialog.set_stage)
@@ -454,6 +470,7 @@ class RepairDialog(QDialog):
             if not record:raise RuntimeError('No hay una operación pendiente para esta OT.')
             if record['action'] not in ('technician_close','technician_discard'):
                 raise RuntimeError('La operación pendiente pertenece a otro proceso.')
+            self._resume_assessment=None
             self._worker=RepairRecheckWorker(record,self)
             self._worker.progress.connect(self.progress_message)
             self._worker.ready.connect(self.recheck_ready)
@@ -462,7 +479,10 @@ class RepairDialog(QDialog):
             self.progress_dialog.recheck_button.setEnabled(False);self.progress_dialog.retry_button.setEnabled(False)
             self.progress_dialog.close_button.setEnabled(False)
             self.progress_dialog.stop_button.setText('Detener comprobación');self.progress_dialog.stop_button.setEnabled(True)
-            self.progress_dialog.set_stage(5,'Reverificando en Maximo sin volver a confirmar…')
+            if repair_retry_allowed(record):
+                self.progress_dialog.message.setText('Comprobando el estado actual para identificar desde dónde continuar…')
+            else:
+                self.progress_dialog.set_stage(5,'Reverificando en Maximo sin volver a confirmar…')
             self.progress_dialog.stop_button.setEnabled(True)
             lock=getattr(self.parent(),'update_lock',None)
             if lock is not None:lock.acquire(False);self._worker.finished.connect(lock.release)
@@ -472,10 +492,56 @@ class RepairDialog(QDialog):
             if self.progress_dialog:self.progress_dialog.refresh_recovery_actions()
 
     def recheck_ready(self,row):
+        if isinstance(row,dict):
+            self._resume_assessment=row
+            self.progress_dialog.has_failed=True
+            self.progress_dialog.message.setText(row['detail'])
+            self.status.setText(row['detail'])
+            if row.get('state')=='INPRG':
+                self.progress_dialog.completed_row(0);self.progress_dialog.completed_row(2)
+                self.progress_dialog.table.item(5,1).setText('Pendiente')
+                self.progress_dialog.table.item(5,1).setIcon(QIcon())
+                self.progress_dialog.bar.setValue(3)
+            self.progress_dialog.print_status.setText('Pulsa Continuar para revisar la confirmación de la acción pendiente.' if row['kind']=='resume' else row['detail'])
+            return
         if row.status=='success':
             self.finished_repair({'ot':self.item.ot,'status':row.verified_status,
                                  'operation_id':row.operation_id,'print_report':False})
         else:self.failed(row.detail or 'El resultado continúa pendiente de verificar. No se ha repetido la acción.')
+
+    def show_reviewed_data(self):
+        if (self.progress_dialog and self.progress_dialog.has_failed and not self.is_running()
+                and repair_retry_allowed(RecoveryStore().get(self.item.ot))):
+            self.review_retry()
+        else:self.show()
+
+    def continue_repair(self):
+        if self.is_running() or self._verified:return
+        try:
+            record=RecoveryStore().get(self.item.ot)
+            if record is None:
+                self.review_retry();return
+            assessment=self._resume_assessment
+            if (not repair_retry_allowed(record) or not assessment or assessment.get('kind')!='resume'
+                    or assessment.get('operation_id')!=record['operation_id']):
+                self._resume_assessment=None;self.recheck_repair();return
+            plan=repair_plan_from_record(record)
+            label='Desechar equipo' if plan.action=='discard' else 'Cerrar OT'
+            prompt=(f"OT {plan.item.ot} · {plan.item.serial}\nEstado comprobado: {assessment['state']}\n"
+                    f"{assessment['detail']}\n\nAcción pendiente: {label}\nIncidencia: {plan.incident_summary}"
+                    f"\nTiempo: {plan.duration} h\nInicio: {plan.start}\nFin: {plan.end}"
+                    f"\nTrabajos: {', '.join(entry.summary for entry in plan.entries)}"
+                    + (f"\nMotivo: {plan.justification}" if plan.action=='discard' else '')
+                    + "\n\nSe comprobarán de nuevo el estado, la identidad y los registros existentes. ¿Continuar?")
+            if QMessageBox.question(self.progress_dialog,'Continuar reparación pendiente',prompt,
+                    QMessageBox.Yes|QMessageBox.No,QMessageBox.No)!=QMessageBox.Yes:return
+            self._retry_record={**record,'resume_state':assessment['state']}
+            self.submit.setEnabled(False);self.review_panel.setEnabled(False)
+            self.launch(plan)
+        except Exception as exc:
+            self._resume_assessment=None
+            QMessageBox.warning(self.progress_dialog,'No se puede continuar',str(exc))
+            self.progress_dialog.refresh_recovery_actions()
 
     def review_retry(self):
         if self.is_running() or self._verified:return
@@ -484,6 +550,7 @@ class RepairDialog(QDialog):
             if record and not repair_retry_allowed(record):
                 raise RuntimeError('La acción final ya pudo enviarse. Solo se permite Reverificar.')
             self._retry_record=record
+            self._resume_assessment=None
             self.review_panel.setEnabled(True);self.confirm.setChecked(False)
             # A recovery cannot silently change the action whose evidence is on disk.
             if record:

@@ -2,6 +2,16 @@
 
 ## Sin publicar
 
+### Recuperación de reparaciones · Técnico
+
+- La ventana de progreso permite comprobar el paso real y continuar un cierre
+  o desecho interrumpido, conservando la incidencia, trabajos, duración y fechas
+  revisados. Antes de continuar muestra los datos y pide confirmación.
+- Si Maximo ya inició la OT pese al timeout, se reconoce INPRG y se continúa
+  sin volver a iniciar ni duplicar los registros existentes.
+- Si la acción final pudo enviarse, se mantiene la reverificación de solo lectura:
+  nunca se repite una confirmación incierta.
+
 ### Enlaces a OTs · Todos los roles
 
 - Los enlaces externos de MD admiten tres acciones: abrir la ficha en Edge,

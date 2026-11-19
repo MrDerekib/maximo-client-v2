@@ -163,7 +163,7 @@ class RepairRecoveryUiTests(TestCase):
             store=RecoveryStore(Path(folder));record=store.begin(p.item,'technician_close',IDENTITY,'INPRG',preparing=True,reviewed_request=asdict(p))
             with patch('technician_repair_ui.RecoveryStore',return_value=store),patch('technician_repair_ui.RepairWorker') as execute:
                 progress=d.progress_dialog;progress.failure('Preparation failed');progress.worker_finished()
-                self.assertTrue(progress.retry_button.isEnabled());progress.retry_button.click()
+                self.assertTrue(progress.retry_button.isEnabled());progress.review_button.click()
                 self.assertEqual(d.reference.text(),'inc: manual')
                 self.assertFalse(d.confirm.isChecked());self.assertTrue(d.submit.isEnabled());self.assertFalse(d.action.isEnabled())
                 self.assertEqual(d._retry_record['operation_id'],record['operation_id'])
