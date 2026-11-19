@@ -24,6 +24,22 @@ servidor. No se necesitan Graph, credenciales de Maximo ni permisos de escritura
 El servidor solo entrega archivos estáticos; no acepta mensajes ni lanza procesos.
 Los enlaces se construyen con destino fijo y número exclusivamente numérico.
 
+## Opciones al abrir con MD
+
+El selector conserva en este cliente la última elección: abrir Edge (predeterminado),
+abrir Edge y filtrar MD, o solo filtrar MD. El modo se conserva también al pasar
+por la página del navegador. El enlace web sigue funcionando igual.
+
+Los modos de filtrado requieren el MD de desarrollo con estos cambios; la build
+1.4.1 publicada todavía no los interpreta y abriría Edge. Para validarlos, reiniciar
+MD de desarrollo y marcar «Usar MD de desarrollo» en el panel. El lanzador de
+MD de desarrollo pide cerrar primero la instalación estable si está ejecutándose.
+
+Al filtrar se limpian filtros previos, prioridades y selecciones para mostrar solo
+la OT exacta. No se modifican búsquedas guardadas ni datos de Maximo. Si la OT no
+está en la base local, se informa y el listado queda vacío; «solo filtrar» no
+consulta Maximo ni necesita credenciales. Se puede volver al listado con Limpiar.
+
 ## 1. Prueba visual sin instalar nada en Outlook
 
 Requiere Node.js en PATH o el runtime de Node incluido en la instalación de Codex. El lanzador intenta ambos, incluidas las instalaciones de Codex cuyo runtime tiene un nombre con versión. Si fuera necesario, acepta `-NodePath` con la ruta del ejecutable. `Start-Mvp.ps1 -CheckRuntime` comprueba la detección sin arrancar el servidor ni instalar certificados. No requiere `npm install`.

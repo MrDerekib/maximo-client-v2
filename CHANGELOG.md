@@ -1,5 +1,18 @@
 # Historial de cambios
 
+## Sin publicar
+
+### Integración con Outlook · MVP
+
+- Selector para abrir la OT en Edge, abrirla y filtrar el listado de MD, o solo
+  filtrar MD. Se conserva la opción elegida y se transmite también por la página
+  intermedia del navegador. La opción predeterminada mantiene la apertura anterior.
+- Los enlaces de MD admiten acciones explícitas de consulta. Al filtrar se muestra
+  solo la OT exacta, se limpian los demás filtros y selecciones, y se avisa si no
+  existe en la base local. Solo filtrar no abre Edge ni consulta Maximo.
+- Los enlaces existentes siguen abriendo Edge. Las nuevas opciones requieren una
+  versión de MD compatible; la build publicada 1.4.1 todavía no las interpreta.
+
 ## 1.4.1 — Consultas más eficientes y mejoras del listado
 
 ### Resumen

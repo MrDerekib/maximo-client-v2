@@ -59,7 +59,7 @@ from update_checker import UpdateDownloadCancelled, download_release_asset, fetc
 from update_installer import distributed_executable, start_update
 from managed_install_qt import ManagedInstallError, redirect_to_managed_install
 from priority_importer import read_priority_files
-from deep_links import parse_ot_uri, register_protocol_handler
+from deep_links import parse_ot_uri, parse_ot_action, register_protocol_handler
 from excel_export import write_workorders_xlsx
 from release_notes import STATE_FILENAME, cache_release_notes, installed_release_notes, mark_notes_seen, same_version, should_show_notes
 from release_notes_ui import ReleaseNotesDialog
@@ -1958,6 +1958,11 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                               include_sync=True, include_fault=True, include_detail=True)
         except ValueError as exc:
             QMessageBox.warning(self, "Filtros", str(exc)); return
+        linked_ot = getattr(self, "_deep_link_ot", "")
+        if linked_ot and self.search_field() == "OT" and self.search_edit.text().strip() == linked_ot:
+            rows = [row for row in rows if str(row[2]) == linked_ot]
+        else:
+            self._deep_link_ot = ""
         priority_ots = current_priority_ots()
         self._refresh_priority_button_label()
         self.priority_only_button.setVisible(bool(priority_ots))
@@ -2735,11 +2740,40 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
     def handle_deep_link(self, uri):
         ot = parse_ot_uri(uri)
-        if not ot:
+        if not ot or self._closing:
             return
+        action = parse_ot_action(uri)
         self.pages.setCurrentIndex(0)
         self.navigation_location.setText("Listado")
-        self.open_ot_number(ot)
+        if action in {"filter", "open_filter"}:
+            self._filter_linked_ot(ot)
+        self.activate_window()
+        if action in {"open", "open_filter"}:
+            self.open_ot_number(ot)
+
+    def _filter_linked_ot(self, ot):
+        self._workorder_selector.clear_selection()
+        self._workorder_selector.clear_context()
+        self.search_edit.setText(ot)
+        with QSignalBlocker(self.search_by_combo):
+            self.search_by_combo.setCurrentIndex(self.search_by_combo.findData("OT"))
+        with QSignalBlocker(self.client_combo):
+            self.client_combo.clear_selection()
+        with QSignalBlocker(self.priority_only_button):
+            self.priority_only_button.setChecked(False)
+        with QSignalBlocker(self.profile_list):
+            self.profile_list.setCurrentRow(-1)
+        self.delete_profile_button.setEnabled(False)
+        self.advanced_state = {"equipment": "", "date_from": "", "date_to": "", "clients": [], "types": [], "tracking": []}
+        self._deep_link_ot = ot
+        self.refresh_table()
+        found = next((row for row in range(self.table.rowCount())
+                      if self.table.item(row, 1).text() == ot and not self.table.isRowHidden(row)), None)
+        if found is not None:
+            self.table.scrollToItem(self.table.item(found, 1))
+            self.status.showMessage(f"Listado filtrado por la OT {ot}.", 7000)
+        else:
+            self.status.showMessage(f"La OT {ot} no está en el listado local. No se ha consultado Maximo.", 10000)
 
     def activate_window(self):
         if self.isMinimized():

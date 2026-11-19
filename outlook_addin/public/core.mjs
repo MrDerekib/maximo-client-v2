@@ -1,11 +1,12 @@
 export const MAXIMO = 'https://eam.indraweb.net/maximo/ui/';
 export function validOt(value) { return /^\d{1,20}$/.test(String(value)); }
-export function linksFor(ot, development = false) {
+export function linksFor(ot, development = false, action = 'open') {
   if (!validOt(ot)) throw new Error('Introduce un número de OT válido.');
+  if (!['open','open_filter','filter'].includes(action)) throw new Error('Acción de MD no válida.');
   const url = new URL(MAXIMO);
   url.search = new URLSearchParams({event:'loadapp', value:'wo_tr', additionalevent:'sqlwhere',
     additionaleventvalue:`wonum='${ot}' and siteid='LAB-BAD'`});
-  return {web:url.href, md:`${development ? 'maximodesk-dev' : 'maximodesk'}://ot/${ot}`};
+  return {web:url.href, md:`${development ? 'maximodesk-dev' : 'maximodesk'}://ot/${ot}${action === 'open' ? '' : `?action=${action}`}`};
 }
 export function detectOts(text, hrefs = []) {
   const found = new Set();

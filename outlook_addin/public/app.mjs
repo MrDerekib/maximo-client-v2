@@ -3,11 +3,12 @@ const $ = id => document.getElementById(id);
 let generation = 0;
 function status(text) { $('status').textContent = text; }
 function updateLinks() {
+  $('compatibility').hidden=$('md-action').value==='open';
   const ot = $('ot').value.trim();
   const valid = validOt(ot);
-  const links = valid ? linksFor(ot, $('development').checked) : {};
+  const links = valid ? linksFor(ot, $('development').checked, $('md-action').value) : {};
   const bridge = new URL('launch.html',location.href);
-  bridge.search = new URLSearchParams({ot,dev:$('development').checked ? '1' : '0'});
+  bridge.search = new URLSearchParams({ot,dev:$('development').checked ? '1' : '0',action:$('md-action').value});
   for (const [id,href] of [['web',links.web],['md',links.md],['bridge',bridge.href]]) {
     $(id).setAttribute('aria-disabled',String(!valid));
     if (valid) $(id).href=href; else $(id).removeAttribute('href');
@@ -39,6 +40,8 @@ function readMessage() {
 $('ot').addEventListener('input',()=>{generation++;updateLinks();status('');});
 $('candidates').addEventListener('change',()=>{$('ot').value=$('candidates').value;updateLinks();status('');});
 $('development').addEventListener('change',updateLinks);
+try { const saved=localStorage.getItem('md-outlook-action');if(['open','open_filter','filter'].includes(saved)) $('md-action').value=saved; } catch {}
+$('md-action').addEventListener('change',()=>{try{localStorage.setItem('md-outlook-action',$('md-action').value);}catch{} updateLinks();status('');});
 for(const id of ['web','md','bridge']) $(id).addEventListener('click',event=>{
   if($(id).getAttribute('aria-disabled')==='true'){event.preventDefault();return;}
   status(id==='md'?'Se ha solicitado abrir MD. Si no se abre, prueba el enlace del navegador.':'Se ha solicitado abrir el navegador. Si no aparece, comprueba el bloqueo de ventanas.');

@@ -5,7 +5,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qsl
 
 
 OT_URI_PATTERN = re.compile(r"^\d{1,20}$")
@@ -15,11 +15,17 @@ def scheme_for_environment(development: bool = False) -> str:
     return "maximodesk-dev" if development else "maximodesk"
 
 
-def make_ot_uri(ot: str, development: bool = False) -> str:
+OT_LINK_ACTIONS = {"open", "open_filter", "filter"}
+
+
+def make_ot_uri(ot: str, development: bool = False, action: str = "open") -> str:
     value = str(ot).strip()
     if not OT_URI_PATTERN.fullmatch(value):
         raise ValueError("El número de OT del enlace debe contener solo dígitos.")
-    return f"{scheme_for_environment(development)}://ot/{value}"
+    if action not in OT_LINK_ACTIONS:
+        raise ValueError("Acción de enlace OT no válida.")
+    suffix = "" if action == "open" else f"?action={action}"
+    return f"{scheme_for_environment(development)}://ot/{value}{suffix}"
 
 
 def parse_ot_uri(uri: str) -> str | None:
@@ -30,7 +36,22 @@ def parse_ot_uri(uri: str) -> str | None:
     if parsed.scheme not in {"maximodesk", "maximodesk-dev"} or parsed.netloc.lower() != "ot":
         return None
     ot = parsed.path.strip("/")
-    return ot if OT_URI_PATTERN.fullmatch(ot) else None
+    return ot if OT_URI_PATTERN.fullmatch(ot) and parse_ot_action(uri) is not None else None
+
+
+def parse_ot_action(uri: str) -> str | None:
+    try:
+        parsed = urlparse(uri)
+        if parsed.fragment:
+            return None
+        params = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+    except ValueError:
+        return None
+    if not params:
+        return "open"
+    if len(params) != 1 or params[0][0] != "action" or params[0][1] not in OT_LINK_ACTIONS:
+        return None
+    return params[0][1]
 
 
 def register_protocol_handler(development: bool = False, script_path: Path | None = None) -> bool:

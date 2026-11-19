@@ -31,6 +31,15 @@ try:
  assert driver.find_element(By.ID,'md').get_attribute('href')=='maximodesk://ot/4448382'
  driver.find_element(By.CSS_SELECTOR,'summary').click()
  driver.find_element(By.ID,'development').click();assert driver.find_element(By.ID,'md').get_attribute('href')=='maximodesk-dev://ot/4448382'
+ driver.execute_script("const s=document.getElementById('md-action');s.value='filter';s.dispatchEvent(new Event('change'))")
+ assert driver.find_element(By.ID,'md').get_attribute('href')=='maximodesk-dev://ot/4448382?action=filter'
+ bridge=driver.find_element(By.ID,'bridge').get_attribute('href')
+ assert 'action=filter' in bridge
+ driver.get(bridge)
+ wait.until(lambda d:d.find_element(By.ID,'launch').get_attribute('href')=='maximodesk-dev://ot/4448382?action=filter')
+ driver.get('http://localhost:3001/taskpane.html?demo=1')
+ wait.until(lambda d:d.find_element(By.ID,'md-action').get_attribute('value')=='filter')
+ driver.execute_script("const s=document.getElementById('md-action');s.value='open';s.dispatchEvent(new Event('change'))")
  driver.execute_script("document.getElementById('sample').value='OT 4448382\\nOT 4446909';document.getElementById('parse-demo').click()")
  assert driver.find_element(By.ID,'ot').get_attribute('value')==''
  assert driver.find_element(By.ID,'web').get_attribute('href') is None

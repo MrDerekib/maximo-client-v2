@@ -25,3 +25,13 @@ test('filtered links can supply OT; foreign hosts cannot',()=>{
  assert.deepEqual(detectOts('',[linksFor('4448382').web]),['4448382']);
  assert.deepEqual(detectOts('',[linksFor('4448382').web.replace('eam.indraweb.net','evil.test')]),[]);
 });
+
+test('MD modes preserve web target and default backward compatibility',()=>{
+ const normal=linksFor('4448382');
+ for(const action of ['open_filter','filter']) {
+  const links=linksFor('4448382',true,action);
+  assert.equal(links.web,normal.web);
+  assert.equal(links.md,`maximodesk-dev://ot/4448382?action=${action}`);
+ }
+ assert.throws(()=>linksFor('4448382',false,'close'));
+});
