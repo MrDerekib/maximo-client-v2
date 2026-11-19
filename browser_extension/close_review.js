@@ -57,7 +57,7 @@
     dialog.querySelector('.close-body').insertBefore(root,dialog.querySelector('.close-body').children[1]);
     return {
       validate(){
-        if(!records.complete)return 'No se pudo comprobar Registro completo. Revisa la ficha y vuelve a abrir el cierre.';
+        if(!records.complete)return records.error||'No se pudo comprobar Registro completo. Revisa la ficha y vuelve a abrir el cierre.';
         if(!data.anomalies?.complete)return 'Falta completar anomalías o soluciones.';
         const value=normalizeReference(),notes=entries();
         if(!value)return 'Introduce o elige la incidencia (texto libre).';

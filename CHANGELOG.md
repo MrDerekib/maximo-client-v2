@@ -30,6 +30,9 @@
   editor, pero rechaza pérdidas de contenido o cambios en el orden de las líneas.
 - La inserción no se repite tras una respuesta incierta. Se registran longitudes,
   tabulaciones y líneas para diagnóstico sin volcar el texto de la reparación.
+- Los fallos de lectura de Registro identifican la entrada y el resumen visible;
+  el diálogo conserva la causa concreta al bloquear Confirmar, en lugar de
+  sustituirla por un aviso genérico. No se omite la comprobación de seguridad.
 - Esta corrección conserva texto y estructura por líneas; no incorpora todavía
   pegado de tablas HTML ni preservación del formato visual de Excel.
 

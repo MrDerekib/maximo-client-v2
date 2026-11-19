@@ -75,6 +75,29 @@ class BrowserRecordReader(RepairPreparer):
         self.wait(lambda _: self.page_position() != before, 'página de Registro')
         self.idle(); self.require_approved()
 
+    def read_record_details(self, row, summary, position, total):
+        try:
+            native=self.driver.find_element(By.ID,row['id'])
+            toggles=native.find_elements(By.CSS_SELECTOR,'a[id*="_tgdet-ti"]')
+            if len(toggles)!=1:
+                raise RuntimeError('No hay un único selector de detalles para esa entrada.')
+            if normalized(toggles[0].get_attribute('title'))=='ver detalles':
+                toggles[0].click();self.idle()
+            self.wait(lambda _:self.value('Resumen')==summary,'entrada de Registro seleccionada')
+            return self.details()
+        except Exception as exc:
+            try:observed=self.value('Resumen')
+            except Exception:observed=None
+            expected=str(summary)[:100]
+            observed_text=str(observed)[:100] if observed is not None else None
+            logging.error('OT %s: fallo de lectura de Registro; entrada=%s/%s; fila=%s; resumen_esperado=%r; resumen_visible=%r; causa=%s',
+                          self.ot,position,total,row.get('id'),expected,observed_text,str(exc))
+            detail=('El campo Resumen no está disponible.' if observed is None else
+                    f'El formulario muestra «{observed_text}».' if observed!=summary else
+                    'El resumen coincide, pero no se pudieron leer sus detalles.')
+            raise RuntimeError(f'No se pudo verificar la entrada {position} de {total} de Registro: «{expected}». '
+                               f'{detail} Revisa esa entrada en la ficha y vuelve a abrir la revisión del cierre.') from exc
+
     def read_records(self):
         self.tab('Registro')
         for _ in range(100):
@@ -100,14 +123,7 @@ class BrowserRecordReader(RepairPreparer):
                     raise RuntimeError('Hay una entrada incompleta en Registro. Revísala antes de cerrar.')
                 detail = ''
                 if normalized(kind) == 'clientnote':
-                    native = self.driver.find_element(By.ID, row['id'])
-                    toggles = native.find_elements(By.CSS_SELECTOR, 'a[id*="_tgdet-ti"]')
-                    if len(toggles) != 1:
-                        raise RuntimeError('No se pudo leer el detalle de una entrada de Registro.')
-                    if normalized(toggles[0].get_attribute('title')) == 'ver detalles':
-                        toggles[0].click(); self.idle()
-                    self.wait(lambda _: self.value('Resumen') == summary, 'entrada de Registro seleccionada')
-                    detail = self.details()
+                    detail = self.read_record_details(row, summary, len(entries)+1, expected_total)
                 entries.append({'type':kind, 'summary':summary, 'details':detail,
                                 'author':cells[5], 'date':cells[7]})
             if last >= total: break

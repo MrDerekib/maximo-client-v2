@@ -18,6 +18,18 @@ def records(*entries,complete=True):
     return summarize_records({'complete':complete,'entries':list(entries),'error':''})
 
 class BrowserRecordValidationTests(TestCase):
+    def test_read_failure_names_the_entry_and_observed_summary_without_writing(self):
+        driver=Mock();closer=Mock();closer.driver=driver;closer.ot='1';closer.timeout=1
+        reader=BrowserRecordReader(closer)
+        toggle=Mock();toggle.get_attribute.return_value='Ocultar detalles'
+        driver.find_element.return_value.find_elements.return_value=[toggle]
+        reader.wait=Mock(side_effect=RuntimeError('Tiempo agotado'))
+        reader.value=Mock(return_value='inc: sin')
+        with self.assertLogs(level='ERROR') as logs,self.assertRaisesRegex(RuntimeError,'entrada 2 de 3.*Reparación.*inc: sin'):
+            reader.read_record_details({'id':'record-2'},'Reparación',2,3)
+        self.assertIn('resumen_visible',logs.output[0]);toggle.click.assert_not_called()
+        driver.execute_cdp_cmd.assert_not_called()
+
     def test_system_notes_and_incident_only_are_not_repair_activity(self):
         data=records(entry('inc: stock'),entry('Inicio de OT',kind='SYSTEM'),entry('inc:'))
         self.assertEqual(data['references'],['inc: stock']);self.assertEqual(data['notes'],[])
@@ -231,7 +243,7 @@ class BrowserDynamicCloseTests(TestCase):
         with patch.object(BrowserRecordReader,'page',side_effect=RuntimeError('No se pudo leer la página')):
             dialog=self.prepare()
         self.assertTrue(dialog.find_element(By.NAME,'confirm').get_property('disabled'))
-        self.assertIn('Registro completo',dialog.find_element(By.ID,'maximo-close-error').text)
+        self.assertIn('No se pudo leer la página',dialog.find_element(By.ID,'maximo-close-error').text)
         self.assertEqual(self.browser.execute_script('return state.events'),[])
 
     def test_multiple_incidents_require_selection_and_do_not_overwrite(self):
