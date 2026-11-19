@@ -1,6 +1,26 @@
 # Historial de cambios
 
-## Sin publicar
+## 1.4.2 — Correcciones del cierre y pegado desde Excel
+
+### Resumen
+
+Esta actualización se centra en corregir el pegado de reparaciones desde Excel y facilitar la recuperación de los cierres interrumpidos.
+
+- **Técnico · MD y extensión de Edge:** el texto pegado desde Excel en Detalles conserva su contenido y sus líneas. Las tabulaciones dejan de cambiar de campo; se comprueba el contenido antes de continuar.
+- **Técnico · MD:** desde la ventana de progreso puedes comprobar y continuar un cierre o desecho interrumpido, conservando los datos revisados y sin duplicar registros. Si la confirmación final es incierta, solo se verifica su resultado.
+- **Técnico:** los errores de lectura indican qué entrada bloquea el cierre. El calendario muestra mejor el día y la fecha seleccionados.
+- **Todos los roles:** las novedades al actualizar incluyen los resúmenes de las versiones saltadas desde la última versión registrada.
+- **Integración con Outlook:** MD admite enlaces para abrir la OT, abrirla y filtrar el listado, o solo filtrarlo. El complemento de Outlook sigue siendo una instalación separada.
+
+### Novedades acumuladas · Todos los roles
+
+- Si se conoce la versión de partida, el aviso muestra los resúmenes de las versiones
+  posteriores hasta la instalada, con la más reciente primero. Se usa el historial
+  incluido en la app, sin nuevas consultas a GitHub.
+- Las instalaciones nuevas mantienen el comportamiento anterior. Si falta el
+  historial de versiones, se muestra solo la versión instalada, sin inventar la base.
+- Se conserva el aviso una sola vez y no se repite por volver a una versión anterior.
+
 
 ### Recuperación de reparaciones · Técnico
 
@@ -19,8 +39,8 @@
   mantienen la apertura anterior.
 - Al filtrar se muestra únicamente la OT exacta y se limpian los otros filtros
   y selecciones. Se avisa si no existe en la base local. Solo filtrar no abre
-  Edge ni consulta Maximo. Las opciones nuevas requieren una build compatible;
-  la versión publicada 1.4.1 todavía no las interpreta.
+  Edge ni consulta Maximo. Las opciones nuevas requieren MD 1.4.2 o posterior;
+  el complemento de Outlook se instala y configura por separado.
 
 ### Calendarios y revisión · Técnico
 
