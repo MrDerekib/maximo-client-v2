@@ -80,6 +80,30 @@ class RecoveryStore:
             records = [self._read(path) for path in sorted(self.folder.glob('*.json'))]
             return [record for record in records if record['phase'] != 'complete']
 
+    def mute_startup(self, record):
+        with _guard:
+            current = self.get(record['item']['ot'])
+            if current and current['operation_id'] == record['operation_id']:
+                self.update(current, current['phase'], mute_startup=True)
+
+    def archive_external_close(self, record, save_status):
+        """Keep the original evidence while removing the attempt from the pending queue."""
+        with _guard:
+            current = self.get(record['item']['ot'])
+            if current != record:
+                return False
+            archive = self.folder.parent / 'resueltas'
+            archive.mkdir(exist_ok=True)
+            path = self._path(record['item']['ot'])
+            if not save_status(record['item']['ot'], 'CLOSE'):
+                raise RuntimeError('No se pudo guardar CLOSE en la base local.')
+            self.update(current, current['phase'], resolution='closed_elsewhere',
+                        observed_status='CLOSE')
+            # Use the OT hash and a safe operation hash for durable, unique evidence.
+            suffix = hashlib.sha256(record['operation_id'].encode()).hexdigest()
+            os.replace(path, archive / f'{path.stem}-{suffix}.json')
+            return True
+
     def begin(self, item, action, identity, initial_state, history_before=None, *, verified_status='', preparing=False, reviewed_request=None):
         record = {'schema_version': 1, 'operation_id': uuid4().hex, 'item': asdict(item),
                   'action': action, 'identity': dict(identity), 'initial_state': initial_state,

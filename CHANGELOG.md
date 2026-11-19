@@ -1,5 +1,13 @@
 # Historial de cambios
 
+## Sin publicar
+
+- Al iniciar, MD consulta las reparaciones pendientes. Si Maximo confirma que
+  la OT ya está en CLOSE y coincide el equipo, actualiza el seguimiento local
+  y archiva el intento como finalizado por otra vía.
+- Puedes silenciar el aviso de los intentos actuales y seguir consultándolos
+  desde «Revisar operaciones pendientes».
+
 ## 1.4.2 — Correcciones del cierre y pegado desde Excel
 
 ### Resumen

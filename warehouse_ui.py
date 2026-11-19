@@ -228,7 +228,26 @@ class WarehouseBatchDialog(QDialog):
         for button in (self.retry_button, self.recheck_button, self.stop_button, self.close_button, self.start_button):
             buttons.addWidget(button)
         layout.addLayout(buttons)
+        if recovery_only:
+            mute = QPushButton('No avisar al iniciar sobre la selección')
+            mute.clicked.connect(self._mute_selected_reminders)
+            mute.setEnabled(False)
+            self.table.itemSelectionChanged.connect(
+                lambda: mute.setEnabled(bool(self.table.selectionModel().selectedRows())))
+            layout.addWidget(mute, alignment=Qt.AlignLeft)
         self._sync_table_palette()
+
+    def _mute_selected_reminders(self):
+        store = RecoveryStore(self.report_folder)
+        selected = {self.items[index.row()].ot for index in self.table.selectionModel().selectedRows()}
+        try:
+            for record in store.pending():
+                if record['item']['ot'] in selected and record['action'] == self.action:
+                    store.mute_startup(record)
+        except Exception as exc:
+            QMessageBox.warning(self, 'Operaciones pendientes', str(exc))
+            return
+        self.summary.setText('Los intentos seleccionados seguirán disponibles en la revisión manual.')
 
     def _sync_table_palette(self):
         # The app's stylesheet colors labels, but its tables normally set cell
@@ -499,6 +518,9 @@ class WarehouseWindowMixin:
         return bool(getattr(self.cfg, flag, False))
 
     def open_warehouse_recovery(self):
+        self._check_closed_recoveries(manual=True)
+
+    def _show_warehouse_recovery(self):
         if getattr(self, '_closing', False): return
         if not (getattr(self.cfg, 'warehouse_enabled', False) or getattr(self.cfg, 'technician_sat_enabled', False) or getattr(self.cfg,'workorder_close_enabled',False)): return
         try:
@@ -523,15 +545,71 @@ class WarehouseWindowMixin:
         self._warehouse_dialogs = [*dialogs,dialog];dialog.show()
 
     def offer_warehouse_recovery(self):
-        if getattr(self,'_closing',False) or not (getattr(self.cfg,'warehouse_enabled',False) or getattr(self.cfg,'technician_sat_enabled',False) or getattr(self.cfg,'workorder_close_enabled',False)):return
-        try:count = sum(self._operation_allowed(r['action']) for r in RecoveryStore().pending())
-        except Exception:
-            log_exception('No se pudo consultar la recuperación de almacén');return
-        if count and QMessageBox.question(self,'Operaciones pendientes',
-            f'Hay {count} operaciones pendientes de verificar o guardar. ¿Abrir su revisión? No se reenviarán acciones.',
-            QMessageBox.Yes|QMessageBox.No,QMessageBox.No)==QMessageBox.Yes:
-            self.open_warehouse_recovery()
+        self._check_closed_recoveries(manual=False)
 
+    def _check_closed_recoveries(self, *, manual):
+        if getattr(self, '_closing', False) or getattr(self, '_checking_closed_recoveries', False):
+            return
+        if not any(self._operation_allowed(action) for action in ACTIONS):
+            return
+        store = RecoveryStore()
+        try:
+            candidates = [
+                record for record in store.pending()
+                if record['action'] in ('technician_close', 'technician_discard')
+                and self._operation_allowed(record['action']) and record['phase'] != 'verified'
+            ]
+        except Exception:
+            log_exception('No se pudo leer la recuperación pendiente')
+            candidates = []
+
+        def done(resolved):
+            self._checking_closed_recoveries = False
+            if getattr(self, '_closing', False):
+                return
+            for ot in resolved:
+                self.warehouse_row_updated(ot, 'CLOSE')
+            if manual:
+                self._show_warehouse_recovery()
+            else:
+                self._show_pending_reminder(store)
+
+        if candidates:
+            from config import credentials_configured
+            if credentials_configured():
+                from warehouse_transport import reconcile_closed_repairs
+                self._checking_closed_recoveries = True
+                self._start_task(
+                    lambda: reconcile_closed_repairs(candidates, store),
+                    done, failed=lambda error: done([]), coordinated=True)
+                return
+        done([])
+
+    def _show_pending_reminder(self, store):
+        try:
+            records = [record for record in store.pending()
+                       if self._operation_allowed(record['action']) and not record.get('mute_startup')]
+        except Exception:
+            log_exception('No se pudo consultar la recuperación de almacén')
+            return
+        if not records:
+            return
+        prompt = QMessageBox(self)
+        prompt.setWindowTitle('Operaciones pendientes')
+        prompt.setText(f'Quedan {len(records)} operaciones pendientes de verificar o guardar.')
+        review = prompt.addButton('Revisar', QMessageBox.AcceptRole)
+        later = prompt.addButton('Más tarde', QMessageBox.RejectRole)
+        mute = prompt.addButton('No volver a avisar de estas', QMessageBox.ActionRole)
+        prompt.setDefaultButton(later)
+        prompt.exec()
+        if prompt.clickedButton() is review:
+            self._show_warehouse_recovery()
+        elif prompt.clickedButton() is mute:
+            try:
+                for record in records:
+                    store.mute_startup(record)
+            except Exception as exc:
+                QMessageBox.warning(self, 'Operaciones pendientes', str(exc))
 
     def add_technician_sat_action(self, menu):
         if not getattr(self.cfg, 'technician_sat_enabled', False):
