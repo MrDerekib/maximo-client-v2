@@ -1,5 +1,396 @@
 # Historial de cambios
 
+## 1.4.2 — Correcciones del cierre y pegado desde Excel
+
+### Resumen
+
+Esta actualización se centra en corregir el pegado de reparaciones desde Excel y facilitar la recuperación de los cierres interrumpidos.
+
+- **Técnico · MD y extensión de Edge:** el texto pegado desde Excel en Detalles conserva su contenido y sus líneas. Las tabulaciones dejan de cambiar de campo; se comprueba el contenido antes de continuar.
+- **Técnico · MD:** desde la ventana de progreso puedes comprobar y continuar un cierre o desecho interrumpido, conservando los datos revisados y sin duplicar registros. Si la confirmación final es incierta, solo se verifica su resultado.
+- **Técnico:** los errores de lectura indican qué entrada bloquea el cierre. El calendario muestra mejor el día y la fecha seleccionados.
+- **Todos los roles:** las novedades al actualizar incluyen los resúmenes de las versiones saltadas desde la última versión registrada.
+- **Integración con Outlook:** MD admite enlaces para abrir la OT, abrirla y filtrar el listado, o solo filtrarlo. El complemento de Outlook sigue siendo una instalación separada.
+
+### Novedades acumuladas · Todos los roles
+
+- Si se conoce la versión de partida, el aviso muestra los resúmenes de las versiones
+  posteriores hasta la instalada, con la más reciente primero. Se usa el historial
+  incluido en la app, sin nuevas consultas a GitHub.
+- Las instalaciones nuevas mantienen el comportamiento anterior. Si falta el
+  historial de versiones, se muestra solo la versión instalada, sin inventar la base.
+- Se conserva el aviso una sola vez y no se repite por volver a una versión anterior.
+
+
+### Recuperación de reparaciones · Técnico
+
+- La ventana de progreso permite comprobar el paso real y continuar un cierre
+  o desecho interrumpido, conservando la incidencia, trabajos, duración y fechas
+  revisados. Antes de continuar muestra los datos y pide confirmación.
+- Si Maximo ya inició la OT pese al timeout, se reconoce INPRG y se continúa
+  sin volver a iniciar ni duplicar los registros existentes.
+- Si la acción final pudo enviarse, se mantiene la reverificación de solo lectura:
+  nunca se repite una confirmación incierta.
+
+### Enlaces a OTs · Todos los roles
+
+- Los enlaces externos de MD admiten tres acciones: abrir la ficha en Edge,
+  abrirla y filtrar el listado de MD, o solo filtrar MD. Los enlaces existentes
+  mantienen la apertura anterior.
+- Al filtrar se muestra únicamente la OT exacta y se limpian los otros filtros
+  y selecciones. Se avisa si no existe en la base local. Solo filtrar no abre
+  Edge ni consulta Maximo. Las opciones nuevas requieren MD 1.4.2 o posterior;
+  el complemento de Outlook se instala y configura por separado.
+
+### Calendarios y revisión · Técnico
+
+- Día seleccionado con resaltado de mayor contraste en todos los temas.
+- El selector de reparación muestra la fecha y hora elegidas mientras se edita,
+  indica cuando se navega a un mes sin elegir un día y aclara que los cambios se
+  aplican con «Aplicar fecha y hora». Cancelar conserva la fecha anterior.
+
+### Detalles de Registro desde Excel · Técnico
+
+- La preparación de reparaciones desde MD y la extensión de Edge inserta el texto
+  completo mediante una operación nativa de entrada. Las tabulaciones copiadas de
+  Excel dejan de actuar como navegación entre controles.
+- La lectura del editor conserva los saltos de línea y las filas vacías. La
+  comparación admite diferencias de espacios y tabulaciones introducidas por el
+  editor, pero rechaza pérdidas de contenido o cambios en el orden de las líneas.
+- La inserción no se repite tras una respuesta incierta. Se registran longitudes,
+  tabulaciones y líneas para diagnóstico sin volcar el texto de la reparación.
+- Los fallos de lectura de Registro identifican la entrada y el resumen visible;
+  el diálogo conserva la causa concreta al bloquear Confirmar, en lugar de
+  sustituirla por un aviso genérico. No se omite la comprobación de seguridad.
+- Esta corrección conserva texto y estructura por líneas; no incorpora todavía
+  pegado de tablas HTML ni preservación del formato visual de Excel.
+
+## 1.4.1 — Consultas más eficientes y mejoras del listado
+
+### Resumen
+
+Esta actualización mejora el trabajo con el listado y reduce las consultas innecesarias a Maximo, con correcciones en el seguimiento y en las ventanas de revisión.
+
+- **Búsquedas y copiado:** pega una columna de OTs o números de serie directamente en el buscador y copia filas completas para Excel o correo.
+- **Listado:** vuelve la ordenación desde las cabeceras y se corrige el sentido de giro del indicador de actualización.
+- **Datos de Maximo:** la actualización desde el menú contextual consulta también el Seguimiento. Las averías ya comprobadas dejan de consultarse automáticamente.
+- **Conciliación:** se revisan las OTs no activas que siguen pendientes de salida para recuperar su estado real.
+- **Técnico:** revisión de SAT más legible, con número de serie visible y filas y columnas ajustables. Las consultas previas pueden cerrarse sin esperar a que terminen.
+- **Progreso:** tras un aviso temporal, la barra de estado vuelve a mostrar la tarea en curso.
+
+### Listado y consultas · Todos los roles
+
+- Pegar filas o tabulaciones desde Excel o correo convierte la columna en búsquedas
+  alternativas, sin necesidad de añadir comas ni pulsar Enter. Se omiten duplicados
+  y filas vacías; los espacios internos conservan la búsqueda parcial, como `AB 456`.
+- El indicador de actualización gira en el sentido de sus flechas.
+
+- Restaurada la ordenación ascendente y descendente al pulsar las cabeceras,
+  compatible con el guardado manual de anchos y la selección múltiple.
+- El menú contextual permite copiar una fila completa o las filas seleccionadas,
+  con encabezados y columnas visibles en su orden actual, para pegar en Excel o correo.
+- «Actualizar datos desde Maximo» incluye ahora el Seguimiento además de avería y
+  descripción ampliada, reutilizando la ficha abierta. Cada campo se guarda de
+  forma independiente; una lectura fallida no impide actualizar los demás.
+- Los avisos temporales, como «Configuración guardada y aplicada», devuelven después
+  el progreso más reciente de la tarea en curso. Las tareas terminadas no reaparecen.
+- Las lecturas automáticas de avería y descripción ampliada dejan fuera los campos
+  comprobados correctamente, incluso vacíos, y respetan las 24 horas entre intentos fallidos.
+  El menú contextual permite volver a consultar ambos campos de las OTs seleccionadas,
+  incluidas las no activas, conservando los datos previos cuando una lectura falla.
+- Las OTs no activas cuyo último seguimiento es DAR SALIDA o ISSUE vuelven a
+  entrar en conciliación para consultar su estado real. Desaparecer del listado
+  no se interpreta automáticamente como CLOSE; se respeta el estado que devuelve Maximo.
+
+### Revisión y consultas previas · Técnico
+
+- Revisión de SAT con filas y columnas redimensionables, número de serie en la
+  primera línea y equipo en la segunda; texto completo al pasar el ratón.
+- La avería local se muestra inmediatamente y no se vuelve a consultar si ya se
+  comprobó, incluso vacía. Se conserva la escritura manual durante la consulta.
+- Los diálogos de consulta previa de reparación y SAT pueden cerrarse sin esperar
+  a la lectura. La consulta se cancela de forma cooperativa; los envíos reales
+  mantienen la protección de cierre y los hilos siguen vivos hasta terminar.
+
+## 1.4.0 — Nueva apariencia y mayor control
+
+### Resumen
+
+En esta actualización nos centramos en mejorar la interfaz de Maximo Desktop: más personalización, mejor legibilidad y una navegación más cómoda, junto con correcciones de fiabilidad.
+
+- **Nuevos temas:** Dracula, Catppuccin, Tokyo Night, SynthWave ’84 y más, con colores coherentes en toda la app.
+- **A tu medida:** nuevas tipografías y perfiles de legibilidad, incluido uno personalizado para ajustar tamaño, negrita, contraste y bordes.
+- **Más espacio:** barra lateral ocultable y redimensionable; configuración organizada en pestañas y acceso directo a cargar y exportar Excel.
+- **Listado más cómodo:** selección múltiple mejorada, filtros activos más visibles y columnas que respetan tus ajustes al cambiar el tamaño de la ventana.
+- **Reparaciones más fiables:** reverificación y reintento revisado desde la ventana de progreso, sin repetir confirmaciones inciertas.
+- **Partes de irreparables:** sello opcional «IRREPARABLE», en color al imprimir desde MD con la opción activada.
+
+### Apariencia y legibilidad · Todos los roles
+
+- Nuevos temas Dracula, Catppuccin Mocha, Catppuccin Latte, SynthWave ’84,
+  Tokyo Night, Gruvbox Dark, Rosé Pine Dawn y Nord, junto con Claro, Oscuro y Según Windows.
+- Paletas compartidas para listado, configuración, formularios, menús contextuales,
+  calendarios, confirmaciones, avisos y ventanas de progreso. Correcciones de contraste
+  y fondos claros que aparecían dentro del tema oscuro.
+- Barra de título coloreada en Windows y marca de la barra lateral adaptada al tema.
+- Tipografías incluidas: Inter, IBM Plex Sans, JetBrains Mono,
+  Atkinson Hyperlegible Next y Space Grotesk. Cada tema propone una fuente;
+  se puede elegir otra o conservar la del sistema, sin instalar fuentes aparte.
+- Perfiles Normal, Mayor visibilidad, Alto contraste y Personalizado.
+  El perfil personalizado permite combinar tamaño, peso, contraste del texto
+  y refuerzo de bordes independientemente del tema y la fuente.
+- Colores opcionales para Estado en Maximo y Seguimiento, con mayor diferenciación
+  entre taller, pendiente de salida, cerrada, retenida y otros estados.
+- Corrección de las esquinas redondeadas de las tablas del listado y de los diálogos.
+
+### Navegación, configuración y listado · Todos los roles
+
+- Menú superior «Maximo Desktop Menú» y navegación con más espacio para el listado.
+  La barra lateral se puede ocultar y recuperar desde la cabecera, redimensionar
+  y restaurar con su preferencia guardada.
+- Accesos a Cargar Excel de prioridades y Exportar a Excel en la barra lateral;
+  guardar y eliminar búsquedas mantienen su propia zona e iconos.
+- Configuración organizada en General, Datos y sincronización, Técnico y extensión
+  y Almacén, con disposición de dos columnas cuando el espacio lo permite.
+- Selección múltiple mediante una columna de casillas con superficie de pulsación
+  amplia, independiente de la fila activa. Se conservan Ctrl y Mayús; Escape y
+  las zonas vacías permiten limpiar la selección.
+- El filtro de prioridades muestra los proyectos con prioridades vigentes cargadas,
+  por ejemplo «Prioridades TMB/L9» o «Prioridades RENFE», con icono de bandera.
+  Prioridades y Filtros se resaltan cuando están activos.
+- Pegar directamente una columna de OTs o números de serie desde Excel o correo
+  convierte filas y tabulaciones en búsquedas alternativas y aplica la búsqueda
+  sin pulsar Enter. Se omiten duplicados y filas vacías; los espacios internos
+  conservan la búsqueda parcial, como `AB 456`.
+- El icono de actualización gira mientras se actualiza el listado.
+- Los ajustes automáticos de columnas al cambiar el tamaño de la ventana,
+  colapsar o redimensionar el panel no sobrescriben los anchos elegidos por el usuario.
+  Solo los cambios manuales generan un guardado, tras terminar el arrastre,
+  evitando escrituras duplicadas y conservando los cambios pendientes al cerrar.
+
+### Reparaciones y recuperación · Técnico
+
+- Mejoras de espera y localización de controles antes de confirmar el cierre o desecho.
+- Una respuesta incierta tras el enrutado final activa una reverificación de solo
+  lectura, contrastando estado, identidad, historial y datos de reparación;
+  no se vuelve a pulsar Aceptar automáticamente.
+- «Reverificar resultado» permite comprobar una operación pendiente desde su ventana
+  de progreso. «Revisar y reintentar…» recupera la preparación únicamente cuando
+  es seguro hacerlo, con nueva revisión y confirmación explícita.
+- Se conservan los datos revisados y se comprueban las entradas de Registro para
+  evitar duplicados. Un inicio o una confirmación inciertos no se repiten sin verificar.
+- Margen adicional de espera para reconocer el estado final de un desecho,
+  con trazas del tiempo y último estado observado.
+- Formularios de finalización con más espacio, mejores controles de fecha/hora
+  y progreso separado del formulario de revisión.
+- El Resumen del Registro respeta el límite de 100 caracteres comprobado en Maximo.
+  La incidencia incluye el prefijo `inc:` dentro de ese límite; los textos largos
+  pueden escribirse en Detalles. El editor de Resumen queda dentro de su celda.
+
+### Sello en partes de irreparables · Técnico
+
+- Sello «IRREPARABLE» sobre el parte HTML, activado por defecto y deshabilitable
+  en Técnico y extensión → Partes de reparación.
+- Solo se aplica cuando MD dispone de evidencia local de un desecho verificado;
+  CLOSE por sí solo no identifica un irreparable. Se recuperan también resultados
+  históricos verificados de operaciones realizadas desde MD.
+- Desde MD se prepara la impresión en color solo si el parte lleva el sello.
+  Con el sello desactivado se mantiene blanco y negro.
+- Desde la extensión se mantiene la impresión en blanco y negro, sin abrir otra sesión.
+- El sello se aplica a ambas variantes HTML de Boixeres cuando corresponde.
+  El PDF nativo de BIRT se conserva sin modificar.
+
+### Actualización del listado · Todos los roles
+
+- Si la pestaña de Edge falla con «tab crashed» al descargar el listado,
+  se realiza un único reintento con una sesión limpia y se informa del avance.
+- Si tampoco se obtiene una descarga válida, la actualización se detiene antes
+  de importar datos. Un error al cerrar una sesión caída no oculta el fallo original.
+
+## 1.3.0 — Operaciones de técnico y nuevo panel de Edge
+
+### Resumen
+
+- **Técnico:** enviar a SAT externo, finalizar reparaciones y declarar equipos irreparables desde MD.
+- **Técnico:** incidencia, trabajos, pruebas, duración y fechas en una revisión previa; cierre más ágil.
+- **Edge:** nuevo panel lateral con las acciones disponibles para la OT y cierre con revisión de datos.
+- **Partes:** las dos variantes de Boixeres también se guardan juntas en un único PDF.
+- **Formularios:** se conserva lo escrito durante la consulta y se aprovecha la avería local.
+- **Roles:** menús diferenciados de Técnico y Almacén según las opciones habilitadas.
+
+### Técnico · Envío a SAT externo desde MD
+
+- Nueva acción «Enviar a SAT Externo · Técnico», individual o en lote, para OTs en
+  APPR. Es la acción del rol de técnico; no es la recepción con derivación a SAT
+  que realiza almacén.
+- Revisión previa de anomalías y soluciones, horas en múltiplos de 0,25 h,
+  incidencia de texto libre y motivo por OT. La incidencia se registra con un
+  único prefijo `inc:`; admite números, `stock`, `sin inc` u otro texto de la etiqueta.
+- El motivo se propone a partir de la avería local; Maximo solo se consulta para
+  obtener esa descripción cuando no está disponible en MD.
+- Preparación y envío en una misma sesión de Edge. Se espera la validación nativa
+  de los campos y la disponibilidad del enrutado antes de confirmar.
+- Progreso y resultado por OT, petición revisada conservada y trazas por operación.
+  Un fallo anterior a Enrutar permite abrir «Reintentar preparación…», revisar los
+  datos y confirmar otro intento. Si ya se intentó enrutar o confirmar, solo se
+  reverifica el resultado; no se repite la acción automáticamente.
+
+### Técnico · Finalizar reparación y declarar irreparable desde MD
+
+- Entradas independientes «Dar salida · Técnico» y «Declarar irreparable · Técnico»
+  en el menú contextual. Comparten revisión, con la acción invocada seleccionada.
+- Se admiten OTs APPR e INPRG. Si todavía no se han iniciado, se inicia la OT como
+  parte del proceso expresamente revisado antes de finalizarla.
+- Incidencia libre, varias entradas de Registro con resumen y detalles, anomalías
+  y soluciones, duración en cuartos de hora y fechas reales de reparación.
+- Se puede indicar inicio o finalización y calcular la otra fecha con la duración.
+  «Ahora» toma la finalización actual; el selector muestra fecha y hora y permite
+  ajustar los minutos en pasos de cinco, sin exigir segundos.
+- El motivo de desecho solo aparece al declarar irreparable. Se propone la avería
+  como texto editable y se respetan los cambios o borrados manuales, incluida una
+  edición realizada mientras se consulta la ficha.
+- La consulta inicial conserva la incidencia, duración y entradas que se hayan
+  escrito durante la carga. Los valores vacíos de Maximo no borran esos datos.
+- Preparación sin Guardar después de cada registro ni recargas entre pasos: los
+  campos se validan y el enrutado confirma los cambios. Solo se conserva el
+  guardado necesario para eliminar una jerarquía de anomalías anterior cuando
+  se sustituye por otra.
+- Confirmación explícita antes de una acción irreversible. Se comprueban equipo,
+  estado, fechas, Registro e historial; el cierre normal se verifica en ISSUE y
+  el desecho en CLOSE. Un resultado incierto queda para revisión, sin repetirlo.
+- Impresión opcional después de verificar. Un fallo al preparar el parte permite
+  volver a solicitarlo sin iniciar, cerrar ni desechar de nuevo la OT.
+
+### Almacén · Recepción y expedición
+
+- Las operaciones de almacén se agrupan en su propio submenú y siguen requiriendo
+  activar «Mostrar acciones de almacén» y los permisos de la cuenta de Maximo.
+- Se conserva su operativa de confirmar recepción, confirmar y enviar a SAT
+  interno/externo y dar salida del almacén, individualmente o en lote, con informe
+  de progreso, pendientes y reverificación.
+- Se distinguen las acciones y estados de técnico y almacén. «Dar salida · Técnico»
+  finaliza la reparación; «Dar salida del almacén» realiza la expedición posterior.
+  El seguimiento local y el estado leído en Edge se contrastan según cada acción.
+
+### Extensión de Edge · Panel lateral y cierre dinámico
+
+- Panel lateral con OT, cliente, estado, acciones disponibles y seguimiento. El
+  acceso flotante se oculta al abrirlo y reaparece al cerrarlo.
+- Icono M azul fijado en las sesiones temporales que abre MD. Se conserva el
+  arranque de Edge con el aviso habitual de navegador automatizado.
+- «Cerrar OT» consulta Registro, duración, fechas y anomalías antes de mostrar la
+  revisión. Permite completar incidencia y trabajos cuando faltan y reutiliza las
+  entradas existentes sin duplicarlas ni modificarlas.
+- La preparación del cierre no pulsa Guardar ni reabre la ficha. Se mantienen las
+  comprobaciones de campos y el resultado del enrutado.
+- Las acciones de impresión recuperan el foco de la ficha; si el panel lo retiene,
+  se cierra para permitir continuar y se muestra el progreso en el acceso flotante.
+- El panel utiliza las acciones habilitadas para el estado real de la OT. El envío
+  técnico a SAT y la preparación completa desde el menú de MD siguen disponibles
+  desde MD; no se presentan como nuevas operaciones de almacén en Edge.
+
+### Partes de reparación y PDF
+
+- Boixeres mantiene sus dos variantes HTML: una con técnico y tiempo y otra sin
+  esos datos. Funcionan desde la extensión y desde el menú contextual de MD, también
+  con una OT ya cerrada.
+- Guardar PDF de Boixeres obtiene las dos salidas PDF originales de BIRT y las une
+  localmente, en ese orden, en un único archivo y con un solo diálogo «Guardar como».
+- Se cierra la primera vista preliminar PDF y su visor temporal antes de generar
+  la siguiente, evitando el aviso de BIRT de que ya hay una vista abierta.
+- Si falla una variante, no se entrega un PDF parcial como si contuviera ambas.
+  Para los demás clientes se mantiene la descarga del PDF original de una variante.
+- La unión incluye pdf-lib con licencia MIT dentro de la aplicación; no descarga
+  código durante el uso. El script de build incluye panel, formularios, iconos y licencia.
+- Limitación de BIRT: el PDF nativo puede contener «The resource of this report item
+  is not reachable» cuando el servidor no carga un recurso del diseño. Se conserva
+  el contenido original; esta versión no modifica ni oculta esos avisos.
+
+### Validación y despliegue
+
+- Pruebas locales de preparación sin guardados, varias entradas, APPR/INPRG,
+  cierre/desecho, confirmaciones inciertas, recuperación, formularios y panel.
+- Validación de la candidata: 221 pruebas Python correctas (incluido Edge aislado)
+  y 44 pruebas JavaScript correctas. Las pruebas locales no usan cuentas reales.
+- Unión PDF comprobada con documentos locales en Node y Edge, orden de páginas,
+  continuidad entre variantes y una única selección de archivo.
+- El cierre normal y el desecho desde MD se han comprobado en operaciones reales.
+  El último ajuste de vista preliminar del PDF conjunto de Boixeres deberá
+  confirmarse en la build de prueba antes de publicar.
+- La build y su instalación/actualización se validarán localmente antes de publicar
+  este borrador. Las acciones conservan los permisos y comprobaciones de Maximo.
+
+## 1.2.3 — Recuperación de almacén y mejoras de fluidez
+
+### Resumen
+
+- Los lotes de almacén comprueban de nuevo los resultados inciertos sin repetir la operación.
+- Puedes revisar y recuperar operaciones pendientes incluso después de reiniciar MD.
+- Tabla más fluida: menos reconstrucciones al actualizar, limpiar filtros y cambiar de tema.
+- La actualización del listado muestra su fase y tiempo transcurrido, recuperando el aviso tras otros mensajes.
+- Menor uso de hilos internos de cálculo y más información para diagnosticar incidencias de almacén.
+
+### Recuperación de operaciones de almacén
+
+- Si se pierde la respuesta tras intentar enrutar o confirmar, la OT queda pendiente
+  de verificar y el lote continúa con las siguientes. Al acabar, MD realiza una
+  segunda pasada de consulta desde una sesión independiente, sin reenviar la acción.
+- Nuevo botón «Reverificar pendientes» en el reporte. También puedes acceder desde
+  Configuración → Almacén → «Revisar operaciones pendientes…». Al arrancar, MD ofrece
+  revisar las operaciones que hayan quedado pendientes.
+- Los registros persistentes conservan la acción, la identidad del equipo y el paso
+  alcanzado. Una OT con una operación pendiente queda bloqueada para nuevos envíos
+  hasta resolver su comprobación, evitando reintentos por error.
+- Si la operación ya está verificada en Maximo pero falla el guardado local, la
+  recuperación reintenta únicamente ese guardado. Los resultados correctos del resto
+  del lote se conservan y el reporte original se actualiza cuando se resuelve el caso.
+- Una recepción ya en APPR o una salida ya en CLOSE se identifica como «Ya estaba
+  completada», sin volver a enrutar. Para confirmar una derivación SAT se comprueban
+  tanto el estado como una nueva entrada del historial de la acción correspondiente.
+- Los fallos transitorios de lectura anteriores al intento de enrutar pueden
+  reintentarse una vez. Desde que se intenta enrutar, la recuperación solo consulta
+  el resultado: no repite Enrutar, Aceptar ni la confirmación de detalles SAT.
+- Más evidencias por OT para diagnóstico y recuperación, sin guardar credenciales,
+  tokens ni el texto de los detalles SAT. Los nuevos registros de recuperación se
+  aplican a las operaciones realizadas con esta versión; no importan lotes antiguos.
+
+### Progreso de actualización
+
+- La actualización manual y automática mantienen un aviso con la fase real y el
+  tiempo transcurrido: inicio de sesión, exportación y descarga, procesamiento y
+  guardado. No se muestra un porcentaje estimado sin datos que lo respalden.
+- Los avisos de otras acciones tienen preferencia temporal; al desaparecer se
+  recupera la fase más reciente de la actualización. También se muestra si está
+  esperando o pausada por una acción prioritaria.
+- Corregida la desaparición del estado a los siete segundos al sustituirlo un
+  aviso temporal del coordinador de tareas. El seguimiento se detiene al completar
+  la actualización o fallar y deja visible su resultado.
+
+### Rendimiento y visualización de la tabla
+
+- Los refrescos con datos iguales conservan las celdas, la ordenación y la selección.
+  Cambiar de filtro sigue limpiando la selección aunque devuelva los mismos resultados.
+- Cambiar de tema recolorea la tabla existente y sus iconos sin consultar de nuevo
+  los datos ni reconstruir todas las filas.
+- Cargas de tabla agrupadas para reducir las señales y repintados intermedios.
+  Limpiar filtros y aplicar búsquedas guardadas evitan refrescos redundantes.
+- Las tareas de conciliación e información ampliada no reconstruyen la tabla si
+  terminan sin cambios. Las actualizaciones generales siguen comprobando presencia
+  y última aparición, aunque no haya OTs nuevas.
+- OpenBLAS utiliza un hilo de cálculo por defecto. No limita los hilos de las tareas
+  de MD y respeta una configuración explícita del entorno.
+
+### Validación
+
+- Pruebas locales de pérdida de respuesta, caída tras el clic, recuperación tras
+  reiniciar, errores de guardado local y continuidad de lotes, sin operar sobre Maximo.
+- Suite conjunta: 274 pruebas correctas y 82 pruebas de Edge offline omitidas.
+- Comprobación sintética con 5.000 OTs ficticias: refresco sin cambios de unos 13 ms
+  y limpieza de filtros de unos 424 ms en el equipo de prueba. Los tiempos reales
+  dependen del equipo y de los datos.
+- La recuperación de almacén queda pendiente de validación controlada con operaciones
+  reales. La build empaquetada deberá comprobarse antes de publicar esta release.
+
 ## 1.2.1 — Acciones de almacén en la versión instalada
 
 ### Resumen

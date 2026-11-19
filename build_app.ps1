@@ -62,11 +62,6 @@ $nuitkaArguments = @(
     "--include-package=lxml",
     "--include-data-file=$projectRoot\icon.ico=icon.ico",
     "--include-data-file=$projectRoot\CHANGELOG.md=CHANGELOG.md",
-    "--include-data-file=$projectRoot\browser_extension\manifest.json=browser_extension/manifest.json",
-    "--include-data-file=$projectRoot\browser_extension\content.js=browser_extension/content.js",
-    "--include-data-file=$projectRoot\browser_extension\service_worker.js=browser_extension/service_worker.js",
-    "--include-data-file=$projectRoot\browser_extension\workflow_logic.js=browser_extension/workflow_logic.js",
-    "--include-data-file=$projectRoot\browser_extension\start_options.js=browser_extension/start_options.js",
     "--include-data-file=$projectRoot\resources\failure_catalog.json=resources/failure_catalog.json",
     "--include-data-dir=$projectRoot\ui_assets=ui_assets",
     "--windows-icon-from-ico=$projectRoot\icon.ico",
@@ -79,6 +74,15 @@ $nuitkaArguments = @(
     "--output-dir=$outputDir",
     "--report=$outputDir\compilation-report.xml"
 )
+
+# Include every runtime extension asset (panel, review forms and icons), never its tests.
+$extensionRoot = Join-Path $projectRoot "browser_extension"
+Get-ChildItem -LiteralPath $extensionRoot -Recurse -File | ForEach-Object {
+    $extensionRelative = $_.FullName.Substring($extensionRoot.Length + 1).Replace('\', '/')
+    if ($extensionRelative -notlike "tests/*" -and $_.Extension -in @('.js', '.json', '.html', '.css', '.png', '.md')) {
+        $nuitkaArguments += "--include-data-file=$($_.FullName)=browser_extension/$extensionRelative"
+    }
+}
 
 Push-Location $projectRoot
 try {

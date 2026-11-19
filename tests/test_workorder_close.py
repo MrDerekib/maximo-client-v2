@@ -92,6 +92,11 @@ class FixtureCloser(workflow.WorkorderCloser):
         if self.driver.current_url!=FIXTURE:
             raise AssertionError('Close test left the offline fixture')
 
+    def reload_workorder(self):
+        # The file fixture has no Maximo navigation; refresh simulates a fresh query.
+        if self.driver.current_url!=FIXTURE:raise AssertionError('Offline fixture only')
+        self.driver.refresh()
+
     def response_sequence(self):
         return self.driver.execute_script('return state.responses')
 
@@ -197,7 +202,10 @@ class BrowserCloseTests(TestCase):
             self.browser.execute_script("render('actuals')")
         self.browser.find_element(By.ID,'maximo-desktop-close-ot').click()
         self.poll()
-        return self.browser.find_element(By.ID,'maximo-close-review')
+        dialog=self.browser.find_element(By.ID,'maximo-close-review')
+        ack=dialog.find_elements(By.NAME,'activityAck')
+        if ack and ack[0].is_displayed():ack[0].click()
+        return dialog
 
     def fill_start(self,value='2026-10-26T10:00:00'):
         self.browser.execute_script("""
@@ -230,7 +238,7 @@ class BrowserCloseTests(TestCase):
 
     def test_review_rejects_non_quarter_hours_and_recalculates_end(self):
         dialog=self.prepare_dialog()
-        self.assertEqual(dialog.find_element(By.NAME,'start').get_property('value'),'')
+        self.assertEqual(dialog.find_element(By.NAME,'start').get_property('value'),'2026-10-26T10:00')
         self.fill_start()
         duration=dialog.find_element(By.NAME,'duration')
         duration.send_keys('0,1')
@@ -429,6 +437,28 @@ class BrowserCloseTests(TestCase):
         self.browser.execute_script('resetState({noConfirmation:true})')
         with self.assertRaises(RuntimeError):self.closer.route_close()
         self.assertEqual([e[0] for e in self.state()['events']].count('confirm-close'),1)
+        self.assertEqual(self.state()['routes'],1)
+
+    def test_replaced_accept_becomes_enabled_after_choice_validation(self):
+        def redraw():
+            self.browser.execute_script("""
+                const old=document.querySelector('#inputwf-dialog_inner button');
+                const live=old.cloneNode(true);
+                live.disabled=true;
+                old.replaceWith(live);
+                setTimeout(()=>{live.disabled=false},350);
+            """)
+        with patch.object(self.closer,'before_route_accept',side_effect=redraw):
+            self.assertEqual(self.closer.route_close(),'ISSUE')
+        self.assertEqual(self.state()['events'].count(['confirm-close']),1)
+
+    def test_close_dialog_still_open_reports_pending_exit(self):
+        self.browser.execute_script("""
+            window.confirmClose=()=>{state.events.push(['confirm-close']);persist()};
+        """)
+        with self.assertRaisesRegex(RuntimeError,'INPRG.*salida está pendiente'):
+            self.closer.route_close()
+        self.assertEqual(self.state()['events'].count(['confirm-close']),1)
         self.assertEqual(self.state()['routes'],1)
 
     def test_stale_after_final_accept_checks_result_without_replaying(self):

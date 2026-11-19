@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maximo Desktop · Acciones</title><link rel="stylesheet" href="sidepanel.css"></head>
+<body><header><span class="logo" aria-hidden="true">MD</span><div><h1>Maximo Desktop</h1><p>Asistente de órdenes de trabajo</p></div></header>
+<main><section class="context" aria-label="Orden de trabajo actual"><div class="context-line"><h2 id="ot">Selecciona una OT</h2><span id="status" class="badge" hidden></span></div><p id="client"></p></section>
+<p id="notice" class="notice" role="status">Conectando con la pestaña de Maximo…</p>
+<section id="actions" aria-label="Acciones disponibles"></section>
+<section id="activity" class="activity" hidden aria-label="Seguimiento"><h2>Seguimiento</h2><p id="progress" role="status" aria-live="polite"></p><p id="review-hint" class="muted"></p></section>
+<p id="error" class="error" role="alert" hidden></p>
+</main><footer>Vinculado a la pestaña activa de Maximo · Cierra el panel desde Edge para recuperar el ancho de la ficha.</footer>
+<script src="panel_presence.js"></script><script src="sidepanel.js"></script></body></html>

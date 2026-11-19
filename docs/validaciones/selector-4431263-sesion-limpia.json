@@ -1,0 +1,80 @@
+{
+  "ot": "4431263",
+  "purpose": "new route session with saved-field verification; selector only",
+  "created_at": "2026-11-11T08:28:25.833341+00:00",
+  "confirmation_attempted": false,
+  "sat_selected": false,
+  "route_attempted": true,
+  "initial_state": "APPR",
+  "identity": {
+    "Activo": "136906",
+    "Nº de serie": "SA204",
+    "Planta": "LAB-BAD"
+  },
+  "history_before": 0,
+  "saved_fields_verified": true,
+  "readiness": {
+    "active_tab": true,
+    "asset": "136906",
+    "ot": "4431263",
+    "plant": "LAB-BAD",
+    "ready": true,
+    "route_reachable": true,
+    "status": "APPR",
+    "tab_was_active": false,
+    "response_before": 0,
+    "response_after": 1
+  },
+  "after_state": "APPR",
+  "response": {
+    "ui": {
+      "dialogs": [
+        {
+          "id": "inputwf-dialog_inner",
+          "radios": [
+            {
+              "caption": "Iniciar orden",
+              "checked": true,
+              "id": "mx660-rb"
+            },
+            {
+              "caption": "Cancelar orden",
+              "checked": false,
+              "id": "mx661-rb"
+            },
+            {
+              "caption": "Enviar a SAT Interno",
+              "checked": false,
+              "id": "mx662-rb"
+            },
+            {
+              "caption": "Enviar a SAT Externo",
+              "checked": false,
+              "id": "mx663-rb"
+            }
+          ],
+          "text": "\t\nEntrada manual\n\t\n \n\t\t\t\n\n\n\n\n\t\n\t\tIniciar orden\t\n\t\tCancelar orden\t\n\t\tEnviar a SAT Interno\t\n\t\tEnviar a SAT Externo\t\nAceptar Cancelar"
+        }
+      ],
+      "fields": [
+        {
+          "caption": "Orden de trabajo:",
+          "value": "4431263"
+        },
+        {
+          "caption": "Estado:",
+          "value": "APPR"
+        }
+      ],
+      "path": "/maximo/ui/",
+      "title": "Seguimiento de órdenes de trabajo (TR)"
+    },
+    "browser": {
+      "browserName": "MicrosoftEdge",
+      "browserVersion": "157.0.4341.42",
+      "platformName": "windows"
+    },
+    "driver_version": "157.0.4341.46"
+  },
+  "finished_at": "2026-11-11T08:28:44.863150+00:00"
+}

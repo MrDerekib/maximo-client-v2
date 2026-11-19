@@ -1,16 +1,22 @@
 <!doctype html><html lang="es"><meta charset="utf-8"><title>Offline close workflow</title><body>
 <nav><a role="tab" href="#" onclick="render('main');return false">Orden de trabajo</a>
 <a role="tab" href="#" onclick="render('actuals');return false">Consumos Actuales</a></nav>
+<a role="tab" href="#" onclick="render('records');return false">Registro</a>
+<a role="tab" href="#" onclick="render('anomalies');return false">Informes de anomalías</a>
+<a role="tab" href="#" onclick="render('solutions');return false">Soluciones</a>
 <a id="toolactions_SAVE-tbb_anchor" href="#" onclick="saveRecord();return false">Guardar</a>
 <div id="notice" role="alert"></div><main></main><div id="dialogs"></div>
 <div id="wait" style="display:none;position:fixed;inset:0;background:#ddd8">Cargando</div>
 <script>
-let state,tab,generation=0,widget,draft={};
+let state,tab,generation=0,widget,draft={},recordPage=0,selectedLog=-1;
 const persist=()=>sessionStorage.setItem('close-fixture',JSON.stringify(state));
 function resetState(overrides={}){
   state={ot:'4378677',status:'INPRG',duration:'',start:'2026-10-26T10:00:00',end:'',dirty:false,
+    classCode:'RFN-70',problem:'OTROS-01',cause:'OTROS-02',remedy:'OTROS-03',
+    logs:[{summary:'inc: stock',details:'',type:'CLIENTNOTE'},
+          {summary:'Test equipo',details:'Pruebas realizadas',type:'CLIENTNOTE'}],pageSize:10,
     routes:0,responses:0,events:[],...overrides};
-  draft={};tab='main';persist();render(tab);
+  draft={};tab='main';recordPage=0;selectedLog=-1;persist();render(tab);
 }
 function later(action){
   document.getElementById('wait').style.display='block';
@@ -45,15 +51,56 @@ function control(caption,key){
 function render(next){
   tab=next;sessionStorage.setItem('close-tab',tab);
   document.querySelectorAll('[role=tab]').forEach(e=>e.setAttribute('aria-expanded',
-    (tab==='main'?e.textContent==='Orden de trabajo':e.textContent==='Consumos Actuales')?'true':'false'));
+    e.textContent===({main:'Orden de trabajo',actuals:'Consumos Actuales',records:'Registro',anomalies:'Informes de anomalías',solutions:'Soluciones'})[tab]?'true':'false'));
   document.getElementById('toolactions_SAVE-tbb_anchor').setAttribute('aria-disabled',state.dirty?'false':'true');
   document.querySelector('main').innerHTML=control('Orden de trabajo','ot')+control('Estado','status')+
     (tab==='actuals'?control('Horas totales de reparación','duration'):
+      tab==='records'?recordMarkup():
+      tab==='anomalies'?control('Clase de anomalía','classCode'):
+      tab==='solutions'?control('Síntoma','problem')+control('Causa','cause')+control('Resolucion','remedy'):
       control('Inicio real','start')+control('Finalización real','end'))+
     '<button id="ROUTEWF_WO-MAIN_-tbb_image" onclick="route()">Enrutar</button>';
   document.getElementById('dialogs').innerHTML='';
 }
+
+const escapeHtml=text=>String(text||'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char]);
+function recordMarkup(){
+  const logs=draft.logs||state.logs,first=recordPage*state.pageSize,last=Math.min(logs.length,first+state.pageSize);
+  const rows=logs.slice(first,last).map((log,offset)=>{
+    const i=first+offset,cells=['','','',state.ot,'WORKORDER','TECH','','26/10/26 10:00:00',log.type,escapeHtml(log.summary)];
+    cells[0]=`<a href="#" id="log_${i}_tgdet-ti" title="${selectedLog===i?'Ocultar detalles':'Ver detalles'}" onclick="selectedLog=${i};render('records');return false">Detalles</a>`;
+    return `<tr class="tablerow" id="log-row-${i}">${cells.map(value=>`<td>${value}</td>`).join('')}</tr>`;
+  }).join('');
+  const log=logs[selectedLog];
+  const frame=log?`<p><label for="log-summary">Resumen:</label><input id="log-summary" ctype="textbox" maxlength="100" value="${escapeHtml(log.summary)}" onblur="editLog('summary',this.value)"></p>
+    <p><label for="log-type">Tipo:</label><input id="log-type" readonly value="${log.type}"></p>
+    <iframe id="log_rte_iframe" srcdoc="${escapeHtml('<body><div id="dijitEditorBody" contenteditable="true" onblur="parent.editLog(\'details\',this.innerText)">'+escapeHtml(log.details)+'</div></body>')}"></iframe>`:'';
+  return `<label>${logs.length?first+1:0} - ${last} de ${logs.length}</label>
+    <a href="#" title="Página anterior" aria-disabled="${first===0}" onclick="if(recordPage>0){recordPage--;selectedLog=-1;render('records')}return false">Anterior</a>
+    <a href="#" title="Página siguiente" aria-disabled="${last>=logs.length}" onclick="if(${last}<${logs.length}){recordPage++;selectedLog=-1;render('records')}return false">Siguiente</a>
+    <table><tbody>${rows}</tbody></table>${frame}<button onclick="newLog()">Fila Nueva</button>`;
+}
+function editLog(key,value){
+  const current=(draft.logs||state.logs)[selectedLog];
+  if(!current||current[key]===value)return;
+  const index=selectedLog;
+  const apply=()=>{draft.logs=JSON.parse(JSON.stringify(draft.logs||state.logs));draft.logs[index][key]=value;
+    state.dirty=true;state.responses++;state.validationPending=false;state.events.push(['log-edit',key,value]);};
+  if(state.asyncSummaryCommit && key==='summary'){
+    // Visible text updates immediately, but server acknowledgement comes later.
+    state.validationPending=true;setTimeout(()=>{apply();persist();render(tab);},450);
+  }else later(apply);
+}
+function newLog(){
+  later(()=>{draft.logs=JSON.parse(JSON.stringify(draft.logs||state.logs));draft.logs.push({summary:'',details:'',type:'CLIENTNOTE'});
+    selectedLog=draft.logs.length-1;recordPage=Math.floor(selectedLog/state.pageSize);state.dirty=true;state.responses++;state.events.push(['log-new']);});
+}
+
 function saveRecord(){
+  if(state.forceSaveError||state.validationPending){
+    state.events.push(['save-rejected']);persist();
+    document.getElementById('dialogs').innerHTML='<section role="dialog" id="msgbox-dialog_inner">BMXAA4214E - Error de prueba al guardar<button>Aceptar</button></section>';return;
+  }
   if(!state.dirty)return;
   later(()=>{Object.assign(state,draft);draft={};state.dirty=false;state.responses++;state.events.push(['save']);
     document.getElementById('notice').textContent='BMXAA4205I - El registro ha sido guardado.';});
@@ -82,6 +129,10 @@ function commitDate(key){
 function route(){
   Object.assign(state,draft);draft={};state.dirty=false;state.routes++;state.events.push(['route']);persist();
   if(state.routes<=(state.noOpRoutes||0))return;
+  if(state.status==='APPR'){
+    document.getElementById('dialogs').innerHTML=`<section role="dialog" id="inputwf-dialog_inner"><label><input type="radio" id="choice-start" name="choice" checked>Iniciar orden</label><button onclick="later(()=>{state.status='INPRG';state.events.push(['confirm-start']);})">Aceptar</button></section>`;
+    return;
+  }
   if(state.directIssue){later(()=>{state.status='ISSUE';state.events.push(['close']);});return;}
   if(state.unknownDialog){
     document.getElementById('dialogs').innerHTML='<section role="dialog" id="unknown-dialog_inner">Revisión manual <button onclick="state.events.push([\'unsafe\']);persist()">Aceptar</button></section>';return;

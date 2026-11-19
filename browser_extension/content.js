@@ -179,6 +179,7 @@
       }
       button.textContent = buttonText;
       button.title = buttonText;
+      button.dataset.panelBusy = String(running);
     }
 
     function armReportWait(jobId) {
@@ -207,6 +208,7 @@
       ensureButton();
       const ot = workOrderNumber();
       const status = workOrderStatus();
+      button.dataset.panelBusy = String(running);
       button.hidden = !/^\d{5,12}$/.test(ot);
       button.disabled = running || !logic.canPrintStatus(status);
       button.style.opacity = button.disabled ? "0.6" : "1";
@@ -263,7 +265,10 @@
             document.documentElement.dataset.maximoCloseReportTabs) === "true";
         delete button.dataset.maximoReportAction;
         delete button.dataset.maximoCloseReportTabs;
-        const job = await send("START", { ot, outputFormat, client: repairClient(), closeTabs });
+        let discardedOts = [];
+        try { discardedOts = JSON.parse(sessionStorage.getItem("maximoDesktop.discardedOts") || "[]"); } catch (_) {}
+        const irreparableStamp = outputFormat === "html" && Array.isArray(discardedOts) && discardedOts.includes(ot);
+        const job = await send("START", { ot, outputFormat, client: repairClient(), closeTabs, irreparableStamp });
         jobId = job.jobId;
         setButtonText(job.variantCount > 1 ? "Preparando parte 1/2…" : "Preparando parte…");
         await submitReportVariant(jobId, button, job.variantIndex, job.variantCount);
@@ -312,6 +317,7 @@
       job = await send("CLAIM_OUTPUT");
       await waitFor(() => logic.containsOt(textInFrames(document), job.ot),
         `OT ${job.ot} en el parte HTML`, 45000);
+      if (job.irreparableStamp === true) MaximoReportStamp.insert(document);
       window.print();
       const result = await send("FINISH", { jobId: job.jobId });
       if (result?.closeTabs) window.close();

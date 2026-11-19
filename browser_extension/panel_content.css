@@ -1,0 +1,9 @@
+html[data-maximo-presentation="sidepanel"] #maximo-desktop-print-part,
+html[data-maximo-presentation="sidepanel"] #maximo-desktop-start-actions,
+html[data-maximo-presentation="sidepanel"] #maximo-desktop-close-ot { display:none !important; }
+#maximo-desktop-panel-launcher { position:fixed;right:20px;bottom:20px;z-index:2147483646;
+  padding:10px 16px;border:1px solid #125cb4;border-radius:20px;background:#176fc9;color:#fff;
+  font:600 13px "Segoe UI",sans-serif;box-shadow:0 3px 12px #122c4b30;cursor:pointer; }
+#maximo-desktop-panel-launcher:focus-visible { outline:3px solid #88b9ff;outline-offset:3px; }
+
+#maximo-desktop-panel-launcher[hidden] { display:none !important; }

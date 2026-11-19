@@ -49,11 +49,12 @@ class FaultDescriptionStorageTests(unittest.TestCase):
             db.fault_description_candidates(limit=None, minimum_age_hours=None), ["200", "100"]
         )
 
-    def test_failed_read_retries_when_it_is_the_only_pending_work(self):
+    def test_failed_read_respects_cooldown_even_without_other_pending_work(self):
         now = datetime.now().isoformat(timespec="seconds")
         self.assertTrue(db.mark_fault_description_attempt("100", now))
         self.assertTrue(db.mark_fault_description_attempt("200", now))
-        self.assertEqual(db.fault_description_candidates(), ["100", "200"])
+        self.assertEqual(db.fault_description_candidates(), [])
+        self.assertEqual(db.fault_description_candidates(minimum_age_hours=None), ["100", "200"])
 
 
 class FaultDescriptionUpdaterTests(unittest.TestCase):

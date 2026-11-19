@@ -80,3 +80,15 @@ class ReleaseNotesUiTests(TestCase):
                 open_url.assert_called_once_with('https://github.com/example/release')
             self.assertEqual(dialog.browser.toPlainText().strip(),'Resumen.')
         finally:dialog.deleteLater();self.app.processEvents()
+
+
+    def test_accumulated_notes_identify_base_and_render_each_version(self):
+        from PySide6.QtWidgets import QLabel
+        notes=ReleaseNotes('v1.4.2','## v1.4.2\n- Cierre.\n## v1.4.1\n- Listado.',from_version='v1.4.0')
+        dialog=ReleaseNotesDialog(notes)
+        try:
+            labels=' '.join(label.text() for label in dialog.findChildren(QLabel))
+            self.assertIn('desde v1.4.0 hasta v1.4.2',labels)
+            text=dialog.browser.toPlainText()
+            self.assertIn('v1.4.2',text);self.assertIn('v1.4.1',text)
+        finally:dialog.deleteLater();self.app.processEvents()

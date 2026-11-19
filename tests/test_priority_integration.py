@@ -326,3 +326,20 @@ class IntegrationTests(TestCase):
                 finally:
                     release.set();self.wait_for(lambda:not h._coordinated_threads)
                     h.notices.close();h.deleteLater();self.app.processEvents()
+
+    def test_background_no_change_callbacks_do_not_refresh_table(self):
+        from types import SimpleNamespace
+        from config import AppConfig
+        for count in (0,2):
+            with self.subTest(count=count):
+                w=SimpleNamespace(_closing=False,cfg=AppConfig(fault_descriptions_enabled=True),
+                    reconcile_lock=JobCounter(),update_lock=JobCounter(),fault_description_lock=JobCounter(),
+                    refresh_table=Mock(),_refresh_reconciliation_summary=Mock(),
+                    _refresh_fault_description_summary=Mock(),status=Mock(),_start_task=Mock(),fault_cancel_button=Mock())
+                MaximoDesktopWindow.start_background_reconcile(w)
+                w._start_task.call_args.args[1](count)
+                self.assertEqual(w.refresh_table.call_count,int(count>0))
+                w.refresh_table.reset_mock()
+                MaximoDesktopWindow.start_background_fault_descriptions(w)
+                w._start_task.call_args.args[1](count)
+                self.assertEqual(w.refresh_table.call_count,int(count>0))

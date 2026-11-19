@@ -74,3 +74,57 @@ test("explicit desktop overrides and PDF requests preserve their cleanup policy"
   assert.equal(pdf.messages[0].outputFormat, "pdf");
   assert.equal(pdf.messages[0].closeTabs, false);
 });
+
+
+test("only verified discarded OTs in this session request the HTML stamp", async () => {
+  for (const [stored, expected] of [[undefined,false],['["4384025"]',true],['["4384026"]',false],['bad json',false]]) {
+    const page=await loadDocument(new Map(stored ? [["maximoDesktop.discardedOts",stored]] : []));
+    await page.button.click();
+    assert.equal(page.messages[0].irreparableStamp,expected);
+  }
+  const page=await loadDocument(new Map([["maximoDesktop.discardedOts",'["4384025"]']]));
+  page.button.dataset.maximoReportAction="pdf";
+  await page.button.click();
+  assert.equal(page.messages[0].irreparableStamp,false);
+});
+
+test("the HTML stamp is inserted once and leaves BIRT data intact", () => {
+  const {insert}=require("../report_stamp.js");
+  const nodes=new Map();
+  const original={textContent:"original BIRT report"};
+  const doc={getElementById:id=>nodes.get(id),
+    createElement:()=>({style:{},setAttribute(){}}),
+    body:{appendChild(node){nodes.set(node.id,node);}}};
+  nodes.set("birt-report",original);
+  insert(doc);insert(doc);
+  assert.equal(nodes.size,2);
+  assert.equal(nodes.get("birt-report"),original);
+  const stamp=nodes.get("md-irreparable-stamp");
+  assert.equal(stamp.textContent,"IRREPARABLE");
+  assert.match(stamp.style.cssText,/color:#b3151b/);
+});
+
+
+test("output printing applies the stamp before print, and never for ordinary reports", async () => {
+  for(const enabled of [false,true]) {
+    const events=[];
+    const intervals=[];
+    vm.runInNewContext(content,{
+      MaximoPartLogic:logic,MaximoReportStamp:{insert(){events.push("stamp");}},
+      document:{body:{innerText:"OT 4443840"},querySelectorAll:()=>[]},
+      location:{href:"https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign"},
+      window:{print(){events.push("print");}},
+      chrome:{runtime:{async sendMessage(message){
+        events.push(message.type);
+        return {ok:true,value:message.type==="CLAIM_OUTPUT" ?
+          {ot:"4443840",jobId:"test",irreparableStamp:enabled}: {closeTabs:false}};
+      }}},console,
+      setInterval(fn){intervals.push(fn);return intervals.length;},clearInterval(){}
+    });
+    await new Promise(resolve=>setImmediate(resolve));
+    intervals[0]();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(events,enabled ? ["CLAIM_OUTPUT","stamp","print","FINISH"]:
+      ["CLAIM_OUTPUT","print","FINISH"]);
+  }
+});
