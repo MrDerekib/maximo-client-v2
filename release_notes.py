@@ -1,5 +1,5 @@
 """Per-user release-note history and offline fallback; no network or UI calls."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import logging
 import os
@@ -19,6 +19,7 @@ class ReleaseNotes:
     markdown: str
     url: str = ''
     source: str = ''
+    from_version: str = ''
 
 
 def same_version(first, second):
@@ -110,12 +111,17 @@ def summary_section(markdown):
 def installed_release_notes(path, current_version, changelog=None, fallback_url=''):
     url = fallback_url or ('https://github.com/MrDerekib/maximo-client-v2/releases/tag/' +
                            format_version_tag(current_version))
+    text = ''
     try:
         text = Path(changelog or PROGRAM_DIR / 'CHANGELOG.md').read_text(encoding='utf-8')
         local = changelog_section(text, current_version)
     except (OSError, UnicodeError):
         local = ''
-    cached = _read_state(path)['cached_release']
+    state = _read_state(path)
+    cached = state['cached_release']
+    def result(markdown, source):
+        notes = ReleaseNotes(format_version_tag(current_version), markdown[:MAX_NOTES_CHARS], url, source)
+        return accumulated_release_notes(notes, text, state['seen_version'])
     if same_version(cached.get('tag'), current_version) and isinstance(cached.get('markdown'), str):
         markdown = cached['markdown'].strip()
         if markdown:
@@ -123,10 +129,37 @@ def installed_release_notes(path, current_version, changelog=None, fallback_url=
                 url = cached['url']
             summary = summary_section(markdown)
             if summary:
-                return ReleaseNotes(format_version_tag(current_version), summary[:MAX_NOTES_CHARS], url, 'github')
+                return result(summary, 'github')
             # An older/full GitHub body must not hide the summary bundled in this version.
             summary = summary_section(local)
             if summary:
-                return ReleaseNotes(format_version_tag(current_version), summary[:MAX_NOTES_CHARS], url, 'changelog')
-            return ReleaseNotes(format_version_tag(current_version), markdown[:MAX_NOTES_CHARS], url, 'github')
-    return ReleaseNotes(format_version_tag(current_version), summary_section(local) or local, url, 'changelog')
+                return result(summary, 'changelog')
+            return result(markdown, 'github')
+    return result(summary_section(local) or local, 'changelog')
+
+
+def accumulated_release_notes(notes, changelog, previous_version):
+    """Include only releases newer than the known base, through the installed build.
+
+    The bundled history supplies skipped releases without additional requests.
+    Missing/invalid history falls back to the installed release alone.
+    """
+    if (not re.fullmatch(r'v?\d+\.\d+(?:\.\d+){0,2}', previous_version or '')
+            or not is_newer(notes.version, previous_version)):
+        return notes
+    notes = replace(notes, from_version=format_version_tag(previous_version))
+    headings = re.finditer(r'^##[ \t]+\[?(v?\d+\.\d+(?:\.\d+){0,2})\]?(?=[ \t\r\n—–:-]|$).*$', changelog, re.MULTILINE)
+    releases = []
+    for heading in headings:
+        version = heading.group(1)
+        if (is_newer(version, previous_version) and is_newer(notes.version, version)
+                and not any(same_version(version, other[0]) for other in releases)):
+            section = changelog_section(changelog, version)
+            summary = summary_section(section) or section.partition('\n')[2].strip()
+            if summary: releases.append((version, summary))
+    if not releases:
+        return notes
+    if notes.markdown: releases.append((notes.version, notes.markdown))
+    releases.sort(key=lambda item: tuple(int(n) for n in item[0].lstrip('v').split('.')), reverse=True)
+    markdown = '\n\n'.join(f'## {format_version_tag(version)}\n\n{summary}' for version, summary in releases)
+    return replace(notes, markdown=markdown[:MAX_NOTES_CHARS], source='combined')

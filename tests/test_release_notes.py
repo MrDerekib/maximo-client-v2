@@ -129,3 +129,54 @@ class ReleaseNotesTests(TestCase):
             self.assertEqual(summary_section('### Resumen\n- Breve.\n'+heading+'\nOculto.'),'- Breve.')
         self.assertFalse(summary_section('### Resumen\n\n### Detalles\nCompleto.'))
         self.assertFalse(summary_section('- Versión antigua sin bloque.'))
+
+
+class AccumulatedReleaseNotesTests(TestCase):
+    HISTORY = ('## 1.4.3 — Future\n### Resumen\n- Futuro.\n'
+        '## 1.4.2 — Actual\n### Resumen\n- Cierre recuperable.\n### Detalles\nTexto largo actual.\n'
+        '## 1.4.0 — Base\n### Resumen\n- Tema nuevo.\n'
+        '## 1.4.1 — Intermedia\n### Resumen\n- Consultas eficientes.\n### Detalles\nTexto largo intermedio.\n'
+        '## 1.3.0 — Antigua\n### Resumen\n- Antiguo.\n')
+
+    def test_skipped_releases_only_include_summaries_newer_than_base_in_descending_order(self):
+        with temporary_directory() as folder:
+            path=Path(folder)/STATE_FILENAME;changelog=Path(folder)/'CHANGELOG.md'
+            changelog.write_text(self.HISTORY,encoding='utf-8');mark_notes_seen(path,'1.4.0')
+            for cached in (False,True):
+                with self.subTest(cached=cached):
+                    if cached:cache_release_notes(path,'v1.4.2','### Resumen\n- Cierre recuperable.','https://example.test/release')
+                    notes=installed_release_notes(path,'1.4.2',changelog)
+                    self.assertEqual(notes.from_version,'v1.4.0');self.assertEqual(notes.source,'combined')
+                    self.assertEqual(notes.markdown,'## v1.4.2\n\n- Cierre recuperable.\n\n## v1.4.1\n\n- Consultas eficientes.')
+                    self.assertNotIn('Texto largo',notes.markdown)
+                    self.assertTrue(should_show_notes(path,'1.4.2'))
+            mark_notes_seen(path,'1.4.2');self.assertFalse(should_show_notes(path,'1.4.2'))
+            self.assertFalse(should_show_notes(path,'1.4.1'))
+
+    def test_adjacent_update_has_only_installed_summary_and_missing_history_never_implies_all_releases(self):
+        for base in ('1.4.1','', 'invalid','1.4.3','1.4.2'):
+            with self.subTest(base=base),temporary_directory() as folder:
+                path=Path(folder)/STATE_FILENAME;changelog=Path(folder)/'CHANGELOG.md'
+                changelog.write_text(self.HISTORY,encoding='utf-8')
+                if base:path.write_text(json.dumps({'schema_version':1,'seen_version':base}),encoding='utf-8')
+                notes=installed_release_notes(path,'1.4.2',changelog)
+                self.assertEqual(notes.markdown,'- Cierre recuperable.')
+                self.assertEqual(notes.from_version,'v1.4.1' if base=='1.4.1' else '')
+
+    def test_future_cache_cannot_hide_bundled_skipped_summaries(self):
+        with temporary_directory() as folder:
+            path=Path(folder)/STATE_FILENAME;changelog=Path(folder)/'CHANGELOG.md'
+            changelog.write_text(self.HISTORY,encoding='utf-8');mark_notes_seen(path,'1.4.0')
+            cache_release_notes(path,'v1.4.3','### Resumen\nFuture cache.')
+            notes=installed_release_notes(path,'1.4.2',changelog)
+            self.assertIn('Consultas eficientes.',notes.markdown)
+            self.assertIn('Cierre recuperable.',notes.markdown)
+            self.assertNotIn('Future',notes.markdown)
+
+    def test_missing_changelog_falls_back_to_matching_cached_release(self):
+        with temporary_directory() as folder:
+            path=Path(folder)/STATE_FILENAME;mark_notes_seen(path,'1.4.0')
+            cache_release_notes(path,'v1.4.2','### Resumen\n- Cierre recuperable.')
+            notes=installed_release_notes(path,'1.4.2',Path(folder)/'missing')
+            self.assertEqual(notes.markdown,'- Cierre recuperable.')
+            self.assertEqual(notes.from_version,'v1.4.0')

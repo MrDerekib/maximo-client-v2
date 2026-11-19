@@ -1,4 +1,4 @@
-"""One-version changelog viewer; Markdown cannot load external resources."""
+"""Version-aware changelog viewer; Markdown cannot load external resources."""
 import webbrowser
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QTextBrowser, QVBoxLayout
@@ -21,7 +21,10 @@ class ReleaseNotesDialog(QDialog):
         layout.setSpacing(12)
         title = QLabel(f'Maximo Desktop {notes.version}')
         title.setObjectName("releaseNotesTitle")
-        subtitle = QLabel('Estas son las novedades de la versión instalada. Este aviso se muestra una sola vez.')
+        subtitle = QLabel(
+            f'Novedades desde {notes.from_version} hasta {notes.version}. Este aviso se muestra una sola vez.'
+            if notes.from_version else
+            'Estas son las novedades de la versión instalada. Este aviso se muestra una sola vez.')
         subtitle.setWordWrap(True)
         subtitle.setObjectName("filterHint")
         layout.addWidget(title); layout.addWidget(subtitle)
