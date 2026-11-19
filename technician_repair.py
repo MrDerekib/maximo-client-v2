@@ -102,6 +102,7 @@ def verify_repair_entries(session, request):
 
 
 class RepairPreparer(TechnicianSatPreparer):
+    operation = "proceso de preparación de reparación de la OT"
     def __init__(self,driver,ot,status,progress=None):
         super().__init__(driver,ot,progress)
         if status not in ('APPR','INPRG'):raise RuntimeError('Solo se preparan reparaciones APPR o INPRG.')
@@ -258,6 +259,52 @@ class RepairCloser(WorkorderCloser):
         return True
 
 
+def repair_plan_from_record(record):
+    request=record['reviewed_request']
+    item=WarehouseItem(**request['item'])
+    plan=reviewed_repair(item,{'reference':request['reference'],'entries':request.get('entries',[]),
+        'duration':request['duration'],'time_mode':'start','time':request['start'],
+        'action':request['action'],'justification':request.get('justification',''),
+        'print_report':request.get('print_report',True)},request['selection'])
+    if plan.end!=request['end'] or ('technician_discard' if plan.action=='discard' else 'technician_close')!=record['action']:
+        raise RuntimeError('La petición guardada no coincide con la operación pendiente.')
+    return plan
+
+
+@scheduled('Comprobar recuperación de reparación',HIGH)
+def inspect_repair_recovery(record, *, store=None, session_factory=WarehouseSession, stop=None, journal=None):
+    """Read-only stage assessment. Never start, route, accept or write worklogs."""
+    store=store or RecoveryStore();stop=stop or Event();journal=journal or (lambda event:logging.info('Recuperación de reparación: %s',json.dumps(sanitize(event),ensure_ascii=False)))
+    current=store.get(record['item']['ot'])
+    if not current or current['operation_id']!=record['operation_id']:
+        raise RuntimeError('La operación pendiente cambió. Vuelve a comprobarla.')
+    if not repair_retry_allowed(current):return {'kind':'verify_final','operation_id':current['operation_id']}
+    session=None
+    try:
+        if stop.is_set():raise RuntimeError('Comprobación detenida.')
+        session=session_factory();state=session.open(current['item']['ot']);identity=session.identity()
+        if stop.is_set():raise RuntimeError('Comprobación detenida.')
+        latest=store.get(current['item']['ot'])
+        if not latest or latest['operation_id']!=current['operation_id'] or not repair_retry_allowed(latest):
+            raise RuntimeError('La operación cambió durante la consulta. Vuelve a comprobarla.')
+        if identity!=latest['identity']:
+            raise RuntimeError('La identidad del equipo no coincide con la operación pendiente. No se continuará.')
+        if state=='INPRG':
+            result={'kind':'resume','state':state,'detail':'La OT ya está iniciada. Se comprobará lo guardado y se continuará la reparación sin volver a iniciarla.'}
+        elif state=='APPR' and not latest.get('start_attempted'):
+            result={'kind':'resume','state':state,'detail':'La OT sigue sin iniciar. Se comprobará la preparación existente antes de iniciar y finalizar.'}
+        elif state=='APPR':
+            result={'kind':'pending','state':state,'detail':'El inicio anterior sigue sin confirmar: Maximo muestra APPR. Puedes volver a comprobar; no se repetirá el inicio a ciegas.'}
+        else:
+            result={'kind':'verify_final','state':state,'detail':'La OT ya no está en preparación. Se verificará el resultado, sin reenviar la acción.'}
+        result['operation_id']=latest['operation_id']
+        journal({'event':'repair_recovery_assessed','ot':current['item']['ot'],'operation_id':latest['operation_id'],
+                 'state':state,'decision':result['kind'],'confirmation_replayed':False})
+        return result
+    finally:
+        if session:session.close()
+
+
 @scheduled('Finalizar reparación desde MD',HIGH)
 def run_repair(plan, *, progress=None, stop=None, session_factory=WarehouseSession, store=None, journal=None, stage_progress=None, retry_record=None):
     """No unattended retry after any route/confirmation; printing is a separate UI action."""
@@ -292,6 +339,8 @@ def run_repair(plan, *, progress=None, stop=None, session_factory=WarehouseSessi
         progress('Abriendo OT y comprobando estado e identidad…')
         session=session_factory();state=session.open(plan.item.ot)
         if state not in ('APPR','INPRG'):raise RuntimeError('La OT debe estar en APPR o INPRG.')
+        if retry_record is not None and retry_record.get('resume_state') and state!=retry_record['resume_state']:
+            raise RuntimeError('La OT cambió de estado desde la comprobación de recuperación. Vuelve a comprobar antes de continuar.')
         if retry_record is not None and current.get('start_attempted') and state=='APPR':
             raise RuntimeError('El inicio anterior sigue sin confirmar. No se repetirá; comprueba su resultado antes de continuar.')
         identity=session.identity()
