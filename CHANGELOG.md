@@ -1,5 +1,40 @@
 # Historial de cambios
 
+## Sin publicar
+
+### Enlaces a OTs · Todos los roles
+
+- Los enlaces externos de MD admiten tres acciones: abrir la ficha en Edge,
+  abrirla y filtrar el listado de MD, o solo filtrar MD. Los enlaces existentes
+  mantienen la apertura anterior.
+- Al filtrar se muestra únicamente la OT exacta y se limpian los otros filtros
+  y selecciones. Se avisa si no existe en la base local. Solo filtrar no abre
+  Edge ni consulta Maximo. Las opciones nuevas requieren una build compatible;
+  la versión publicada 1.4.1 todavía no las interpreta.
+
+### Calendarios y revisión · Técnico
+
+- Día seleccionado con resaltado de mayor contraste en todos los temas.
+- El selector de reparación muestra la fecha y hora elegidas mientras se edita,
+  indica cuando se navega a un mes sin elegir un día y aclara que los cambios se
+  aplican con «Aplicar fecha y hora». Cancelar conserva la fecha anterior.
+
+### Detalles de Registro desde Excel · Técnico
+
+- La preparación de reparaciones desde MD y la extensión de Edge inserta el texto
+  completo mediante una operación nativa de entrada. Las tabulaciones copiadas de
+  Excel dejan de actuar como navegación entre controles.
+- La lectura del editor conserva los saltos de línea y las filas vacías. La
+  comparación admite diferencias de espacios y tabulaciones introducidas por el
+  editor, pero rechaza pérdidas de contenido o cambios en el orden de las líneas.
+- La inserción no se repite tras una respuesta incierta. Se registran longitudes,
+  tabulaciones y líneas para diagnóstico sin volcar el texto de la reparación.
+- Los fallos de lectura de Registro identifican la entrada y el resumen visible;
+  el diálogo conserva la causa concreta al bloquear Confirmar, en lugar de
+  sustituirla por un aviso genérico. No se omite la comprobación de seguridad.
+- Esta corrección conserva texto y estructura por líneas; no incorpora todavía
+  pegado de tablas HTML ni preservación del formato visual de Excel.
+
 ## 1.4.1 — Consultas más eficientes y mejoras del listado
 
 ### Resumen

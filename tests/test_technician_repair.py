@@ -324,6 +324,21 @@ class RepairUiTests(TestCase):
         self.assertEqual(d.time.dateTime().toString('yyyy-MM-dd HH:mm'),'2026-11-10 15:20')
         self.assertIn('14:20',d.dates.text())
 
+    def test_calendar_feedback_tracks_day_time_and_month_without_applying_early(self):
+        from PySide6.QtCore import QDate,QTime,QDateTime
+        d=self.dialog();chosen=QDateTime(QDate(2026,11,19),QTime(7,15));d.time.setDateTime(chosen)
+        d.time.show_date_time_popup();popup=d.time._date_time_popup;self.addCleanup(popup.reject)
+        popup.calendar.setSelectedDate(QDate(2026,11,18))
+        popup.hour.setCurrentIndex(popup.hour.findData(8))
+        popup.minute.setCurrentIndex(popup.minute.findData(30))
+        self.assertIn('18',popup.selection_label.text());self.assertIn('08:30',popup.selection_label.text())
+        self.assertEqual(d.time.dateTime(),chosen)
+        popup.calendar.setCurrentPage(2026,10)
+        self.assertIn('Elige un día',popup.selection_label.text())
+        self.assertEqual(popup.calendar.selectedDate(),QDate(2026,11,18))
+        popup.calendar.setSelectedDate(QDate(2026,10,15));popup.apply_button.click()
+        self.assertEqual(d.time.dateTime().toString('yyyy-MM-dd HH:mm'),'2026-10-15 08:30')
+
     def test_cancel_date_and_time_selection_keeps_the_previous_value(self):
         from PySide6.QtCore import QDate
         d=self.dialog();before=d.time.dateTime()

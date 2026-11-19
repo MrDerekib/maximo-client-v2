@@ -7,6 +7,7 @@ from technician_repair import RepairPreparer, RepairEntry
 from technician_sat import format_incident
 from workorder_start import normalized
 from workorder_close import actual_datetime
+from worklog_details import details_match
 
 
 class BrowserRecordReader(RepairPreparer):
@@ -29,7 +30,7 @@ class BrowserRecordReader(RepairPreparer):
         if before is None:before=self.read_records()
         existing=[row for row in before['entries'] if normalized(row['type'])=='clientnote' and normalized(row['summary'])==normalized(entry.summary)]
         if existing:
-            if any(row['details'].strip()!=entry.details.strip() for row in existing):
+            if any(not details_match(entry.details,row['details']) for row in existing):
                 raise RuntimeError('El resumen ya existe con otros detalles. No se sobrescribirá.')
             return
         self.require_approved()
@@ -74,6 +75,29 @@ class BrowserRecordReader(RepairPreparer):
         self.wait(lambda _: self.page_position() != before, 'página de Registro')
         self.idle(); self.require_approved()
 
+    def read_record_details(self, row, summary, position, total):
+        try:
+            native=self.driver.find_element(By.ID,row['id'])
+            toggles=native.find_elements(By.CSS_SELECTOR,'a[id*="_tgdet-ti"]')
+            if len(toggles)!=1:
+                raise RuntimeError('No hay un único selector de detalles para esa entrada.')
+            if normalized(toggles[0].get_attribute('title'))=='ver detalles':
+                toggles[0].click();self.idle()
+            self.wait(lambda _:self.value('Resumen')==summary,'entrada de Registro seleccionada')
+            return self.details()
+        except Exception as exc:
+            try:observed=self.value('Resumen')
+            except Exception:observed=None
+            expected=str(summary)[:100]
+            observed_text=str(observed)[:100] if observed is not None else None
+            logging.error('OT %s: fallo de lectura de Registro; entrada=%s/%s; fila=%s; resumen_esperado=%r; resumen_visible=%r; causa=%s',
+                          self.ot,position,total,row.get('id'),expected,observed_text,str(exc))
+            detail=('El campo Resumen no está disponible.' if observed is None else
+                    f'El formulario muestra «{observed_text}».' if observed!=summary else
+                    'El resumen coincide, pero no se pudieron leer sus detalles.')
+            raise RuntimeError(f'No se pudo verificar la entrada {position} de {total} de Registro: «{expected}». '
+                               f'{detail} Revisa esa entrada en la ficha y vuelve a abrir la revisión del cierre.') from exc
+
     def read_records(self):
         self.tab('Registro')
         for _ in range(100):
@@ -99,14 +123,7 @@ class BrowserRecordReader(RepairPreparer):
                     raise RuntimeError('Hay una entrada incompleta en Registro. Revísala antes de cerrar.')
                 detail = ''
                 if normalized(kind) == 'clientnote':
-                    native = self.driver.find_element(By.ID, row['id'])
-                    toggles = native.find_elements(By.CSS_SELECTOR, 'a[id*="_tgdet-ti"]')
-                    if len(toggles) != 1:
-                        raise RuntimeError('No se pudo leer el detalle de una entrada de Registro.')
-                    if normalized(toggles[0].get_attribute('title')) == 'ver detalles':
-                        toggles[0].click(); self.idle()
-                    self.wait(lambda _: self.value('Resumen') == summary, 'entrada de Registro seleccionada')
-                    detail = self.details()
+                    detail = self.read_record_details(row, summary, len(entries)+1, expected_total)
                 entries.append({'type':kind, 'summary':summary, 'details':detail,
                                 'author':cells[5], 'date':cells[7]})
             if last >= total: break
@@ -186,7 +203,7 @@ def validate_record_approval(approval, records, anomalies):
         seen.add(key)
         existing=[row for row in records['entries'] if normalized(row['type'])=='clientnote' and normalized(row['summary'])==key]
         if existing:
-            if any(row['details'].strip()!=details for row in existing):
+            if any(not details_match(details,row['details']) for row in existing):
                 raise ValueError('Ese resumen ya existe con otros detalles. No se sobrescribirá el Registro.')
             matched_activity = True
             continue  # Exact existing entry: no duplicate on a retry.
@@ -236,7 +253,7 @@ def verify_browser_closed_records(closer, pending, status):
     if any(actual[key]<count for key,count in expected.items()):
         raise RuntimeError('El flujo finalizó, pero cambió una entrada existente. Revisa Registro; no se repetirá el cierre.')
     for entry in pending['expected_entries']:
-        if not any(row['summary']==entry['summary'] and row['details']==entry['details']
+        if not any(row['summary']==entry['summary'] and details_match(entry['details'],row['details'])
                    and normalized(row['type'])=='clientnote' for row in records['entries']):
             raise RuntimeError('El flujo finalizó, pero no se confirmaron todos los trabajos. Revisa Registro; no se repetirá el cierre.')
     logging.info('OT %s: Registro confirmado tras el enrutado; %s trabajos nuevos, sin guardados intermedios',

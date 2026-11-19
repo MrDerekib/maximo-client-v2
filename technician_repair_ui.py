@@ -263,9 +263,28 @@ class RepairDateTimePopup(QDialog):
         self.hour.setCurrentIndex(self.hour.findData(current.time().hour()))
         self.minute.setCurrentIndex(self.minute.findData(current.time().minute()))
         form.addRow('Hora',self.hour);form.addRow('Minutos',self.minute);layout.addLayout(form)
-        buttons=QHBoxLayout();cancel=QPushButton('Cancelar');self.apply_button=QPushButton('Aceptar',objectName='primary')
+        self.selection_label=QLabel();self.selection_label.setWordWrap(True)
+        self.selection_label.setObjectName('repairDateSelection');layout.addWidget(self.selection_label)
+        hint=QLabel('La fecha y hora se aplican al pulsar «Aplicar fecha y hora».')
+        hint.setWordWrap(True);layout.addWidget(hint)
+        self.calendar.selectionChanged.connect(self.update_selection_feedback)
+        self.calendar.currentPageChanged.connect(self.update_selection_feedback)
+        self.hour.currentIndexChanged.connect(self.update_selection_feedback)
+        self.minute.currentIndexChanged.connect(self.update_selection_feedback)
+        self.update_selection_feedback()
+        buttons=QHBoxLayout();cancel=QPushButton('Cancelar');self.apply_button=QPushButton('Aplicar fecha y hora',objectName='primary')
         cancel.clicked.connect(self.reject);self.apply_button.clicked.connect(self.apply)
         buttons.addStretch();buttons.addWidget(cancel);buttons.addWidget(self.apply_button);layout.addLayout(buttons)
+
+    def update_selection_feedback(self,*args):
+        selected=self.calendar.selectedDate()
+        time=QTime(self.hour.currentData(),self.minute.currentData())
+        selected_text=self.calendar.locale().toString(selected,'dddd d MMMM yyyy')
+        text=f"Seleccionado: {selected_text} · {time.toString('HH:mm')}"
+        if (selected.year(),selected.month()) != (self.calendar.yearShown(),self.calendar.monthShown()):
+            shown=selected.__class__(self.calendar.yearShown(),self.calendar.monthShown(),1)
+            text+=f"\nElige un día de {self.calendar.locale().toString(shown,'MMMM yyyy')} para cambiar la fecha."
+        self.selection_label.setText(text)
 
     def apply(self):
         value=self.editor.dateTime()

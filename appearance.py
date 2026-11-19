@@ -380,7 +380,10 @@ def component_css(colors, assets_dir):
     QCalendarWidget QToolButton#qt_calendar_prevmonth {{ qproperty-icon: url("{previous}"); }}
     QCalendarWidget QToolButton#qt_calendar_nextmonth {{ qproperty-icon: url("{following}"); }}
     QCalendarWidget QAbstractItemView {{ background: {colors['surface']}; color: {colors['text']};
-        selection-background-color: {colors['accent_light']}; selection-color: {colors['text']}; }}
+        selection-background-color: {colors['accent']}; selection-color: {colors['on_accent']}; }}
+    QCalendarWidget QAbstractItemView::item:selected {{
+        background: {colors['accent']}; color: {colors['on_accent']};
+        border: 2px solid {colors['accent']}; }}
     QProgressBar {{ background: {colors['control']}; color: {colors['text']};
         border: 1px solid {colors['border_strong']}; border-radius: 4px; min-height: 16px; text-align: center; }}
     QProgressBar::chunk {{ background: {colors['accent_light']}; border-radius: 3px; }}
