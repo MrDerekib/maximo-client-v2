@@ -1,15 +1,14 @@
 # Historial de cambios
 
-## Sin publicar
+## 1.4.3 — Selección de OTs durante las actualizaciones
 
-- El refresco del listado conserva las OTs marcadas que siguen visibles con los
-  mismos filtros, aunque cambien de fila durante una actualización.
+### Resumen
 
-- Al iniciar, MD consulta las reparaciones pendientes. Si Maximo confirma que
-  la OT ya está en CLOSE y coincide el equipo, actualiza el seguimiento local
-  y archiva el intento como finalizado por otra vía.
-- Puedes silenciar el aviso de los intentos actuales y seguir consultándolos
-  desde «Revisar operaciones pendientes».
+Esta actualización corrige la pérdida de selección al actualizar Maximo, especialmente al preparar lotes de OTs en almacén.
+
+- **Selección de OTs:** si mantienes los mismos filtros, las OTs marcadas que sigan visibles permanecen seleccionadas aunque cambien de fila.
+- **Legibilidad del listado:** las descripciones aprovechan el ancho de la celda desde el primer pintado. Los encabezados siguen el tamaño del perfil de legibilidad, incluido el personalizado.
+- **Operaciones pendientes:** si Maximo ya muestra la OT en CLOSE y coincide el equipo, MD actualiza el seguimiento local y archiva el intento. También puedes silenciar avisos al iniciar y seguir consultando los intentos manualmente.
 
 ## 1.4.2 — Correcciones del cierre y pegado desde Excel
 
