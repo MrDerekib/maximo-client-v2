@@ -283,6 +283,7 @@ def application_legibility_css(profile):
     QLabel, QLineEdit, QComboBox, QSpinBox, QAbstractSpinBox, QCheckBox,
     QRadioButton, QTextEdit, QPlainTextEdit, QTableView, QListView, QMenu,
     QPushButton, QStatusBar {{ font-size: {size}px; font-weight: {settings.weight}; }}
+    QHeaderView#workorderHeader {{ font-size: {size}px; font-weight: 700; }}
     """
 
 
