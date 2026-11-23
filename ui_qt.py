@@ -1153,6 +1153,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        # Fixed-height rows use the full cell width, including for Maximo text
+        # containing non-breaking spaces.
+        self.table.setWordWrap(False)
         self.table.setSortingEnabled(True)
         self.table.cellDoubleClicked.connect(self.open_table_cell)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
