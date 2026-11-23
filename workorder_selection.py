@@ -146,6 +146,28 @@ class WorkorderSelection(QObject):
         self._marked_rows={index.row() for index in self._marks.values()}
         return sorted(self._marked_rows)
 
+    def snapshot_for_refresh(self):
+        """Capture identities before Qt invalidates indexes during a rebuild."""
+        current = self.table.currentIndex()
+        return (
+            {self._key(row) for row in self.selected_rows()},
+            self._key(self._anchor.row()) if self._anchor.isValid() else None,
+            self._key(current.row()) if current.isValid() else None,
+            current.column(),
+        )
+
+    def restore_after_refresh(self, snapshot):
+        keys, anchor_key, current_key, current_column = snapshot
+        visible = {self._key(row): row for row in self._visible_rows()}
+        self._set_rows([visible[key] for key in keys if key in visible])
+        model = self.table.model()
+        self._anchor = QPersistentModelIndex()
+        if anchor_key in visible:
+            self._anchor = QPersistentModelIndex(model.index(visible[anchor_key], 0))
+        if current_key in visible:
+            self.table.selectionModel().setCurrentIndex(
+                model.index(visible[current_key], current_column), QItemSelectionModel.NoUpdate)
+
     def is_marked(self,row):return row in self._marked_rows
 
     def _set_rows(self,rows,*,sync=True):

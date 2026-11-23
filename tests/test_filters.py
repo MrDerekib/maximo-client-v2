@@ -342,6 +342,35 @@ class FilterTests(unittest.TestCase):
             self.assertIs(window.table.item(0,1),cell)
             self.assertFalse(window.table.selectionModel().selectedRows())
 
+    def test_background_refresh_preserves_visible_batch_by_ot(self):
+        with self.qt_window() as (window, qt):
+            window.table.sortItems(3, qt.Qt.AscendingOrder)
+            window._workorder_selector._set_rows([
+                row for row in range(window.table.rowCount())
+                if window.table.item(row, 1).text() in {'1', '2', '3'}
+            ])
+            self.assertEqual({item.ot for item in window.warehouse_items()}, {'1', '2', '3'})
+
+            with patch.object(window, '_credentials_ready', return_value=True), \
+                 patch.object(window, '_start_task') as task, \
+                 patch.object(window, 'start_background_reconcile'):
+                window.update_now()
+                with closing(sqlite3.connect(self.path)) as conn:
+                    conn.execute("UPDATE maximo SET Seguimiento='DAR SALIDA' WHERE OT='1'")
+                    conn.execute("DELETE FROM maximo WHERE OT='3'")
+                    conn.execute("INSERT INTO maximo (OT, Nº_de_serie, Cliente) VALUES ('5', '000', 'TMB')")
+                    conn.commit()
+                task.call_args.args[1]((1, 1))
+
+            self.assertEqual(window.table.item(0, 1).text(), '5')
+            self.assertEqual(window.table.horizontalHeader().sortIndicatorSection(), 3)
+            batch = {item.ot: item.status for item in window.warehouse_items()}
+            self.assertEqual(batch, {'1': 'DAR SALIDA', '2': 'RETENIDO'})
+            self.assertEqual(window._workorder_selector.counter.text(), '2 OTs seleccionadas')
+            window.advanced_state['tracking'] = ['RETENIDO']
+            window.refresh_table()
+            self.assertFalse(window.table.selectionModel().selectedRows())
+
     def test_zero_count_update_still_refreshes_presence_and_last_seen(self):
         with self.qt_window() as (window, qt):
             with patch.object(window,'_credentials_ready',return_value=True), \

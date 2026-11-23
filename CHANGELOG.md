@@ -2,6 +2,9 @@
 
 ## Sin publicar
 
+- El refresco del listado conserva las OTs marcadas que siguen visibles con los
+  mismos filtros, aunque cambien de fila durante una actualización.
+
 - Al iniciar, MD consulta las reparaciones pendientes. Si Maximo confirma que
   la OT ya está en CLOSE y coincide el equipo, actualiza el seguimiento local
   y archiva el intento como finalizado por otra vía.

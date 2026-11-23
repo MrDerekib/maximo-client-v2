@@ -1977,9 +1977,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         snapshot = (tuple(rows), frozenset(priority_ots),
                     self.cfg.fault_descriptions_enabled, self.cfg.detailed_descriptions_enabled)
         filter_key = (self.search_edit.text(), self.search_field(), repr(filters))
+        same_filter = getattr(self, '_table_filter_key', None) == filter_key
         if getattr(self, '_table_snapshot', None) == snapshot and self.table.rowCount() == len(rows):
             self._refresh_table_colors()
-            if getattr(self, '_table_filter_key', None) != filter_key:
+            if not same_filter:
                 self._workorder_selector.clear_selection()
             self._table_filter_key = filter_key
             self._update_list_summary()
@@ -1989,6 +1990,15 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         tracking_colors = {}
         colors = {key: QColor(value) for key, value in ACTIVE_COLORS.items()}
         detail_icon = self.style().standardIcon(QStyle.SP_MessageBoxInformation)
+        selector = self._workorder_selector
+        selection = selector.snapshot_for_refresh() if same_filter and selector.enabled else None
+        header = self.table.horizontalHeader()
+        sort_column, sort_order = (
+            (header.sortIndicatorSection(), header.sortIndicatorOrder())
+            if same_filter else (1, Qt.DescendingOrder)
+        )
+        scroll_bar = self.table.verticalScrollBar()
+        scroll_position = scroll_bar.value()
         updates_enabled = self.table.updatesEnabled()
         self._table_snapshot = None
         self.table.setUpdatesEnabled(False)
@@ -2021,16 +2031,20 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                             item.setData(Qt.UserRole + 1, is_priority)
                             item.setData(Qt.UserRole + 2, active)
                         self.table.setItem(index, column, item)
+                header.setSortIndicator(sort_column, sort_order)
                 self.table.setSortingEnabled(True)
-                self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
                 self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
+                self._apply_priority_filter()
+                if selection is not None:
+                    selector.restore_after_refresh(selection)
+                if same_filter:
+                    scroll_bar.setValue(scroll_position)
         finally:
             self.table.setUpdatesEnabled(updates_enabled)
         self._table_snapshot = snapshot
         self._table_filter_key = filter_key
         self._table_palette = (dict(ACTIVE_COLORS), ACTIVE_LEGIBILITY, self.tracking_colors_check.isChecked())
         self.table.verticalHeader().setDefaultSectionSize(ACTIVE_LEGIBILITY.row_height)
-        self._apply_priority_filter()
         self._update_list_summary()
         return True
 
@@ -2122,13 +2136,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
     def _apply_priority_filter(self):
         checked = self.priority_only_button.isChecked()
+        updates_enabled = self.table.updatesEnabled()
         self.table.setUpdatesEnabled(False)
         try:
             for row in range(self.table.rowCount()):
                 item = self.table.item(row, 0)
                 self.table.setRowHidden(row, checked and not bool(item and item.data(Qt.UserRole + 1)))
         finally:
-            self.table.setUpdatesEnabled(True)
+            self.table.setUpdatesEnabled(updates_enabled)
         self.table.viewport().update()
         if getattr(self, '_workorder_selector', None) is not None:
             self._workorder_selector.refresh()
