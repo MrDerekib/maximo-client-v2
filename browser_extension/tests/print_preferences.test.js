@@ -105,7 +105,7 @@ test("ATM sends the company from the current work order and refuses a blank loca
   assert.equal(disabled.messages[0].includeOriginCompany, false);
   assert.equal(disabled.messages[0].originCompany, "");
   settings.set("maximoDesktop.reportOrigin", '{"mode":"selected","projects":["FGC"]}');
-  const selected = await loadDocument(settings, undefined, "FGC", "TALLER");
+  const selected = await loadDocument(settings, undefined, "FGC", "CODIGO", "TALLER");
   await selected.button.click();
   assert.equal(selected.messages[0].includeOriginCompany, true);
   assert.equal(selected.messages[0].originCompany, "TALLER");
@@ -120,9 +120,10 @@ test("Line 9 sends the initial location description instead of its inventory cod
     assert.equal(page.messages[0].includeOriginCompany, true);
     assert.equal(page.messages[0].originCompany, location);
   }
-  const fallback = await loadDocument(new Map(), undefined, "LINEA-9", "ISTOCK");
-  await fallback.button.click();
-  assert.equal(fallback.messages[0].originCompany, "ISTOCK");
+  const missing = await loadDocument(new Map(), undefined, "LINEA-9", "ISTOCK");
+  await missing.button.click();
+  assert.equal(missing.messages.length, 0);
+  assert.match(missing.button.textContent, /Descripción de Ubicación Inicial/);
   storage.set("maximoDesktop.reportOrigin", '{"mode":"selected","projects":["ATM"]}');
   const excluded = await loadDocument(storage, undefined, "LINEA-9", "ISTOCK", location);
   await excluded.button.click();

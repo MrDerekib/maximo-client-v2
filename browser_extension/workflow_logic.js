@@ -81,18 +81,13 @@
     return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 200) : "";
   }
 
-  function originCompanyFromWorkorder(documentRoot, client) {
-    const primary = originCompanyText(labeledFieldValue(documentRoot, "Ubicación inicial", "mx88-tb"));
-    const line9 = isLine9Client(client);
-    if (primary && !line9 && !isAtmClient(client)) return primary;
+  function originCompanyFromWorkorder(documentRoot) {
     const description = [...(documentRoot.querySelectorAll?.("input[aria-label]") || [])]
       .find(field => field.getAttribute("aria-label")?.trim().toLocaleLowerCase() ===
         "descripción de ubicación inicial" && (!field.getClientRects || field.getClientRects().length));
     const locationDescription = originCompanyText(description?.value) ||
       originCompanyText(labeledFieldValue(documentRoot, "Descripción de ubicación inicial", "mx88-tb2"));
-    if (line9) return locationDescription || primary;
-    const company = locationDescription.replace(/^empresa(?:\s*:\s*|\s+|$)/i, "");
-    return company || primary;
+    return locationDescription.replace(/^empresa(?:\s*:\s*|\s+|$)/i, "");
   }
 
   function removeBirtResourceNotices(documentRoot) {

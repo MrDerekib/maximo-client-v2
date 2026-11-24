@@ -90,7 +90,7 @@
     try { preference = JSON.parse(sessionStorage.getItem("maximoDesktop.reportOrigin") || "null"); } catch (_) {}
     let client = logic.clientFromWorkorder(document);
     let includeOriginCompany = logic.includeReportOrigin(client, preference);
-    let originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document, client) : "";
+    let originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document) : "";
     if (!client || (includeOriginCompany && !originCompany)) {
       const mainTab = () => [...document.querySelectorAll("a[role='tab']")].find(tab =>
         visible(tab) && tab.textContent.trim().toLowerCase() === "orden de trabajo");
@@ -102,12 +102,12 @@
           "pestaña Orden de trabajo de la OT", 8000);
         client = logic.clientFromWorkorder(document);
         includeOriginCompany = logic.includeReportOrigin(client, preference);
-        originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document, client) : "";
+        originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document) : "";
       }
     }
     if (!client) throw new Error("No se pudo leer el cliente. Abre la pestaña Orden de trabajo.");
     if (includeOriginCompany && !originCompany)
-      throw new Error("Falta la empresa o ubicación inicial. Comprueba «Ubicación inicial» en Orden de trabajo.");
+      throw new Error("Falta la empresa o ubicación inicial. Comprueba «Descripción de Ubicación Inicial» en Orden de trabajo.");
     if (workOrderNumber() !== ot) throw new Error("La ficha ha cambiado durante la lectura del parte.");
     return { client, includeOriginCompany, originCompany };
   }

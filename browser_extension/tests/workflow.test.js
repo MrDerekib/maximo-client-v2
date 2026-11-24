@@ -46,7 +46,7 @@ test("the exact mx47-tb field takes priority, with a Cliente row fallback", () =
     querySelectorAll: () => [label] }), "Cliente: TMB BOIXERES");
 });
 
-test("ATM prioritizes the company description and falls back to the location code", () => {
+test("report origin uses only the initial location description", () => {
   const fields = new Map([
     ["mx88-tb", { value: " SARBUS " }],
     ["mx88-tb2", { value: " Empresa Sagales " }]
@@ -58,15 +58,13 @@ test("ATM prioritizes the company description and falls back to the location cod
   assert.equal(includeReportOrigin("ATM", { mode: "disabled" }), false);
   assert.equal(includeReportOrigin("FGC", { mode: "all" }), true);
   assert.equal(includeReportOrigin("TMB BOIXERES", { mode: "selected", projects: ["TMB"] }), false);
-  assert.equal(originCompanyFromWorkorder(doc, "ATM"), "Sagales");
-  assert.equal(originCompanyFromWorkorder(doc, "FGC"), "SARBUS");
+  assert.equal(originCompanyFromWorkorder(doc), "Sagales");
   fields.set("mx88-tb2", { value: "Empresa:" });
-  assert.equal(originCompanyFromWorkorder(doc, "ATM"), "SARBUS");
-  fields.delete("mx88-tb");
-  fields.set("mx88-tb2", { value: "Empresa: Sagales" });
-  assert.equal(originCompanyFromWorkorder(doc, "ATM"), "Sagales");
-  fields.clear();
-  assert.equal(originCompanyFromWorkorder(doc, "ATM"), "");
+  assert.equal(originCompanyFromWorkorder(doc), "");
+  fields.set("mx88-tb2", { value: "Stock Lìnia 9 - Tramo I" });
+  assert.equal(originCompanyFromWorkorder(doc), "Stock Lìnia 9 - Tramo I");
+  fields.delete("mx88-tb2");
+  assert.equal(originCompanyFromWorkorder(doc), "");
 });
 
 function chromeHarness() {
