@@ -16,7 +16,7 @@ from workorder_start import normalized
 from workorder_close import WorkorderCloser, actual_datetime, repair_seconds, validate_close_times, close_review
 from failure_catalog import resolve_selection
 from task_priorities import scheduled, HIGH
-from warehouse import WarehouseItem
+from warehouse import WarehouseItem, serials_match
 from warehouse_transport import WarehouseSession
 from warehouse_recovery import RecoveryStore, repair_retry_allowed
 from warehouse_diagnostics import sanitize,log_exception
@@ -348,8 +348,10 @@ def run_repair(plan, *, progress=None, stop=None, session_factory=WarehouseSessi
             raise RuntimeError('El inicio anterior sigue sin confirmar. No se repetirá; comprueba su resultado antes de continuar.')
         identity=session.identity()
         journal({'event':'initial_state_read','ot':plan.item.ot,'state':state,'identity':identity})
-        if not identity.get('Activo') or not identity.get('Planta') or (plan.item.serial and identity.get('Nº de serie')!=plan.item.serial):
+        if not identity.get('Activo') or not identity.get('Planta'):
             raise RuntimeError('No se pudo contrastar la identidad del equipo.')
+        if plan.item.serial and not serials_match(plan.item.serial, identity.get('Nº de serie')):
+            raise RuntimeError('El número de serie de la ficha no coincide con el del listado de MD.')
         if retry_record is not None:
             if identity!=current['identity']:
                 raise RuntimeError('La identidad cambió desde el intento anterior. No se reintentará.')

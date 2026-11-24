@@ -14,7 +14,7 @@ from technician_repair import reviewed_repair,run_repair,RepairPreparer,inspect_
 from technician_sat import incident_required
 from warehouse_transport import WarehouseSession
 from warehouse_recovery import RecoveryStore, repair_retry_allowed
-from warehouse import WarehouseResult, workorder_status_label
+from warehouse import WarehouseResult, serials_match, workorder_status_label
 from db import get_fault_description,fault_description_checked,apply_closed_repair,apply_warehouse_status
 from dataclasses import asdict
 import json,logging
@@ -40,7 +40,8 @@ def repair_defaults(item, *, stop=None):
         if state not in ('APPR', 'INPRG'):
             return {'state': state}
         identity=session.identity()
-        if item.serial and identity.get('Nº de serie')!=item.serial:raise RuntimeError('El número de serie no coincide.')
+        if item.serial and not serials_match(item.serial, identity.get('Nº de serie')):
+            raise RuntimeError('El número de serie de la ficha no coincide con el del listado de MD.')
         r=RepairPreparer(session.driver,item.ot,state);session.reader=r
         cached=get_fault_description(item.ot)
         fault=cached if cached or fault_description_checked(item.ot) else r.value('Resumen') or ''

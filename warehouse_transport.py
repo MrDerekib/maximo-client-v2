@@ -14,7 +14,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 
 import maximo_client as client
-from warehouse import ACTIONS, FINAL_STATES, WarehouseResult, freeze_items
+from warehouse import ACTIONS, FINAL_STATES, WarehouseResult, freeze_items, serials_match
 from workorder_start import WorkorderStarter, normalized
 from warehouse_diagnostics import sanitize, log_exception
 from warehouse_recovery import RecoveryStore, recovery_item, PendingOperationError, preparation_retry_allowed
@@ -262,7 +262,7 @@ def _identity(session, item):
     if (not isinstance(identity, dict) or not identity.get('Activo') or not identity.get('Planta') or
             not isinstance(identity.get('Nº de serie'), str)):
         raise RuntimeError('No se pudo identificar de forma fiable el equipo y su planta.')
-    if item.serial and str(identity.get('Nº de serie') or '').strip() != item.serial.strip():
+    if item.serial and not serials_match(item.serial, identity['Nº de serie']):
         raise RuntimeError('El número de serie de la ficha no coincide con la OT seleccionada.')
     return identity
 

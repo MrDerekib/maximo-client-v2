@@ -385,6 +385,25 @@ class RepairUiTests(TestCase):
 
 
 class CachedFaultTests(TestCase):
+    def test_repair_preview_accepts_equivalent_serial_spaces_but_rejects_a_different_serial(self):
+        from technician_repair_ui import repair_defaults
+        session = Mock()
+        session.open.return_value = 'INPRG'
+        session.identity.return_value = {'Activo': 'A', 'Planta': 'P', 'Nº de serie': 'AB12 34567'}
+        preparer = Mock()
+        preparer.value.return_value = '0,50'
+        preparer.worklog_snapshot.return_value = {'totals': [0], 'rows': []}
+
+        with patch('technician_repair_ui.WarehouseSession', return_value=session), \
+                patch('technician_repair_ui.RepairPreparer', return_value=preparer) as make_preparer, \
+                patch('technician_repair_ui.get_fault_description', return_value='Avería guardada'):
+            result = repair_defaults(WarehouseItem('1', serial='AB12\u00a034567'))
+            self.assertEqual(result['state'], 'INPRG')
+            self.assertEqual(result['identity'], session.identity.return_value)
+            for serial in ('AB1234567', 'AB12\u00a034568'):
+                with self.subTest(serial=serial), self.assertRaisesRegex(RuntimeError, 'número de serie'):
+                    repair_defaults(WarehouseItem('1', serial=serial))
+            make_preparer.assert_called_once()
     def test_sat_defaults_use_cached_fault_without_reading_live_summary(self):
         from technician_sat import technician_sat_defaults
         s=Mock();s.open.return_value='APPR';s.identity.return_value={'Activo':'A','Planta':'P','Nº de serie':'S'}

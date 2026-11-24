@@ -52,6 +52,16 @@ def workorder_status_label(value, *, include_code=False):
     return f'{label} ({code})' if include_code else label
 
 
+_SERIAL_SPACES = str.maketrans({'\u00a0': ' ', '\u202f': ' '})
+
+
+def serials_match(expected: str, actual: str | None) -> bool:
+    """Compare the spacing used by the exported list and the Maximo form."""
+    return isinstance(actual, str) and (
+        expected.translate(_SERIAL_SPACES).strip() == actual.translate(_SERIAL_SPACES).strip()
+    )
+
+
 @dataclass(frozen=True)
 class WarehouseItem:
     ot: str

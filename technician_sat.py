@@ -13,7 +13,7 @@ from task_priorities import coordinator, scheduled, HIGH
 from worklog_limits import validate_worklog_summary
 from db import get_fault_description, fault_description_checked
 from failure_catalog import resolve_selection
-from warehouse import WarehouseItem, freeze_items
+from warehouse import WarehouseItem, freeze_items, serials_match
 from workorder_close import repair_seconds
 
 
@@ -330,7 +330,7 @@ def technician_sat_defaults(items, *, stop=None, progress=None, session_factory=
             identity = session.identity()
             if not identity.get('Activo') or not identity.get('Planta'):
                 raise RuntimeError(f'OT {item.ot}: no se pudo contrastar equipo y planta.')
-            if item.serial and item.serial.strip() != (identity.get('Nº de serie') or '').strip():
+            if item.serial and not serials_match(item.serial, identity.get('Nº de serie')):
                 raise RuntimeError(f'OT {item.ot}: el número de serie no coincide.')
             cached = get_fault_description(item.ot)
             reason = cached if cached or fault_description_checked(item.ot) else reader.value('Resumen') or ''
