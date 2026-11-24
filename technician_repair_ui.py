@@ -5,7 +5,7 @@ from PySide6.QtCore import QThread,Signal,QDateTime,QTime,QPoint,Qt,QSignalBlock
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QLineEdit,
     QTableWidget,QTableWidgetItem,QStyledItemDelegate,QPushButton,QComboBox,QDateTimeEdit,QPlainTextEdit,
-    QCheckBox,QMessageBox,QScrollArea,QWidget,QSizePolicy,QHeaderView,QApplication,QProgressBar,QAbstractItemView,QStyle,QCalendarWidget)
+    QCheckBox,QMessageBox,QScrollArea,QWidget,QSizePolicy,QHeaderView,QApplication,QProgressBar,QAbstractItemView,QStyle,QCalendarWidget,QFrame)
 from failure_picker import FailurePathPicker
 from preview_lifecycle import cancel_readonly_preview
 from rounded_table import RoundedTableFrame
@@ -20,7 +20,8 @@ from dataclasses import asdict
 import json,logging
 from uuid import uuid4
 from warehouse_diagnostics import WarehouseJournal
-from app_paths import LOG_DIR
+from app_paths import LOG_DIR, PROGRAM_DIR
+from ui_activity_icon import RefreshIndicator
 from task_priorities import scheduled,HIGH
 
 
@@ -381,6 +382,7 @@ class RepairDialog(QDialog):
         super().__init__(parent);self.item=item;self._worker=None;self._reviewed=False;self._verified=None;self.progress_dialog=None;self._retry_record=None
         self._preview_closed=False
         self._resume_assessment=None
+        self._preview_state = None
         self._preview_edited=set();self._applying_preview=False
         self.setWindowTitle('Finalizar reparación · OT '+item.ot)
         self.setObjectName('repairReview')
@@ -419,7 +421,24 @@ class RepairDialog(QDialog):
         self.picker=FailurePathPicker();self.picker.set_selection(selection);body.addWidget(self.picker)
         self.print_check=QCheckBox('Imprimir parte una vez verificado');self.print_check.setChecked(True);body.addWidget(self.print_check)
         self.confirm=QCheckBox('He revisado la OT y confirmo la acción irreversible seleccionada.');body.addWidget(self.confirm)
-        self.status=QLabel('Consultando el estado y Registro de Maximo…');self.status.setWordWrap(True);root.addWidget(self.status)
+        self.preview_banner = QFrame(objectName='repairPreviewBanner')
+        banner_row = QHBoxLayout(self.preview_banner)
+        banner_row.setContentsMargins(14, 10, 14, 10)
+        self.preview_indicator = RefreshIndicator(PROGRAM_DIR / 'ui_assets' / 'refresh-white.svg', self.preview_banner)
+        banner_row.addWidget(self.preview_indicator)
+        banner_text = QVBoxLayout()
+        banner_text.setSpacing(2)
+        banner_text.addWidget(QLabel('Consultando Maximo', objectName='repairPreviewTitle'))
+        hint = QLabel('Comprobando el estado y el Registro de la OT. Puedes ir rellenando los datos.')
+        hint.setWordWrap(True)
+        banner_text.addWidget(hint)
+        banner_row.addLayout(banner_text, 1)
+        root.addWidget(self.preview_banner)
+        self.preview_banner.hide()
+
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        root.addWidget(self.status)
         buttons=QHBoxLayout();self.retry_print=QPushButton('Volver a preparar el parte');self.retry_print.setEnabled(False);self.retry_print.clicked.connect(lambda:self.print_requested.emit(self.item.ot));self.cancel=QPushButton('Cerrar');self.cancel.clicked.connect(self.close);self.submit=QPushButton('Revisar y ejecutar…');self.submit.setEnabled(False);self.submit.clicked.connect(self.execute);self.retry_print.hide();buttons.addStretch();buttons.addWidget(self.cancel);buttons.addWidget(self.submit);root.addLayout(buttons)
         self.duration.textChanged.connect(self.update_dates);self.time.dateTimeChanged.connect(self.update_dates);self.time_mode.currentIndexChanged.connect(self.update_dates)
         self.reference.textChanged.connect(lambda:self.mark_preview_edit('reference'))
@@ -483,7 +502,13 @@ class RepairDialog(QDialog):
         self._worker.progress.connect(self.progress_message)
         self._worker.ready.connect(self.preview_ready if plan is None else self.finished_repair)
         self._worker.failed.connect(self.failed)
-        if plan is not None:
+        if plan is None:
+            self.status.hide()
+            self.preview_banner.setToolTip('')
+            self.preview_banner.show()
+            self.preview_indicator.set_running(True)
+            self._worker.finished.connect(self._stop_preview_indicator)
+        else:
             self._resume_assessment=None
             if self.progress_dialog is None:self.progress_dialog=RepairProgressDialog(self)
             else:self.progress_dialog.reset()
@@ -551,6 +576,7 @@ class RepairDialog(QDialog):
 
     def recheck_ready(self,row):
         if isinstance(row,dict):
+            self._preview_state = row.get('state')
             self._resume_assessment=row
             self.progress_dialog.has_failed=True
             self.progress_dialog.message.setText(row['detail'])
@@ -679,11 +705,23 @@ class RepairDialog(QDialog):
             QMessageBox.warning(self,'Reintento bloqueado',str(exc))
 
     def progress_message(self,text):
+        if self._preview_closed:
+            return
+        if self.preview_indicator.animation.running:
+            self.preview_banner.setToolTip(text)
+            return
         self.status.setText(text)
         if self.progress_dialog:self.progress_dialog.message.setText(text)
 
+    def _stop_preview_indicator(self):
+        self.preview_indicator.set_running(False)
+        self.preview_banner.hide()
+        self.status.show()
+
     def preview_ready(self,data):
+        self._stop_preview_indicator()
         if self._preview_closed:return
+        self._preview_state = data['state']
         self._reviewed=True;self.submit.setEnabled(True)
         self.fault.setText('Avería: '+data['fault'])
         if data['fault'] and not self._justification_edited:
@@ -699,8 +737,11 @@ class RepairDialog(QDialog):
                 for entry in data['entries']:self.add_entry(entry['summary'],entry['details'])
         finally:self._applying_preview=False
         self.update_dates()
-        preserved=' Se han conservado los datos que escribiste durante la consulta.' if self._preview_edited else ''
-        self.status.setText('Estado real: '+data['state']+'. Revisa los datos. Si está en APPR, se iniciará antes de finalizar.'+preserved)
+        state_message = ('OT aprobada (APPR). MD la iniciará antes de finalizar.'
+                         if self._preview_state == 'APPR'
+                         else 'OT ya iniciada (INPRG). Revisa los datos antes de finalizar.')
+        preserved = ' Se han conservado tus cambios.' if self._preview_edited else ''
+        self.status.setText(state_message + preserved)
 
     def execute(self):
         if self.is_running() or not self._reviewed or self._verified:return
@@ -709,8 +750,12 @@ class RepairDialog(QDialog):
         except (ValueError,OverflowError) as exc:QMessageBox.warning(self,'Revisar reparación',str(exc));return
         label='DESECHAR POR IRREPARABLE' if plan.action=='discard' else 'CERRAR OT'
         reason_line='\nMotivo por el que se desecha: '+plan.justification if plan.action=='discard' else ''
+        start_note = {
+            'APPR': 'La OT está aprobada. MD la iniciará antes de finalizar. ',
+            'INPRG': '',
+        }.get(self._preview_state, 'Si la OT está aprobada, MD la iniciará antes de finalizar. ')
         if QMessageBox.question(self,'Confirmar acción irreversible',
-            f'OT {self.item.ot} · {self.item.serial}\n{label}\nIncidencia: {plan.incident_summary or "—"}\nTiempo: {plan.duration} h\nInicio: {plan.start}\nFin: {plan.end}{reason_line}\n\nSi está en APPR, también se iniciará. No es reversible. ¿Continuar?',
+            f'OT {self.item.ot} · {self.item.serial}\n{label}\nIncidencia: {plan.incident_summary or "—"}\nTiempo: {plan.duration} h\nInicio: {plan.start}\nFin: {plan.end}{reason_line}\n\n{start_note}No es reversible. ¿Continuar?',
             QMessageBox.Yes|QMessageBox.No,QMessageBox.No)!=QMessageBox.Yes:return
         self.submit.setEnabled(False);self.review_panel.setEnabled(False);self.status.setText('Preparando la reparación…')
         self.launch(plan)
@@ -742,8 +787,12 @@ class RepairDialog(QDialog):
         if result.get('print_report'):self.print_requested.emit(self.item.ot)
 
     def failed(self,message):
+        self._stop_preview_indicator()
         if self._preview_closed:return
         self.submit.setEnabled(False)
+        if getattr(self._worker, 'plan', False) is None:
+            self.status.setText('No se pudo consultar Maximo. ' + message)
+            return
         self.status.setText('Proceso detenido: '+message+'. Revisa el registro de operaciones pendientes antes de repetir.')
         if self.progress_dialog:
             self.progress_dialog.failure(message)
@@ -760,6 +809,7 @@ class RepairDialog(QDialog):
 
     def closeEvent(self,event):
         if getattr(self._worker,'plan',False) is None and cancel_readonly_preview(self,self._worker):
+            self._stop_preview_indicator()
             event.accept();return
         if self.is_running():
             self.request_stop();event.ignore();return
@@ -767,7 +817,9 @@ class RepairDialog(QDialog):
         super().closeEvent(event)
 
     def reject(self):
-        if getattr(self._worker,'plan',False) is None and cancel_readonly_preview(self,self._worker):return
+        if getattr(self._worker,'plan',False) is None and cancel_readonly_preview(self,self._worker):
+            self._stop_preview_indicator()
+            return
         if self.is_running():self.request_stop();return
         self._preview_closed=True
         super().reject()

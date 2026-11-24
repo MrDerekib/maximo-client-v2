@@ -425,6 +425,11 @@ def component_css(colors, assets_dir):
     QPushButton#priorityFilter:checked:hover, QPushButton#advancedFilter[filtersActive="true"]:hover {{ background: {colors['accent']}; }}
     QPushButton#dialogPrimary {{ background: {colors['accent']}; color: {colors['on_accent']}; }}
     QPushButton#dialogPrimary:hover {{ background: {colors['accent_hover']}; }}
+    QFrame#repairPreviewBanner {{ background: {colors['accent_light']};
+        border: 1px solid {colors['border_strong']}; border-left: 4px solid {colors['accent']};
+        border-radius: 8px; }}
+    QFrame#repairPreviewBanner QLabel {{ color: {colors['text']}; background: transparent; }}
+    QLabel#repairPreviewTitle {{ font-weight: 700; }}
     QDialog#activityDialog {{ background: transparent; border: none; }}
     QFrame#activityCard {{ background: {colors['surface']}; border: 1px solid {colors['border']}; border-radius: 10px; }}
     QLabel#activityTitle {{ background: transparent; border: none; color: {colors['heading']}; font-size: 13px; font-weight: 700; }}
