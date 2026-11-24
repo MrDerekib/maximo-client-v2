@@ -15,6 +15,13 @@ cambios** y el aviso de cambios pendientes quedan fuera del área desplazable y
 afectan a todas las pestañas. Las columnas se apilan cuando falta ancho; un grupo
 único como Almacén usa todo el ancho disponible.
 
+## Acciones de datos
+
+En **Maximo Desktop Menú** puedes revisar las OTs no activas, completar la
+información pendiente o cancelar una lectura en curso. En **Datos y
+sincronización** se mantienen los contadores, las preferencias de segundo plano
+y los tamaños de lote.
+
 ## Operaciones
 
 En Listado, **Operaciones** abre los intentos que requieren revisión. El contador

@@ -961,6 +961,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             action.triggered.connect(lambda _checked=False, page=page:self.navigate_to(page))
             self.navigation_actions.append(action)
         menu.addSeparator()
+        review_inactive = menu.addAction('Revisar OTs no activas…')
+        review_inactive.triggered.connect(self.start_priority_reconcile)
+        self.fault_run_action = menu.addAction('Completar información de OTs…')
+        self.fault_run_action.triggered.connect(self.start_priority_fault_descriptions)
+        self.fault_cancel_action = menu.addAction('Cancelar lectura de información')
+        self.fault_cancel_action.setEnabled(False)
+        self.fault_cancel_action.triggered.connect(self.cancel_fault_descriptions)
+        menu.addSeparator()
         load_excel_action=menu.addAction('Cargar Excel de prioridades')
         load_excel_action.setIcon(QIcon(str(PROGRAM_DIR / 'ui_assets' / 'excel.svg')))
         load_excel_action.triggered.connect(self.import_priorities)
@@ -1096,10 +1104,12 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.operations_button = QPushButton("Operaciones")
         self.operations_button.clicked.connect(self.open_warehouse_recovery)
         actions = QWidget()
+        actions.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         action_layout = QHBoxLayout(actions)
         action_layout.setContentsMargins(0, 0, 0, 0)
-        action_layout.addWidget(self.operations_button)
-        action_layout.addWidget(update)
+        for button in (self.operations_button, update):
+            button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
+            action_layout.addWidget(button)
         outer.addWidget(self._page_header("Órdenes de trabajo", "Consulta, filtra y gestiona el seguimiento local.", actions))
 
         search_card = QFrame(objectName="filtersCard");self.search_card=search_card
@@ -1518,14 +1528,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.reconcile_check = QCheckBox("Actualizar estados de OT no activas en segundo plano")
         self.batch_spin = DecoratedSpinBox(); self.batch_spin.setRange(1, 100); self.batch_spin.setSuffix(" OT")
         self.reconcile_pending_label = QLabel(); self.reconcile_pending_label.setObjectName("filterHint")
-        priority = QPushButton("Revisar todas las OT pendientes ahora")
-        priority.clicked.connect(self.start_priority_reconcile)
         clean = QPushButton("Eliminar registros no activos…", objectName="danger")
         clean.clicked.connect(self.delete_all_inactive)
-        maintenance_actions = QHBoxLayout()
-        maintenance_actions.addWidget(priority, 1); maintenance_actions.addWidget(clean, 1)
         mform.addRow("", self.reconcile_check); mform.addRow("Tamaño de lote", self.batch_spin)
-        mform.addRow("Pendientes", self.reconcile_pending_label); mform.addRow(maintenance_actions)
+        mform.addRow("Pendientes", self.reconcile_pending_label); mform.addRow(clean)
 
         self.fault_descriptions_card = QGroupBox("Información ampliada de OT")
         fault_form = QFormLayout(self.fault_descriptions_card)
@@ -1535,21 +1541,12 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.detailed_descriptions_check.toggled.connect(self._update_fault_description_controls)
         self.fault_batch_spin = DecoratedSpinBox(); self.fault_batch_spin.setRange(1, 100); self.fault_batch_spin.setSuffix(" OT")
         self.fault_pending_label = QLabel(); self.fault_pending_label.setObjectName("filterHint")
-        self.fault_run_button = QPushButton("Completar información pendiente ahora")
-        self.fault_run_button.clicked.connect(self.start_priority_fault_descriptions)
-        self.fault_cancel_button = QPushButton("Cancelar lectura")
-        self.fault_cancel_button.setEnabled(False)
-        self.fault_cancel_button.clicked.connect(self.cancel_fault_descriptions)
         fault_form.addRow("", self.fault_descriptions_check)
         fault_form.addRow("", self.detailed_descriptions_check)
         fault_form.addRow("Tamaño de lote", self.fault_batch_spin)
         fault_form.addRow("Pendientes de avería", self.fault_pending_label)
         self.detail_pending_label = QLabel(objectName="filterHint")
         fault_form.addRow("Pendientes de detalle", self.detail_pending_label)
-        fault_actions = QHBoxLayout()
-        fault_actions.addWidget(self.fault_run_button, 1)
-        fault_actions.addWidget(self.fault_cancel_button)
-        fault_form.addRow(fault_actions)
 
         self.priorities_card = QGroupBox("Prioridades locales")
         priority_form = QFormLayout(self.priorities_card)
@@ -2427,6 +2424,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
     def _refresh_fault_description_summary(self):
         if not hasattr(self, "fault_pending_label"):
             return
+        self.fault_run_action.setEnabled(
+            self.cfg.fault_descriptions_enabled or self.cfg.detailed_descriptions_enabled
+        )
         pending = fault_description_candidate_count()
         detail_pending = detailed_description_candidate_count()
         self.detail_pending_label.setText(
@@ -2455,7 +2455,6 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
     def _update_fault_description_controls(self):
         enabled = self.fault_descriptions_check.isChecked() or self.detailed_descriptions_check.isChecked()
         self.fault_batch_spin.setEnabled(enabled)
-        self.fault_run_button.setEnabled(enabled)
         if hasattr(self, "table"):
             self.table.setColumnHidden(self.columns.index("Avería"), not self.fault_descriptions_check.isChecked())
             QTimer.singleShot(0, self._fit_columns_to_viewport)
@@ -2463,7 +2462,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
     def cancel_fault_descriptions(self):
         if self.fault_description_lock.locked():
             self.enrichment_cancel_event.set()
-            self.fault_cancel_button.setEnabled(False)
+            self.fault_cancel_action.setEnabled(False)
             self.status.showMessage("Cancelando lectura de OT…")
 
     def start_background_fault_descriptions(self, sync_summary=None):
@@ -2479,7 +2478,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             return
         cancel_event = threading.Event()
         self.enrichment_cancel_event = cancel_event
-        self.fault_cancel_button.setEnabled(True)
+        self.fault_cancel_action.setEnabled(True)
         batch = self.cfg.fault_description_batch_size
         if sync_summary:
             self.status.showMessage(sync_summary + " · Completando información de OT en segundo plano…")
@@ -2489,7 +2488,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         def done(completed):
             cancelled = cancel_event.is_set()
             self.fault_description_lock.release(); self.update_lock.release()
-            self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
+            self.fault_cancel_action.setEnabled(self.fault_description_lock.locked())
             if completed:
                 self.refresh_table()
             self._refresh_fault_description_summary()
@@ -2500,7 +2499,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
         def failed(error):
             self.fault_description_lock.release(); self.update_lock.release()
-            self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
+            self.fault_cancel_action.setEnabled(self.fault_description_lock.locked())
             logging.warning("Enriquecimiento de averías falló: %s", error)
             self._refresh_fault_description_summary()
             self.status.showMessage(f"{sync_summary} · Información ampliada: error; consulta el log." if sync_summary else "No se pudo completar la información de OT; consulta el log.")
@@ -2526,11 +2525,11 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.fault_description_lock.acquire(False)
         cancel_event = threading.Event()
         self.enrichment_cancel_event = cancel_event
-        self.fault_cancel_button.setEnabled(True)
+        self.fault_cancel_action.setEnabled(True)
         def release():
             self._manual_information_pending = False
             self.fault_description_lock.release(); self.update_lock.release()
-            self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
+            self.fault_cancel_action.setEnabled(self.fault_description_lock.locked())
             self._refresh_fault_description_summary()
             self._refresh_reconciliation_summary()
         def done(completed):
@@ -2581,13 +2580,13 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             return
         cancel_event = threading.Event()
         self.enrichment_cancel_event = cancel_event
-        self.fault_cancel_button.setEnabled(True)
+        self.fault_cancel_action.setEnabled(True)
         self.status.showMessage(f"Completando información de {count} OT…")
 
         def done(completed):
             cancelled = cancel_event.is_set()
             self.fault_description_lock.release(); self.update_lock.release()
-            self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
+            self.fault_cancel_action.setEnabled(self.fault_description_lock.locked())
             if completed:
                 self.refresh_table()
             self._refresh_fault_description_summary()
@@ -2599,7 +2598,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
         def failed(error):
             self.fault_description_lock.release(); self.update_lock.release()
-            self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
+            self.fault_cancel_action.setEnabled(self.fault_description_lock.locked())
             self._refresh_fault_description_summary()
             self.status.showMessage("La lectura de información ampliada falló; consulta el detalle.", 7000)
             if not self._closing:
