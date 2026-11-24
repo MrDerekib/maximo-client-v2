@@ -148,9 +148,9 @@ QTabWidget#settingsTabs::pane { border: 0; background: #f5f7fb; }
 QTabBar::tab { background: #e8eef5; color: #486581; padding: 10px 16px; margin-right: 5px; border-bottom: 3px solid transparent; border-top-left-radius: 6px; border-top-right-radius: 6px; font-size: 12px; font-weight: 600; }
 QTabBar::tab:selected { background: #ffffff; color: #102a43; border-bottom-color: #1976d2; }
 QTabBar::tab:hover { background: #dbeafe; }
-QToolButton#sidebarToggle, QToolButton#navigationMenu { background: transparent; color: #172033; border: none; border-radius: 6px; padding: 5px; }
+QToolButton#sidebarToggle, QToolButton#navigationMenu, QToolButton#navigationSettings { background: transparent; color: #172033; border: none; border-radius: 6px; padding: 5px; }
 QFrame#navigationBar { border-bottom: 1px solid #bcccdc; }
-QToolButton#sidebarToggle:hover, QToolButton#navigationMenu:hover { background: #dbeafe; }
+QToolButton#sidebarToggle:hover, QToolButton#navigationMenu:hover, QToolButton#navigationSettings:hover { background: #dbeafe; }
 """
 
 # Los perfiles transforman los roles del tema; los widgets no conocen nombres de temas.
@@ -952,44 +952,48 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.sidebar_toggle.setIconSize(QSize(20, 20))
         self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
         row.addWidget(self.sidebar_toggle)
-        self.navigation_menu_button = QToolButton(objectName='navigationMenu')
-        self.navigation_menu_button.setText('Maximo Desktop Menú')
-        self.navigation_menu_button.setPopupMode(QToolButton.InstantPopup)
-        self.navigation_menu_button.setAccessibleName('Maximo Desktop Menú')
-        menu = QMenu(self.navigation_menu_button)
-        self.navigation_actions = []
-        for page, caption in enumerate(('Listado', 'Configuración')):
-            action = menu.addAction(caption)
-            action.triggered.connect(lambda _checked=False, page=page:self.navigate_to(page))
-            self.navigation_actions.append(action)
-        menu.addSeparator()
-        review_inactive = menu.addAction('Revisar OTs no activas…')
-        review_inactive.triggered.connect(self.start_priority_reconcile)
-        self.fault_run_action = menu.addAction('Completar información de OTs…')
-        self.fault_run_action.triggered.connect(self.start_priority_fault_descriptions)
-        self.fault_cancel_action = menu.addAction('Cancelar lectura de información')
-        self.fault_cancel_action.setEnabled(False)
-        self.fault_cancel_action.triggered.connect(self.cancel_fault_descriptions)
-        menu.addSeparator()
-        load_excel_action=menu.addAction('Cargar Excel de prioridades')
-        load_excel_action.setIcon(QIcon(str(PROGRAM_DIR / 'ui_assets' / 'excel.svg')))
-        load_excel_action.triggered.connect(self.import_priorities)
-        self.export_action = menu.addAction('Exportar a Excel')
-        self.export_action.setIcon(QIcon(str(PROGRAM_DIR / 'ui_assets' / 'excel.svg')))
-        self.export_action.triggered.connect(self.export_current_list)
-        self.navigation_menu_button.setMenu(menu)
-        row.addWidget(self.navigation_menu_button)
-        self.view_menu_button = QToolButton(objectName='navigationMenu')
-        self.view_menu_button.setText('Ver')
-        self.view_menu_button.setPopupMode(QToolButton.InstantPopup)
-        view_menu = QMenu(self.view_menu_button)
+        def add_menu(label):
+            button = QToolButton(objectName='navigationMenu')
+            button.setText(label)
+            button.setPopupMode(QToolButton.InstantPopup)
+            button.setMenu(QMenu(label, button))
+            row.addWidget(button)
+            return button
+
+        self.file_menu_button = add_menu('Archivo')
+        file_menu = self.file_menu_button.menu()
+        excel_icon = QIcon(str(PROGRAM_DIR / 'ui_assets' / 'excel.svg'))
+        load_excel_action = file_menu.addAction('Cargar Excel de prioridades', self.import_priorities)
+        load_excel_action.setIcon(excel_icon)
+        self.export_action = file_menu.addAction('Exportar a Excel', self.export_current_list)
+        self.export_action.setIcon(excel_icon)
+
+        self.view_menu_button = add_menu('Ver')
+        view_menu = self.view_menu_button.menu()
+        view_menu.addAction('Listado', lambda: self.navigate_to(0))
         view_menu.addMenu(self._create_columns_menu(view_menu))
-        self.view_menu_button.setMenu(view_menu)
-        row.addWidget(self.view_menu_button)
-        row.addSpacing(24)
-        self.navigation_location = QLabel('Listado', objectName='pageSubtitle')
-        row.addWidget(self.navigation_location)
+        view_menu.addSeparator()
+        self.sidebar_visibility_action = view_menu.addAction('Ocultar barra lateral', self.toggle_sidebar)
+
+        self.maximo_menu_button = add_menu('Maximo')
+        maximo_menu = self.maximo_menu_button.menu()
+        update_action = maximo_menu.addAction('Actualizar Maximo', lambda: self.update_now())
+        maximo_menu.aboutToShow.connect(
+            lambda: update_action.setEnabled(not getattr(self, '_list_update_pending', False))
+        )
+        maximo_menu.addSeparator()
+        maximo_menu.addAction('Revisar OTs no activas…', self.start_priority_reconcile)
+        self.fault_run_action = maximo_menu.addAction('Completar información de OTs…', self.start_priority_fault_descriptions)
+        self.fault_cancel_action = maximo_menu.addAction('Cancelar lectura de información', self.cancel_fault_descriptions)
+        self.fault_cancel_action.setEnabled(False)
+
         row.addStretch()
+        self.settings_nav_button = QToolButton(objectName='navigationSettings')
+        self.settings_nav_button.setText('Configuración')
+        self.settings_nav_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.settings_nav_button.setIconSize(QSize(18, 18))
+        self.settings_nav_button.clicked.connect(lambda: self.navigate_to(1))
+        row.addWidget(self.settings_nav_button)
         self._refresh_navigation_icon()
         return bar
 
@@ -1020,7 +1024,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         for attribute,asset,role,size in (
                 ('save_profile_button','save-search.svg','sidebar_text',20),
                 ('delete_profile_button','delete-search.svg','sidebar_text',20),
-                ('priority_only_button','priority-flag.svg','button_text',18)):
+                ('priority_only_button','priority-flag.svg','button_text',18),
+                ('settings_nav_button','settings.svg','text',18)):
             if not hasattr(self,attribute):continue
             icon=QIcon(str(PROGRAM_DIR / 'ui_assets' / asset)).pixmap(size*2,size*2)
             painter=QPainter(icon)
@@ -1052,6 +1057,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         caption = 'Ocultar barra lateral' if visible else 'Mostrar barra lateral'
         self.sidebar_toggle.setToolTip(caption)
         self.sidebar_toggle.setAccessibleName(caption)
+        self.sidebar_visibility_action.setText(caption)
 
     def _sidebar_resized(self, _position, _index):
         if self.sidebar.isHidden():
@@ -1092,7 +1098,6 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             else:
                 return False
         self.pages.setCurrentIndex(page)
-        self.navigation_location.setText(("Listado", "Configuración")[page])
         if page == 1:
             self._refresh_reconciliation_summary()
             self._refresh_fault_description_summary()
@@ -2876,7 +2881,6 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             return
         action = parse_ot_action(uri)
         self.pages.setCurrentIndex(0)
-        self.navigation_location.setText("Listado")
         if action in {"filter", "open_filter"}:
             self._filter_linked_ot(ot)
         self.activate_window()

@@ -24,7 +24,8 @@ class ColumnWidthTests(TestCase):
 
     def test_columns_menu_persists_visibility_across_refreshes_and_reopening(self):
         with self.f.qt_window() as (w, qt):
-            view_columns = w.view_menu_button.menu().actions()[0].menu()
+            view_columns = next(action.menu() for action in w.view_menu_button.menu().actions()
+                                if action.text() == 'Columnas')
             view_columns.aboutToShow.emit()
             actions = {action.text(): action for action in view_columns.actions()}
             self.assertTrue(actions['OT'].isChecked())

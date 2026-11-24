@@ -353,6 +353,7 @@ def component_css(colors, assets_dir):
     QPushButton#sidebarAction:disabled {{ color: {colors['sidebar_muted']}; }}
     QPushButton#sidebarAction:hover {{ background: {colors['sidebar_surface']}; color: {colors['sidebar_text']}; }}
     QToolButton#navigationMenu {{ padding: 5px 23px 5px 5px; font-size: 14px; }}
+    QToolButton#navigationSettings {{ padding: 5px 8px; font-size: 14px; }}
     QToolButton#navigationMenu::menu-indicator {{
         image: url("{arrow}"); width: 12px; height: 12px;
         subcontrol-origin: padding; subcontrol-position: center right; right: 5px; }}
