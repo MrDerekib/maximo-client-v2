@@ -45,6 +45,35 @@
     return visible(fallback) ? String(fallback.value || "").trim() : "";
   }
 
+  function isAtmClient(client) {
+    return /^(?:cliente\s*:?\s*)?atm(?:\s|$)/i.test(String(client || "").trim());
+  }
+
+  function originCompanyText(value) {
+    return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 200) : "";
+  }
+
+  function originCompanyFromWorkorder(documentRoot) {
+    const primary = labeledFieldValue(documentRoot, "Ubicación inicial", "mx88-tb");
+    if (primary) return originCompanyText(primary);
+    const description = [...(documentRoot.querySelectorAll?.("input[aria-label]") || [])]
+      .find(field => field.getAttribute("aria-label")?.trim().toLocaleLowerCase() ===
+        "descripción de ubicación inicial" && (!field.getClientRects || field.getClientRects().length));
+    const backup = description?.value ||
+      labeledFieldValue(documentRoot, "Descripción de ubicación inicial", "mx88-tb2");
+    return originCompanyText(backup).replace(/^empresa\s*:?\s+/i, "");
+  }
+
+  function insertOriginCompany(documentRoot, company) {
+    if (!company || documentRoot.getElementById("md-origin-company")) return;
+    const field = documentRoot.createElement("div");
+    field.id = "md-origin-company";
+    field.textContent = "Empresa de origen: " + company;
+    field.style.cssText = "display:block;position:relative;margin:0 0 8px;" +
+      "font:bold 12px Arial,sans-serif;color:#000;overflow-wrap:anywhere";
+    documentRoot.body.prepend(field);
+  }
+
   function isBoixeresClient(client) {
     return String(client || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
       .replace(/\s+/g, " ").trim().toUpperCase().includes("TMB BOIXERES");
@@ -66,7 +95,8 @@
   }
 
   const logic = { pageKind, containsOt, canPrintStatus, labeledFieldValue,
-    isBoixeresClient, clientFromWorkorder };
+    isBoixeresClient, isAtmClient, clientFromWorkorder, originCompanyText,
+    originCompanyFromWorkorder, insertOriginCompany };
   root.MaximoPartLogic = logic;
   if (typeof module !== "undefined" && module.exports) module.exports = logic;
 })(typeof globalThis !== "undefined" ? globalThis : this);

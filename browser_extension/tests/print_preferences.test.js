@@ -7,13 +7,15 @@ const content = fs.readFileSync(require.resolve("../content.js"), "utf8");
 
 // Each document has new DOM nodes, while tab session storage survives reloads.
 // Run the real content script and capture START before any report is generated.
-async function loadDocument(storage, rootPreference) {
+async function loadDocument(storage, rootPreference, client = "TMB", origin = "") {
   const elements = new Map();
   const intervals = [];
   const messages = [];
   const field = value => ({ value, getClientRects: () => [1] });
   elements.set("mx45-tb", field("4384025"));
   elements.set("mx73-tb", field("ISSUE"));
+  elements.set("mx47-tb", field(client));
+  elements.set("mx88-tb", field(origin));
   const document = {
     documentElement: { dataset: rootPreference === undefined ? {} :
       { maximoCloseReportTabs: rootPreference } },
@@ -88,6 +90,16 @@ test("only verified discarded OTs in this session request the HTML stamp", async
   assert.equal(page.messages[0].irreparableStamp,false);
 });
 
+test("ATM sends the company from the current work order and refuses a blank location", async () => {
+  const page = await loadDocument(new Map(), undefined, "ATM", " SARBUS ");
+  await page.button.click();
+  assert.equal(page.messages[0].originCompany, "SARBUS");
+  const missing = await loadDocument(new Map(), undefined, "ATM");
+  await missing.button.click();
+  assert.equal(missing.messages.length, 0);
+  assert.match(missing.button.textContent, /empresa de origen de ATM/);
+});
+
 test("the HTML stamp is inserted once and leaves BIRT data intact", () => {
   const {insert}=require("../report_stamp.js");
   const nodes=new Map();
@@ -111,20 +123,26 @@ test("output printing applies the stamp before print, and never for ordinary rep
     const intervals=[];
     vm.runInNewContext(content,{
       MaximoPartLogic:logic,MaximoReportStamp:{insert(){events.push("stamp");}},
-      document:{body:{innerText:"OT 4443840"},querySelectorAll:()=>[]},
+      document:{
+        getElementById: () => null,
+        createElement: () => ({ style: {} }),
+        body: { innerText: "OT 4443840", prepend(node) { events.push(node.textContent); } },
+        querySelectorAll: () => []
+      },
       location:{href:"https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign"},
       window:{print(){events.push("print");}},
       chrome:{runtime:{async sendMessage(message){
         events.push(message.type);
         return {ok:true,value:message.type==="CLAIM_OUTPUT" ?
-          {ot:"4443840",jobId:"test",irreparableStamp:enabled}: {closeTabs:false}};
+          {ot:"4443840",jobId:"test",irreparableStamp:enabled,originCompany:enabled ? "SARBUS" : ""}:
+          {closeTabs:false}};
       }}},console,
       setInterval(fn){intervals.push(fn);return intervals.length;},clearInterval(){}
     });
     await new Promise(resolve=>setImmediate(resolve));
     intervals[0]();
     await new Promise(resolve=>setImmediate(resolve));
-    assert.deepEqual(events,enabled ? ["CLAIM_OUTPUT","stamp","print","FINISH"]:
+    assert.deepEqual(events,enabled ? ["CLAIM_OUTPUT","Empresa de origen: SARBUS","stamp","print","FINISH"]:
       ["CLAIM_OUTPUT","print","FINISH"]);
   }
 });

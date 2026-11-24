@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { pageKind, containsOt, canPrintStatus, isBoixeresClient,
-  clientFromWorkorder } = require("../workflow_logic.js");
+  clientFromWorkorder, isAtmClient, originCompanyFromWorkorder } = require("../workflow_logic.js");
 
 test("only the Maximo WO page and the repair report windows are handled", () => {
   assert.equal(pageKind("https://eam.indraweb.net/maximo/ui/?event=loadapp"), "workorder");
@@ -44,6 +44,21 @@ test("the exact mx47-tb field takes priority, with a Cliente row fallback", () =
   };
   assert.equal(clientFromWorkorder({ getElementById: () => null,
     querySelectorAll: () => [label] }), "Cliente: TMB BOIXERES");
+});
+
+test("ATM reads Ubicación inicial before its description and recognizes the client code", () => {
+  const fields = new Map([
+    ["mx88-tb", { value: " SARBUS " }],
+    ["mx88-tb2", { value: " Empresa SARBUS " }]
+  ]);
+  const doc = { getElementById: id => fields.get(id), querySelectorAll: () => [] };
+  assert.equal(isAtmClient("Cliente: ATM Autoritat del Transport Metropolità"), true);
+  assert.equal(isAtmClient("TMB BOIXERES"), false);
+  assert.equal(originCompanyFromWorkorder(doc), "SARBUS");
+  fields.delete("mx88-tb");
+  assert.equal(originCompanyFromWorkorder(doc), "SARBUS");
+  fields.clear();
+  assert.equal(originCompanyFromWorkorder(doc), "");
 });
 
 function chromeHarness() {
@@ -505,7 +520,44 @@ function mergerEnvironment() {
   global.PDFLib=nativePdfLib;
   global.repairPdfBase64=pdfMerge.repairPdfBase64;
   global.mergeRepairPdfs=pdfMerge.mergeRepairPdfs;
+  global.addRepairPdfOrigin=pdfMerge.addRepairPdfOrigin;
 }
+
+test("ATM saves the original PDF pages with the company on the first page", async () => {
+  const h = chromeHarness();
+  mergerEnvironment();
+  const source = { tab: { id: 1 } };
+  const viewer = { tab: { id: 2, openerTabId: 1 } };
+  const url = "https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign&__requestid=1";
+  const original = await nativePdfLib.PDFDocument.create();
+  original.addPage([595, 842]).drawText("Original BIRT");
+  original.addPage([595, 842]).drawText("Second page");
+  const bytes = await original.save();
+  const previousFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, url, arrayBuffer: async () => bytes.buffer });
+  try {
+    await assert.rejects(h.handleMessage({ type: "START", ot: "3437031", client: "ATM" }, source),
+      /Falta la empresa de origen/);
+    await h.handleMessage({ type: "START", ot: "3437031", outputFormat: "pdf", client: "ATM",
+      originCompany: "SARBUS" }, source);
+    await h.handleMessage({ type: "CLAIM_VIEWER" }, viewer);
+    await h.handlePdfOutput(3, { url }, { id: 3, openerTabId: 2, url });
+    assert.equal(h.downloads.length, 1);
+    assert.equal(h.downloads[0].saveAs, true);
+    const report = await nativePdfLib.PDFDocument.load(h.downloads[0].url);
+    assert.deepEqual(report.getPages().map(page => page.getSize()),
+      [{ width: 595, height: 842 }, { width: 595, height: 842 }]);
+    const pageTextOperators = page => page.node.Contents().asArray().map(ref =>
+      Buffer.from(nativePdfLib.decodePDFRawStream(report.context.lookup(ref)).decode()).toString()
+    ).join("\n");
+    const asHex = text => Buffer.from(text).toString("hex").toUpperCase();
+    assert.ok(pageTextOperators(report.getPage(0)).includes(asHex("Original BIRT")));
+    assert.ok(pageTextOperators(report.getPage(0)).includes(asHex("Empresa de origen: SARBUS")));
+    assert.ok(!pageTextOperators(report.getPage(1)).includes(asHex("SARBUS")));
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
 
 test("Boixeres saves one combined PDF, preserving variant/page order with one filename prompt", async () => {
   const h=chromeHarness();mergerEnvironment();
