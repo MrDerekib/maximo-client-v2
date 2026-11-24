@@ -30,6 +30,14 @@ class BrowserRecordValidationTests(TestCase):
         self.assertIn('resumen_visible',logs.output[0]);toggle.click.assert_not_called()
         driver.execute_cdp_cmd.assert_not_called()
 
+    def test_optional_reference_preserves_existing_incidence_and_requires_activity(self):
+        data = {**records(entry('inc: 123'), entry('Prueba', 'Comprobada')), 'incident_required': False}
+        reference, additions = validate_record_approval({'activity_confirmed': True}, data, ANOMALIES)
+        self.assertEqual(reference, '')
+        self.assertEqual(additions, [])
+        with self.assertRaisesRegex(ValueError, 'trabajos'):
+            validate_record_approval({}, data, ANOMALIES)
+
     def test_system_notes_and_incident_only_are_not_repair_activity(self):
         data=records(entry('inc: stock'),entry('Inicio de OT',kind='SYSTEM'),entry('inc:'))
         self.assertEqual(data['references'],['inc: stock']);self.assertEqual(data['notes'],[])

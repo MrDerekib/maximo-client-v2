@@ -4,7 +4,7 @@ import re
 from collections import Counter
 from selenium.webdriver.common.by import By
 from technician_repair import RepairPreparer, RepairEntry
-from technician_sat import format_incident
+from technician_sat import format_incident, incident_required
 from workorder_start import normalized
 from workorder_close import actual_datetime
 from worklog_details import details_match
@@ -166,6 +166,7 @@ def read_anomalies(closer):
 def inspect_browser_review(closer):
     closer.require_in_progress()
     snapshot = closer.inspect_repair()
+    requires_incident = incident_required(closer.value('Cliente'))
     closer.progress(f'OT {closer.ot}: leyendo incidencia y trabajos de Registro…')
     try:
         records = BrowserRecordReader(closer).read_records()
@@ -174,6 +175,7 @@ def inspect_browser_review(closer):
         logging.warning('OT %s: Registro no verificable para el cierre: %s',closer.ot,exc)
     closer.progress(f'OT {closer.ot}: comprobando anomalías y soluciones…')
     anomalies = read_anomalies(closer)
+    records['incident_required'] = requires_incident
     return snapshot, summarize_records(records), anomalies
 
 
@@ -182,10 +184,9 @@ def validate_record_approval(approval, records, anomalies):
         raise ValueError('Registro no verificado. No se cerrará la OT.')
     if not anomalies.get('complete'):
         raise ValueError('Completa la clase de anomalía y las soluciones antes de cerrar.')
-    reference = format_incident(approval.get('reference'))
-    if any(ord(char)<32 for char in reference): raise ValueError('La incidencia contiene caracteres no válidos.')
+    reference = format_incident(approval.get('reference'), required=records.get('incident_required', True))
     references = records.get('references', [])
-    if references and reference not in references and approval.get('new_reference_confirmed') is not True:
+    if reference and references and reference not in references and approval.get('new_reference_confirmed') is not True:
         raise ValueError('Confirma expresamente que quieres añadir otra incidencia; las existentes no se sustituirán.')
     values = approval.get('entries', [])
     if not isinstance(values,list) or len(values)>30: raise ValueError('Entradas de Registro no válidas.')
@@ -226,7 +227,7 @@ def prepare_browser_records(closer, approval, pending):
     if signature(fresh)!=signature(records) or read_anomalies(closer)!=anomalies:
         raise RuntimeError('Registro, anomalías o soluciones cambiaron desde la revisión. Revisa los datos otra vez.')
     reader._reviewed_records=fresh
-    if reference not in records['references']:
+    if reference and reference not in records['references']:
         closer.progress(f'OT {closer.ot}: añadiendo la incidencia revisada…')
         reader.ensure_entry(RepairEntry(reference))
     for index, entry in enumerate(additions,1):
@@ -239,14 +240,14 @@ def prepare_browser_records(closer, approval, pending):
 
 def verify_browser_closed_records(closer, pending, status):
     """Read only after the workflow confirms its state change; never replays it."""
-    if (not pending['expected_entries'] and
-            pending['expected_reference'] in pending['records']['references']):
+    reference = pending['expected_reference']
+    if not pending['expected_entries'] and (not reference or reference in pending['records']['references']):
         return
     closer.progress(f'OT {closer.ot}: comprobando el Registro tras finalizar el flujo…')
     reader=BrowserRecordReader(closer)
     reader.active_status=status  # Read-only now: ensure_entry explicitly refuses writes.
     records=summarize_records(reader.read_records())
-    if pending['expected_reference'] not in records['references']:
+    if reference and reference not in records['references']:
         raise RuntimeError('El flujo finalizó, pero no se confirmó la incidencia. Revisa Registro; no se repetirá el cierre.')
     expected=signature(pending['records'])
     actual=signature(records)

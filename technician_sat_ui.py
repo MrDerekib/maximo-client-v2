@@ -5,7 +5,7 @@ from preview_lifecycle import cancel_readonly_preview
 from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import QLabel, QLineEdit, QTableWidgetItem, QMessageBox, QHeaderView
 from failure_picker import FailurePathPicker
-from technician_sat import reviewed_sat_plans, technician_sat_defaults
+from technician_sat import incident_required, reviewed_sat_plans, technician_sat_defaults
 from warehouse_recovery import preparation_retry_allowed
 from warehouse_ui import WarehouseBatchDialog
 from warehouse_diagnostics import log_exception, sanitize
@@ -56,7 +56,7 @@ class TechnicianSatDialog(WarehouseBatchDialog):
         for row, item in enumerate(self.items):
             duration, incident, reason = QLineEdit(), QLineEdit(), QLineEdit()
             duration.setPlaceholderText('Ejemplo: 0,5')
-            incident.setPlaceholderText('Número o stock')
+            incident.setPlaceholderText('Número o sin incidencia' if incident_required(item.client) else 'Opcional')
             cached = get_fault_description(item.ot)
             self._cached_reasons[item.ot] = bool(cached) or fault_description_checked(item.ot)
             reason.setText(cached)
@@ -164,7 +164,7 @@ class TechnicianSatDialog(WarehouseBatchDialog):
         if unsuitable:
             self.current_step.setText('Envío deshabilitado: estas OTs no están en APPR: '+', '.join(unsuitable)+'. Revisa la selección.')
         else:
-            self.current_step.setText(('Reintento: revisa la petición recuperada. Los valores actuales de Maximo aparecen al situarte sobre los campos. ' if self.retry_records else '')+'Completa horas e incidencia por OT y revisa el motivo.')
+            self.current_step.setText(('Reintento: revisa la petición recuperada. Los valores actuales de Maximo aparecen al situarte sobre los campos. ' if self.retry_records else '')+'Completa las horas y el motivo. Indica la incidencia donde se requiera.')
 
     def _preview_failed(self, message):
         if self._preview_closed:return

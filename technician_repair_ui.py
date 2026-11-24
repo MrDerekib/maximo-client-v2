@@ -11,6 +11,7 @@ from preview_lifecycle import cancel_readonly_preview
 from rounded_table import RoundedTableFrame
 from worklog_limits import WORKLOG_SUMMARY_MAX_LENGTH,summary_length
 from technician_repair import reviewed_repair,run_repair,RepairPreparer,inspect_repair_recovery,repair_plan_from_record
+from technician_sat import incident_required
 from warehouse_transport import WarehouseSession
 from warehouse_recovery import RecoveryStore, repair_retry_allowed
 from warehouse import WarehouseResult
@@ -392,7 +393,11 @@ class RepairDialog(QDialog):
         self.action=QComboBox();self.action.addItem('Declarar irreparable — Desechar equipo','discard');self.action.addItem('Cerrar OT — reparación finalizada','close')
         self.action.setCurrentIndex(self.action.findData(default_action))
         form.addRow('Acción final',self.action)
-        self.reference=QLineEdit();self.reference.setMaxLength(WORKLOG_SUMMARY_MAX_LENGTH);self.reference.setPlaceholderText('Número o texto libre de la etiqueta');form.addRow('Incidencia',self.reference)
+        self.reference = QLineEdit()
+        self.reference.setMaxLength(WORKLOG_SUMMARY_MAX_LENGTH)
+        required = incident_required(item.client)
+        self.reference.setPlaceholderText('Número o sin incidencia' if required else 'Opcional')
+        form.addRow('Incidencia' if required else 'Incidencia (opcional)', self.reference)
         self.duration=QLineEdit();self.duration.setPlaceholderText('Horas en tramos de 0,25; ejemplo: 1');form.addRow('Tiempo de reparación (h)',self.duration)
         timing=QHBoxLayout();self.time_mode=QComboBox();self.time_mode.addItem('Finalización','end');self.time_mode.addItem('Inicio','start')
         self.time=RepairTimeEdit(QDateTime.currentDateTime());self.time.setDisplayFormat('dd/MM/yyyy HH:mm');self.time.setCalendarPopup(True)
@@ -638,7 +643,7 @@ class RepairDialog(QDialog):
             plan=repair_plan_from_record(record)
             label='Desechar equipo' if plan.action=='discard' else 'Cerrar OT'
             prompt=(f"OT {plan.item.ot} · {plan.item.serial}\nEstado comprobado: {assessment['state']}\n"
-                    f"{assessment['detail']}\n\nAcción pendiente: {label}\nIncidencia: {plan.incident_summary}"
+                    f"{assessment['detail']}\n\nAcción pendiente: {label}\nIncidencia: {plan.incident_summary or '—'}"
                     f"\nTiempo: {plan.duration} h\nInicio: {plan.start}\nFin: {plan.end}"
                     f"\nTrabajos: {', '.join(entry.summary for entry in plan.entries)}"
                     + (f"\nMotivo: {plan.justification}" if plan.action=='discard' else '')
@@ -705,7 +710,7 @@ class RepairDialog(QDialog):
         label='DESECHAR POR IRREPARABLE' if plan.action=='discard' else 'CERRAR OT'
         reason_line='\nMotivo por el que se desecha: '+plan.justification if plan.action=='discard' else ''
         if QMessageBox.question(self,'Confirmar acción irreversible',
-            f'OT {self.item.ot} · {self.item.serial}\n{label}\nIncidencia: {plan.incident_summary}\nTiempo: {plan.duration} h\nInicio: {plan.start}\nFin: {plan.end}{reason_line}\n\nSi está en APPR, también se iniciará. No es reversible. ¿Continuar?',
+            f'OT {self.item.ot} · {self.item.serial}\n{label}\nIncidencia: {plan.incident_summary or "—"}\nTiempo: {plan.duration} h\nInicio: {plan.start}\nFin: {plan.end}{reason_line}\n\nSi está en APPR, también se iniciará. No es reversible. ¿Continuar?',
             QMessageBox.Yes|QMessageBox.No,QMessageBox.No)!=QMessageBox.Yes:return
         self.submit.setEnabled(False);self.review_panel.setEnabled(False);self.status.setText('Preparando la reparación…')
         self.launch(plan)

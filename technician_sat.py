@@ -21,10 +21,22 @@ TECHNICIAN_SAT_LABEL = 'Enviar a SAT Externo'
 TECHNICIAN_SAT_INITIAL_STATE = 'APPR'
 
 
-def format_incident(value):
-    text=str(value or '').strip()
-    text=re.sub(r'^(?:inc\s*:\s*)+', '', text, flags=re.IGNORECASE).strip()
-    if not text:raise ValueError('Introduce la incidencia (texto libre).')
+def incident_required(client):
+    project = normalized(client or '')
+    project = re.sub(r'[\s_-]+', ' ', project).strip()
+    return (not project or project == 'tmb'
+            or project in {'linea 9', 'linea9', 'l9', 'cl9t1svi', 'cl9t2svi'})
+
+
+def format_incident(value, *, required=True):
+    raw = str(value or '').strip()
+    if not raw and not required:
+        return ''
+    text = re.sub(r'^(?:inc\s*:\s*)+', '', raw, flags=re.IGNORECASE).strip()
+    if not text:
+        raise ValueError('Indica la incidencia o escribe «sin incidencia».')
+    if any(ord(char) < 32 for char in text):
+        raise ValueError('La incidencia contiene caracteres no válidos.')
     return validate_worklog_summary('inc: '+text, 'Incidencia (incluido «inc: »)')
 
 
@@ -38,7 +50,7 @@ class TechnicianSatPlan:
 
     @property
     def incident_summary(self):
-        return format_incident(self.incident)
+        return format_incident(self.incident, required=incident_required(self.item.client))
 
 
 def saved_request(plan):
@@ -66,9 +78,10 @@ def reviewed_sat_plans(items, values, selection):
         duration = str(row.get('duration') or '').strip()
         repair_seconds(duration)
         incident = str(row.get('incident') or '').strip()
-        if not incident or any(ord(ch) < 32 for ch in incident):
-            raise ValueError(f'OT {item.ot}: introduce una incidencia o referencia, por ejemplo stock.')
-        format_incident(incident)
+        try:
+            format_incident(incident, required=incident_required(item.client))
+        except ValueError as exc:
+            raise ValueError(f'OT {item.ot}: {exc}') from exc
         # Native worklog Summary limit will also be checked before typing.
         reason = str(row.get('reason') or '').strip()
         if not reason:
@@ -251,8 +264,11 @@ class TechnicianSatPreparer(WorkorderStarter):
         self.apply_anomalies(checked.anomaly_selection)
         self.progress(f'OT {self.ot}: preparando horas de reparación…')
         self.set_repair_duration(checked.duration)
-        self.progress(f'OT {self.ot}: preparando el registro de incidencia…')
-        created = self.ensure_incident(checked.incident_summary)
+        summary = checked.incident_summary
+        created = False
+        if summary:
+            self.progress(f'OT {self.ot}: preparando el registro de incidencia…')
+            created = self.ensure_incident(summary)
         try:
             saved = self.save()
         except SaveConfirmationMissing:
@@ -279,9 +295,10 @@ class TechnicianSatPreparer(WorkorderStarter):
         self.tab('Consumos Actuales')
         if repair_seconds(self.value('Horas totales de reparación')) != repair_seconds(plan.duration):
             raise RuntimeError('Maximo no guardó las horas de reparación; no se enrutará.')
-        self.tab('Registro')
-        if not self.incident_present(plan.incident_summary):
-            raise RuntimeError('Maximo no guardó la incidencia; no se enrutará.')
+        if plan.incident_summary:
+            self.tab('Registro')
+            if not self.incident_present(plan.incident_summary):
+                raise RuntimeError('Maximo no guardó la incidencia; no se enrutará.')
         self.tab('Informes de anomalías')
         if self.value('Clase de anomalía') != resolved['class_code']:
             raise RuntimeError('La clase de anomalía guardada no coincide; no se enrutará.')

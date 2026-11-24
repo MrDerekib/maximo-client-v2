@@ -19,6 +19,14 @@ class RepairPlanTests(TestCase):
             'entries':[{'summary':'Test equipo','details':'Aviso sobretensión'},
                        {'summary':'Comprobación','details':'Resultado de prueba'}]}
     def plan(self):return reviewed_repair(WarehouseItem('1',serial='S'),self.values(),default_selection())
+    def test_repair_without_incident_is_allowed_for_other_projects(self):
+        values = {**self.values(), 'reference': ''}
+        plan = reviewed_repair(WarehouseItem('1', client='FGC'), values, default_selection())
+        self.assertEqual(plan.incident_summary, '')
+        self.assertTrue(plan.entries)
+        with self.assertRaisesRegex(ValueError, 'sin incidencia'):
+            reviewed_repair(WarehouseItem('1', client='CL9T2SVI'), values, default_selection())
+
     def test_free_reference_entries_and_calculated_start(self):
         p=self.plan()
         self.assertEqual(p.reference,'stock Ávila: libre');self.assertEqual(len(p.entries),2)
