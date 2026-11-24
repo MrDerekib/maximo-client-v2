@@ -455,6 +455,10 @@ class FilterTests(unittest.TestCase):
             row=next(r for r in range(window.table.rowCount()) if window.table.item(r,1).text()=='1')
             self.assertTrue(window.table.item(row,2).icon().isNull())
             self.assertFalse(window.table.item(row,10).icon().isNull())
+            window._set_column_visible(window.columns[10], False)
+            row = next(r for r in range(window.table.rowCount()) if window.table.item(r, 1).text() == '1')
+            self.assertTrue(window.table.isColumnHidden(10))
+            self.assertFalse(window.table.item(row, 2).icon().isNull())
 
     def test_incremental_change_then_database_reversion_cannot_leave_stale_cell(self):
         with self.qt_window() as (window, qt):

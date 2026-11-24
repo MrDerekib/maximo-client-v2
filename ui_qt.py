@@ -979,6 +979,13 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.export_action.triggered.connect(self.export_current_list)
         self.navigation_menu_button.setMenu(menu)
         row.addWidget(self.navigation_menu_button)
+        self.view_menu_button = QToolButton(objectName='navigationMenu')
+        self.view_menu_button.setText('Ver')
+        self.view_menu_button.setPopupMode(QToolButton.InstantPopup)
+        view_menu = QMenu(self.view_menu_button)
+        view_menu.addMenu(self._create_columns_menu(view_menu))
+        self.view_menu_button.setMenu(view_menu)
+        row.addWidget(self.view_menu_button)
         row.addSpacing(24)
         self.navigation_location = QLabel('Listado', objectName='pageSubtitle')
         row.addWidget(self.navigation_location)
@@ -1184,6 +1191,11 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.table.cellDoubleClicked.connect(self.open_table_cell)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
+        header.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.header_columns_menu = self._create_columns_menu(header)
+        header.customContextMenuRequested.connect(
+            lambda pos: self.header_columns_menu.popup(header.viewport().mapToGlobal(pos))
+        )
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setMinimumSectionSize(60)
         header.setCursor(Qt.SplitHCursor)
@@ -1192,7 +1204,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         header.resizeFinished.connect(self._schedule_column_width_save)
         for column, width in enumerate(self.default_column_widths):
             header.resizeSection(column, width)
-        self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
+        self._apply_table_column_visibility(self.cfg.fault_descriptions_enabled)
         self._column_widths = self._current_column_widths()
         self._workorder_selector = WorkorderSelection(
             self.table, self, compact=True, tracking_column=self.columns.index('Seguimiento')
@@ -1219,6 +1231,66 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         QTimer.singleShot(0, self._fit_columns_to_viewport)
         if hasattr(self, "settings_scroll"):
             QTimer.singleShot(0, self._update_settings_content_width)
+
+    def _create_columns_menu(self, parent):
+        menu = QMenu("Columnas", parent)
+        menu.setToolTipsVisible(True)
+        actions = []
+        for name in self.columns:
+            action = menu.addAction(name)
+            action.setCheckable(True)
+            action.triggered.connect(lambda visible, name=name: self._set_column_visible(name, visible))
+            actions.append(action)
+        menu.addSeparator()
+        reset = menu.addAction("Restablecer visibilidad")
+        reset.triggered.connect(lambda: self._save_table_column_visibility(set()))
+
+        def sync_actions():
+            for index, action in enumerate(actions):
+                name = self.columns[index]
+                available = name != "Avería" or self.cfg.fault_descriptions_enabled
+                action.setChecked(not self.table.isColumnHidden(index))
+                action.setEnabled(name != "OT" and available)
+                action.setToolTip(
+                    "La columna OT siempre está visible." if name == "OT"
+                    else "Activa «Obtener y mostrar descripción de avería» en Configuración." if not available
+                    else ""
+                )
+            reset.setEnabled(bool(self.cfg.table_hidden_columns))
+
+        menu.aboutToShow.connect(sync_actions)
+        return menu
+
+    def _set_column_visible(self, name, visible):
+        hidden = set(self.cfg.table_hidden_columns)
+        if visible:
+            hidden.discard(name)
+        else:
+            hidden.add(name)
+        self._save_table_column_visibility(hidden)
+
+    def _save_table_column_visibility(self, hidden):
+        preferences = [name for name in self.columns if name != "OT" and name in hidden]
+        if preferences == self.cfg.table_hidden_columns:
+            return
+        old_detail_column = self._detail_column()
+        self.cfg.table_hidden_columns = preferences
+        self._apply_table_column_visibility(self.cfg.fault_descriptions_enabled)
+        self._fit_columns_to_viewport()
+        if self.cfg.detailed_descriptions_enabled and old_detail_column != self._detail_column():
+            self.refresh_table()
+        save_config(self.cfg)
+
+    def _apply_table_column_visibility(self, fault_enabled):
+        hidden = set(self.cfg.table_hidden_columns)
+        for index, name in enumerate(self.columns):
+            hide = name != "OT" and (name in hidden or (name == "Avería" and not fault_enabled))
+            if self.table.isColumnHidden(index) != hide:
+                self.table.setColumnHidden(index, hide)
+
+    def _detail_column(self):
+        fault_column = self.columns.index("Avería")
+        return self.columns.index("Descripción") if self.table.isColumnHidden(fault_column) else fault_column
 
     def _current_column_widths(self):
         header = self.table.horizontalHeader()
@@ -1981,8 +2053,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             value = str(row[2] or "").strip()
             return (0, int(value)) if value.isdigit() else (1, value)
         rows.sort(key=ot_sort_key, reverse=True)
-        snapshot = (tuple(rows), frozenset(priority_ots),
-                    self.cfg.fault_descriptions_enabled, self.cfg.detailed_descriptions_enabled)
+        self._apply_table_column_visibility(self.cfg.fault_descriptions_enabled)
+        detail_column = self._detail_column()
+        snapshot = (tuple(rows), frozenset(priority_ots), self.cfg.fault_descriptions_enabled,
+                    self.cfg.detailed_descriptions_enabled, detail_column)
         filter_key = (self.search_edit.text(), self.search_field(), repr(filters))
         same_filter = getattr(self, '_table_filter_key', None) == filter_key
         if getattr(self, '_table_snapshot', None) == snapshot and self.table.rowCount() == len(rows):
@@ -1993,7 +2067,6 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             self._update_list_summary()
             return False
 
-        detail_column = self.columns.index("Avería" if self.cfg.fault_descriptions_enabled else "Descripción")
         tracking_colors = {}
         colors = {key: QColor(value) for key, value in ACTIVE_COLORS.items()}
         detail_icon = self.style().standardIcon(QStyle.SP_MessageBoxInformation)
@@ -2040,7 +2113,6 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                         self.table.setItem(index, column, item)
                 header.setSortIndicator(sort_column, sort_order)
                 self.table.setSortingEnabled(True)
-                self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
                 self._apply_priority_filter()
                 if selection is not None:
                     selector.restore_after_refresh(selection)
@@ -2063,7 +2135,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         colors = {key: QColor(value) for key, value in ACTIVE_COLORS.items()}
         tracking_colors = {}
         detail_icon = self.style().standardIcon(QStyle.SP_MessageBoxInformation)
-        detail_column = self.columns.index("Avería" if self.cfg.fault_descriptions_enabled else "Descripción")
+        detail_column = self._detail_column()
         updates_enabled = self.table.updatesEnabled()
         self.table.setUpdatesEnabled(False)
         try:
@@ -2460,7 +2532,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         enabled = self.fault_descriptions_check.isChecked() or self.detailed_descriptions_check.isChecked()
         self.fault_batch_spin.setEnabled(enabled)
         if hasattr(self, "table"):
-            self.table.setColumnHidden(self.columns.index("Avería"), not self.fault_descriptions_check.isChecked())
+            self._apply_table_column_visibility(self.fault_descriptions_check.isChecked())
             QTimer.singleShot(0, self._fit_columns_to_viewport)
 
     def cancel_fault_descriptions(self):
@@ -2650,7 +2722,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         )
 
     def open_table_cell(self, row, column):
-        detail_column = self.columns.index("Avería" if self.cfg.fault_descriptions_enabled else "Descripción")
+        detail_column = self._detail_column()
         if column == detail_column and self.cfg.detailed_descriptions_enabled:
             ot = self.selected_ot(row)
             if get_detailed_description(ot)[0]:

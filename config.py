@@ -64,6 +64,7 @@ class AppConfig:
     latest_release_url: str = ""
     latest_release_checked_at: str = ""
     table_column_widths: dict | None = None
+    table_hidden_columns: list[str] = field(default_factory=list)
     table_layout_initialized: bool = False
     window_size: list | None = None
     window_maximized: bool = False
@@ -127,6 +128,12 @@ class AppConfig:
             self.filters = {"mx38_tfrow_[C:26]_txt-tb": "=LAB-BAD"}
         if not isinstance(self.table_column_widths, dict):
             self.table_column_widths = {}
+        if not isinstance(self.table_hidden_columns, list):
+            self.table_hidden_columns = []
+        else:
+            self.table_hidden_columns = [
+                name for name in self.table_hidden_columns if isinstance(name, str) and name != "OT"
+            ]
         if not isinstance(self.window_size, list) or len(self.window_size) != 2:
             self.window_size = None
 
