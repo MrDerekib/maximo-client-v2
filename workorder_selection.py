@@ -1,6 +1,7 @@
 """Persistent OT marks, independent of the active row, with a full-cell gutter."""
 from shiboken6 import isValid
 from appearance import readable_color
+from warehouse import workorder_status_label
 from PySide6.QtCore import QEvent,QItemSelection,QItemSelectionModel,QModelIndex,QObject,QPointF,QPersistentModelIndex,QRectF,QTimer,Qt
 from PySide6.QtGui import QColor,QPainter,QPalette,QPen,QPolygonF
 from PySide6.QtWidgets import QApplication,QAbstractButton,QSplitterHandle,QCheckBox,QHeaderView,QHBoxLayout,QLabel,QPushButton,QStyledItemDelegate,QStyle,QStyleFactory,QStyleOptionViewItem,QWidget
@@ -65,6 +66,11 @@ class SelectionIndicatorDelegate(QStyledItemDelegate):
         super().__init__(selector.table);self.selector=selector
         self.item_style=QStyleFactory.create('Fusion');self.item_style.setParent(self)
 
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        if index.column() == self.selector.tracking_column:
+            option.text = workorder_status_label(option.text)
+
     def paint(self,painter,option,index):
         view=QStyleOptionViewItem(option);self.initStyleOption(view,index)
         view.showDecorationSelected=True;view.palette.setCurrentColorGroup(QPalette.Active)
@@ -96,9 +102,10 @@ def action_rows(table):
 
 
 class WorkorderSelection(QObject):
-    def __init__(self,table,parent=None,*,compact=False):
+    def __init__(self,table,parent=None,*,compact=False,tracking_column=None):
         super().__init__(parent or table)
         self.table=table;table._ot_selector=self;self.compact=compact;self.enabled=False
+        self.tracking_column=tracking_column
         self._syncing=False;self._refresh_pending=False;self._preserve_marks=False;self._explicit_selection=False
         self._marks={};self._marked_rows=set();self._anchor=QPersistentModelIndex()
         self._pressed=QPersistentModelIndex();self._context=QPersistentModelIndex()

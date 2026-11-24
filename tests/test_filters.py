@@ -343,6 +343,8 @@ class FilterTests(unittest.TestCase):
             self.assertFalse(window.table.selectionModel().selectedRows())
 
     def test_background_refresh_preserves_visible_batch_by_ot(self):
+        from PySide6.QtWidgets import QStyleOptionViewItem
+
         with self.qt_window() as (window, qt):
             window.table.sortItems(3, qt.Qt.AscendingOrder)
             window._workorder_selector._set_rows([
@@ -366,6 +368,13 @@ class FilterTests(unittest.TestCase):
             self.assertEqual(window.table.horizontalHeader().sortIndicatorSection(), 3)
             batch = {item.ot: item.status for item in window.warehouse_items()}
             self.assertEqual(batch, {'1': 'DAR SALIDA', '2': 'RETENIDO'})
+            row = next(i for i in range(window.table.rowCount()) if window.table.item(i, 1).text() == '1')
+            column = window.columns.index('Seguimiento')
+            tracking = window.table.item(row, column)
+            option = QStyleOptionViewItem()
+            window.table.itemDelegate().initStyleOption(option, window.table.model().index(row, column))
+            self.assertEqual(option.text, 'Pendiente de salida de almacén')
+            self.assertEqual(tracking.toolTip(), 'Pendiente de salida de almacén (ISSUE)')
             self.assertEqual(window._workorder_selector.counter.text(), '2 OTs seleccionadas')
             window.advanced_state['tracking'] = ['RETENIDO']
             window.refresh_table()

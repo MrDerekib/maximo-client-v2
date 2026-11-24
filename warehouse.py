@@ -25,6 +25,14 @@ FINAL_STATES = {'technician_discard':'CLOSE','technician_close':'ISSUE','receive
 RECEIPT_ACTIONS = ('receive', 'reject_receive', 'receive_sat_internal', 'receive_sat_external')
 STEPS = ('Abrir ficha', 'Comprobar OT y estado', 'Seleccionar acción',
          'Confirmar acción', 'Verificar resultado')
+STATUS_LABELS = {
+    'WAPPR': 'Pendiente de aprobación',
+    'APPR': 'Aprobada',
+    'INPRG': 'En curso',
+    'ISSUE': 'Pendiente de salida de almacén',
+    'CLOSE': 'Cerrada',
+    'CAN': 'Cancelada',
+}
 LIST_STATUS_CODES = {'PDTE CONFIRMAR': 'WAPPR', 'DAR SALIDA': 'ISSUE'}
 
 
@@ -32,6 +40,16 @@ def warehouse_status_code(value):
     """Compare known MD labels and Edge codes without changing the source value."""
     status = ' '.join(str(value or '').split()).upper()
     return LIST_STATUS_CODES.get(status, status)
+
+
+def workorder_status_label(value, *, include_code=False):
+    """Show a friendly label while keeping Maximo codes available for reference."""
+    raw_label = str(value or '').strip()
+    code = warehouse_status_code(raw_label)
+    label = STATUS_LABELS.get(code)
+    if label is None:
+        return raw_label
+    return f'{label} ({code})' if include_code else label
 
 
 @dataclass(frozen=True)

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from rounded_table import RoundedTableFrame
-from warehouse import ACTIONS
+from warehouse import ACTIONS, workorder_status_label
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ class Operation:
 
 
 RESULTS = {
-    'success': 'Verificada', 'already_done': 'Ya completada',
+    'success': 'Verificada en Maximo', 'already_done': 'Ya completada',
     'failed': 'Fallida', 'uncertain': 'Pendiente de comprobar',
     'stopped': 'Sin procesar', 'pending': 'Sin procesar',
 }
@@ -58,7 +58,7 @@ def _pending_row(record):
         step = 'Preparación tras solicitar el inicio'
     return Operation(
         ot=record['item']['ot'], action=record['action'],
-        result='Pendiente de guardar' if verified else 'Pendiente de revisar',
+        result='Pendiente de guardar en MD' if verified else 'Pendiente de comprobar',
         step=step, detail=record.get('last_error') or '', state=verified,
         at=_operation_time(record.get('updated_at') or record.get('created_at'),
                            datetime.now().astimezone()),
@@ -105,7 +105,7 @@ def read_operations(store, pending, *, history=False):
                     continue
                 operation_id = result.get('operation_id') or ''
                 key = operation_id or (path.name, index)
-                label = ('Pendiente de guardar' if result.get('local_status_saved') is False
+                label = ('Pendiente de guardar en MD' if result.get('local_status_saved') is False
                          else RESULTS[status])
                 rows.setdefault(key, Operation(
                     identity, action, label, result.get('step', ''),
@@ -202,10 +202,14 @@ class OperationsDialog(QDialog):
         self.table.setRowCount(len(self.rows))
         selected = -1
         for index, row in enumerate(self.rows):
-            values = (row.at.strftime('%d/%m/%Y %H:%M'), row.ot, ACTIONS[row.action].label, row.result, row.state or '—')
+            values = (
+                row.at.strftime('%d/%m/%Y %H:%M'), row.ot, ACTIONS[row.action].label,
+                row.result, workorder_status_label(row.state) or '—',
+            )
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                item.setToolTip(value)
+                tooltip = workorder_status_label(row.state, include_code=True) if column == 4 else value
+                item.setToolTip(tooltip)
                 self.table.setItem(index, column, item)
             if previous and row.operation_id and row.operation_id == previous.operation_id:
                 selected = index

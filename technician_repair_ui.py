@@ -14,7 +14,7 @@ from technician_repair import reviewed_repair,run_repair,RepairPreparer,inspect_
 from technician_sat import incident_required
 from warehouse_transport import WarehouseSession
 from warehouse_recovery import RecoveryStore, repair_retry_allowed
-from warehouse import WarehouseResult
+from warehouse import WarehouseResult, workorder_status_label
 from db import get_fault_description,fault_description_checked,apply_closed_repair,apply_warehouse_status
 from dataclasses import asdict
 import json,logging
@@ -88,6 +88,11 @@ class WorklogSummaryDelegate(QStyledItemDelegate):
         # it until corrected. Opening the editor must never silently truncate it.
         editor.setMaxLength(max(WORKLOG_SUMMARY_MAX_LENGTH,summary_length(text)))
         editor.setText(text)
+
+
+def _verified_repair_message(status):
+    outcome = 'Desecho verificado en Maximo' if status == 'CLOSE' else 'Reparación verificada en Maximo'
+    return f'{outcome} · {workorder_status_label(status, include_code=True)}'
 
 
 class RepairProgressDialog(QDialog):
@@ -202,7 +207,7 @@ class RepairProgressDialog(QDialog):
     def success(self,result):
         self.succeeded=True;self.has_failed=False
         for row in range(len(self.STAGES)):self.completed_row(row)
-        self.bar.setValue(len(self.STAGES));self.message.setText('Operación verificada en Maximo: '+result['status']+'.')
+        self.bar.setValue(len(self.STAGES));self.message.setText(_verified_repair_message(result['status']))
         self.show_action(self.stop_button, False)
         self.print_status.setText('Preparación del parte solicitada a Edge.' if result.get('print_report') else 'Puedes preparar el parte cuando quieras, sin repetir la operación.')
 
@@ -685,7 +690,8 @@ class RepairDialog(QDialog):
                 raise RuntimeError('La operación pendiente cambió. Vuelve a revisar el resultado.')
             plan=repair_plan_from_record(record)
             label='Desechar equipo' if plan.action=='discard' else 'Cerrar OT'
-            prompt=(f"OT {plan.item.ot} · {plan.item.serial}\nEstado comprobado: {assessment['state']}\n"
+            state_label = workorder_status_label(assessment['state'], include_code=True)
+            prompt=(f"OT {plan.item.ot} · {plan.item.serial}\nEstado comprobado: {state_label}\n"
                     f"{assessment['detail']}\n\nAcción pendiente: {label}\nIncidencia: {plan.incident_summary or '—'}"
                     f"\nTiempo: {plan.duration} h\nInicio: {plan.start}\nFin: {plan.end}"
                     f"\nTrabajos: {', '.join(entry.summary for entry in plan.entries)}"
@@ -752,9 +758,12 @@ class RepairDialog(QDialog):
     def _show_ineligible_state(self):
         discard = self.action.currentData() == 'discard'
         action = 'desechar el equipo' if discard else 'dar salida'
+        state = workorder_status_label(self._preview_state, include_code=True)
+        approved = workorder_status_label('APPR', include_code=True)
+        in_progress = workorder_status_label('INPRG', include_code=True)
         self.status.setText(
-            f'El estado {self._preview_state} de esta OT no permite {action}.\n'
-            'Estados admitidos: APPR o INPRG.'
+            f'La OT figura como «{state}» y no permite {action}.\n'
+            f'Estados admitidos: {approved} o {in_progress}.'
         )
 
     def preview_ready(self,data):
@@ -783,9 +792,10 @@ class RepairDialog(QDialog):
                 for entry in data['entries']:self.add_entry(entry['summary'],entry['details'])
         finally:self._applying_preview=False
         self.update_dates()
-        state_message = ('OT aprobada (APPR). MD la iniciará antes de finalizar.'
-                         if self._preview_state == 'APPR'
-                         else 'OT ya iniciada (INPRG). Revisa los datos antes de finalizar.')
+        state = workorder_status_label(self._preview_state, include_code=True)
+        guidance = ('MD la iniciará antes de finalizar.' if self._preview_state == 'APPR'
+                    else 'Revisa los datos antes de finalizar.')
+        state_message = f'Estado de la OT: {state}. {guidance}'
         preserved = ' Se han conservado tus cambios.' if self._preview_edited else ''
         self.status.setText(state_message + preserved)
 
@@ -825,11 +835,14 @@ class RepairDialog(QDialog):
         except Exception:
             logging.exception('Reparación verificada; guardado local pendiente')
         self.repair_verified.emit(result)
-        self.status.setText('Operación verificada en '+result['status']+'. El parte se prepara por separado; un fallo de impresión no repetirá la operación.')
+        message = _verified_repair_message(result['status'])
+        self.status.setText(message)
         if self.progress_dialog:
             self.progress_dialog.success(result)
             if not result['local_status_saved']:
-                self.progress_dialog.message.setText('Operación verificada en Maximo. Guardado en MD pendiente; usa Revisar y reintentar para guardar el resultado.')
+                self.progress_dialog.message.setText(
+                    message + '\nPendiente de guardar en MD. Pulsa Revisar y reintentar para guardar el resultado.'
+                )
         if result.get('print_report'):self.print_requested.emit(self.item.ot)
 
     def failed(self,message):

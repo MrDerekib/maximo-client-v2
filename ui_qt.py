@@ -39,6 +39,7 @@ from appearance import (readable_color, profile_for, custom_legibility, normaliz
                         legibility_css, application_legibility_css, appearance_overrides, tracking_style, presence_style, component_css)
 from failure_catalog import resolve_selection
 from failure_picker import FailurePathPicker
+from warehouse import workorder_status_label
 from warehouse_ui import WarehouseWindowMixin
 from task_priorities import coordinator, JobCounter, AUTOMATIC, MANUAL, HIGH
 from priority_notices import PriorityNotices
@@ -166,6 +167,7 @@ def _style_tracking_item(item, enabled, default_color, cache=None):
     """Apply/reset only the tracking cell; selection still uses the table palette."""
     cache = cache if cache is not None else {}
     value = item.text()
+    item.setToolTip(workorder_status_label(value, include_code=True))
     if enabled and value not in cache:
         foreground, emphasized = tracking_style(value, ACTIVE_COLORS)
         font = QFont()
@@ -1192,7 +1194,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             header.resizeSection(column, width)
         self.table.setColumnHidden(self.columns.index("Avería"), not self.cfg.fault_descriptions_enabled)
         self._column_widths = self._current_column_widths()
-        self._workorder_selector = WorkorderSelection(self.table, self, compact=True)
+        self._workorder_selector = WorkorderSelection(
+            self.table, self, compact=True, tracking_column=self.columns.index('Seguimiento')
+        )
         self._workorder_selector.set_enabled(True)
         self._workorder_selector.bar.setSizePolicy(QSizePolicy.Maximum,QSizePolicy.Fixed)
         filter_footer.addStretch()
@@ -2719,8 +2723,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             self.refresh_table()
         except Exception:
             logging.exception('OT %s en ISSUE, pero no se pudo refrescar su seguimiento local', ot)
-        message='equipo declarado irreparable (CLOSE)' if final=='CLOSE' else 'pendiente dar salida del almacén (ISSUE)'
-        self.status.showMessage(f'OT {ot}: {message}.', 10000)
+        outcome = 'Desecho verificado en Maximo' if final == 'CLOSE' else 'Reparación verificada en Maximo'
+        state = workorder_status_label(final, include_code=True)
+        self.status.showMessage(f'OT {ot} · {outcome} · {state}', 10000)
 
     def open_repair_report(self, ot, action):
         if self._closing or not ot or not self._credentials_ready(): return
