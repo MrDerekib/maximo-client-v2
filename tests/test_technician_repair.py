@@ -161,6 +161,19 @@ class RepairUiTests(TestCase):
         d.preview_ready({'state':'APPR','fault':'Cached fault','duration':'1','reference':'inc: 123',
             'entries':[{'summary':'Test','details':'Result'}]})
         d.justification.setPlainText('Irreparable');return d
+    def test_ineligible_state_is_a_highlighted_result_and_preserves_editing(self):
+        dialog = self.dialog()
+        dialog.reference.setText('Dato conservado')
+        dialog.preview_ready({'state': 'ISSUE'})
+
+        self.assertTrue(dialog.status.property('blocked'))
+        self.assertIn('ISSUE', dialog.status.text())
+        self.assertIn('APPR o INPRG', dialog.status.text())
+        self.assertNotIn('No se pudo consultar', dialog.status.text())
+        self.assertFalse(dialog.submit.isEnabled())
+        self.assertTrue(dialog.reference.isEnabled())
+        self.assertEqual(dialog.reference.text(), 'Dato conservado')
+
     def test_discard_reason_defaults_to_local_fault_without_waiting_for_preview(self):
         with patch('technician_repair_ui.get_fault_description',return_value='PETARDEA NO FUNCIONA'):
             d=RepairDialog(WarehouseItem('1'),default_selection(),autoload=False)

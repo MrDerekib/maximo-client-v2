@@ -35,7 +35,10 @@ def repair_defaults(item, *, stop=None):
     try:
         state=session.open(item.ot)
         check_cancelled()
-        if state not in ('APPR','INPRG'):raise RuntimeError('Solo se puede finalizar una OT APPR o INPRG.')
+        if not state:
+            raise RuntimeError('Maximo no devolvió el estado de la OT.')
+        if state not in ('APPR', 'INPRG'):
+            return {'state': state}
         identity=session.identity()
         if item.serial and identity.get('Nº de serie')!=item.serial:raise RuntimeError('El número de serie no coincide.')
         r=RepairPreparer(session.driver,item.ot,state);session.reader=r
@@ -436,7 +439,8 @@ class RepairDialog(QDialog):
         root.addWidget(self.preview_banner)
         self.preview_banner.hide()
 
-        self.status = QLabel()
+        self.status = QLabel(objectName='repairReviewStatus')
+        self.status.setTextFormat(Qt.PlainText)
         self.status.setWordWrap(True)
         root.addWidget(self.status)
         buttons=QHBoxLayout();self.retry_print=QPushButton('Volver a preparar el parte');self.retry_print.setEnabled(False);self.retry_print.clicked.connect(lambda:self.print_requested.emit(self.item.ot));self.cancel=QPushButton('Cerrar');self.cancel.clicked.connect(self.close);self.submit=QPushButton('Revisar y ejecutar…');self.submit.setEnabled(False);self.submit.clicked.connect(self.execute);self.retry_print.hide();buttons.addStretch();buttons.addWidget(self.cancel);buttons.addWidget(self.submit);root.addLayout(buttons)
@@ -503,6 +507,9 @@ class RepairDialog(QDialog):
         self._worker.ready.connect(self.preview_ready if plan is None else self.finished_repair)
         self._worker.failed.connect(self.failed)
         if plan is None:
+            self._reviewed = False
+            self.submit.setEnabled(False)
+            self._mark_preview_blocked(False)
             self.status.hide()
             self.preview_banner.setToolTip('')
             self.preview_banner.show()
@@ -718,10 +725,30 @@ class RepairDialog(QDialog):
         self.preview_banner.hide()
         self.status.show()
 
+    def _mark_preview_blocked(self, blocked):
+        if bool(self.status.property('blocked')) == blocked:
+            return
+        self.status.setProperty('blocked', blocked)
+        style = self.status.style()
+        style.unpolish(self.status)
+        style.polish(self.status)
+        self.status.updateGeometry()
+        self.status.update()
+
     def preview_ready(self,data):
         self._stop_preview_indicator()
         if self._preview_closed:return
         self._preview_state = data['state']
+        blocked = self._preview_state not in ('APPR', 'INPRG')
+        self._mark_preview_blocked(blocked)
+        if blocked:
+            self._reviewed = False
+            self.submit.setEnabled(False)
+            self.status.setText(
+                f'Maximo muestra la OT en {self._preview_state}. '
+                'Solo se puede dar salida o desechar una OT en APPR o INPRG.'
+            )
+            return
         self._reviewed=True;self.submit.setEnabled(True)
         self.fault.setText('Avería: '+data['fault'])
         if data['fault'] and not self._justification_edited:
