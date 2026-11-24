@@ -7,7 +7,7 @@ const content = fs.readFileSync(require.resolve("../content.js"), "utf8");
 
 // Each document has new DOM nodes, while tab session storage survives reloads.
 // Run the real content script and capture START before any report is generated.
-async function loadDocument(storage, rootPreference, client = "TMB", origin = "") {
+async function loadDocument(storage, rootPreference, client = "TMB", origin = "", description = "") {
   const elements = new Map();
   const intervals = [];
   const messages = [];
@@ -16,6 +16,7 @@ async function loadDocument(storage, rootPreference, client = "TMB", origin = ""
   elements.set("mx73-tb", field("ISSUE"));
   elements.set("mx47-tb", field(client));
   elements.set("mx88-tb", field(origin));
+  elements.set("mx88-tb2", field(description));
   const document = {
     documentElement: { dataset: rootPreference === undefined ? {} :
       { maximoCloseReportTabs: rootPreference } },
@@ -108,6 +109,24 @@ test("ATM sends the company from the current work order and refuses a blank loca
   await selected.button.click();
   assert.equal(selected.messages[0].includeOriginCompany, true);
   assert.equal(selected.messages[0].originCompany, "TALLER");
+});
+
+test("Line 9 sends the initial location description instead of its inventory code", async () => {
+  const storage = new Map([["maximoDesktop.reportOrigin", '{"mode":"selected","projects":["Línea 9"]}']]);
+  const location = "Stock Lìnia 9 - Tramo I";
+  for (const client of ["LINEA-9", "CL9T1SVI", "CL9T2SVI"]) {
+    const page = await loadDocument(storage, undefined, client, "ISTOCK", location);
+    await page.button.click();
+    assert.equal(page.messages[0].includeOriginCompany, true);
+    assert.equal(page.messages[0].originCompany, location);
+  }
+  const fallback = await loadDocument(new Map(), undefined, "LINEA-9", "ISTOCK");
+  await fallback.button.click();
+  assert.equal(fallback.messages[0].originCompany, "ISTOCK");
+  storage.set("maximoDesktop.reportOrigin", '{"mode":"selected","projects":["ATM"]}');
+  const excluded = await loadDocument(storage, undefined, "LINEA-9", "ISTOCK", location);
+  await excluded.button.click();
+  assert.equal(excluded.messages[0].includeOriginCompany, false);
 });
 
 test("the HTML stamp is inserted once and leaves BIRT data intact", () => {

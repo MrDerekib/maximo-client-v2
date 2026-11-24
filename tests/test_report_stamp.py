@@ -98,7 +98,7 @@ class ReportStampTests(TestCase):
         finally:
             w.deleteLater();app.processEvents()
 
-    def test_origin_company_preferences_default_to_atm_and_persist(self):
+    def test_origin_company_preferences_default_to_atm_and_line_9_and_persist(self):
         from tests.test_ui_workorder_start import settings_window
         from PySide6.QtWidgets import QApplication
 
@@ -106,7 +106,7 @@ class ReportStampTests(TestCase):
         ui = settings_window()
         try:
             self.assertEqual(ui.repair_origin_mode_combo.currentData(), "selected")
-            self.assertEqual(ui.repair_origin_projects.selected_values(), ["ATM"])
+            self.assertEqual(ui.repair_origin_projects.selected_values(), ["ATM", "Línea 9"])
             ui.filter_choices_cache = {"clients": ["ATM", "TMB"]}
             ui._set_repair_origin_projects(["ATM", "TMB"])
             self.assertTrue(ui.settings_dirty())

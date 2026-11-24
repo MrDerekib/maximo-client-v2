@@ -21,6 +21,7 @@ from release_notes import STATE_FILENAME, initialize_history
 import version
 
 LEGACY_CONFIG_PATH = BASE_DIR / "config.json"
+DEFAULT_REPAIR_ORIGIN_PROJECTS = ("ATM", "Línea 9")
 _legacy_cleanup_attempted = False
 
 
@@ -59,7 +60,7 @@ class AppConfig:
     repair_close_tabs_after_direct_print: bool = False
     repair_irreparable_stamp_enabled: bool = True
     repair_origin_mode: str = "selected"
-    repair_origin_projects: list[str] = field(default_factory=lambda: ["ATM"])
+    repair_origin_projects: list[str] = field(default_factory=lambda: list(DEFAULT_REPAIR_ORIGIN_PROJECTS))
     filters: dict | None = None
     last_status: dict | None = None
     latest_release_tag: str = ""
@@ -125,7 +126,7 @@ class AppConfig:
         if self.repair_origin_mode not in ("disabled", "all", "selected"):
             self.repair_origin_mode = "selected"
         if not isinstance(self.repair_origin_projects, list):
-            self.repair_origin_projects = ["ATM"]
+            self.repair_origin_projects = list(DEFAULT_REPAIR_ORIGIN_PROJECTS)
         self.repair_origin_projects = sorted({
             value.strip() for value in self.repair_origin_projects
             if isinstance(value, str) and value.strip()

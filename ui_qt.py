@@ -34,7 +34,7 @@ from ui_activity_icon import RefreshIcon, set_list_update_busy
 from native_titlebar import NativeTitleBarStyler
 from typography import FONT_OPTIONS, normalize_font, apply_font
 from app_paths import APP_ROOT, BACKUP_DIR, CONFIG_PATH, DB_PATH, DEVELOPMENT_MODE, DOWNLOAD_DIR, PROGRAM_DIR, EDGE_PROFILE_DIR, EXPORT_DIR, LOG_DIR, PROFILES_PATH, UPDATE_CACHE_DIR, WAREHOUSE_DEVELOPMENT_MODE
-from config import AppConfig, credentials_configured, load_config, save_config
+from config import AppConfig, DEFAULT_REPAIR_ORIGIN_PROJECTS, credentials_configured, load_config, save_config
 from appearance import (readable_color, profile_for, custom_legibility, normalize_custom_legibility, THEME_PALETTES, THEME_LABELS, _LIGHT_HEX_ROLES, PROFILES, effective_palette,
                         legibility_css, application_legibility_css, appearance_overrides, tracking_style, presence_style, component_css)
 from failure_catalog import resolve_selection
@@ -1930,7 +1930,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
     def _set_repair_origin_projects(self, selected):
         known_projects = getattr(self, "filter_choices_cache", {}).get("clients", ())
-        options = sorted({"ATM", *known_projects, *selected}, key=str.casefold)
+        options = sorted({*DEFAULT_REPAIR_ORIGIN_PROJECTS, *known_projects, *selected}, key=str.casefold)
         self.repair_origin_projects.set_options(options, selected)
 
     def refresh_profiles(self, selected_name=""):

@@ -90,7 +90,7 @@
     try { preference = JSON.parse(sessionStorage.getItem("maximoDesktop.reportOrigin") || "null"); } catch (_) {}
     let client = logic.clientFromWorkorder(document);
     let includeOriginCompany = logic.includeReportOrigin(client, preference);
-    let originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document) : "";
+    let originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document, client) : "";
     if (!client || (includeOriginCompany && !originCompany)) {
       const mainTab = () => [...document.querySelectorAll("a[role='tab']")].find(tab =>
         visible(tab) && tab.textContent.trim().toLowerCase() === "orden de trabajo");
@@ -102,7 +102,7 @@
           "pestaña Orden de trabajo de la OT", 8000);
         client = logic.clientFromWorkorder(document);
         includeOriginCompany = logic.includeReportOrigin(client, preference);
-        originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document) : "";
+        originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document, client) : "";
       }
     }
     if (!client) throw new Error("No se pudo leer el cliente. Abre la pestaña Orden de trabajo.");

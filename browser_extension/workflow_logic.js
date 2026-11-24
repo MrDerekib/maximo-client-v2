@@ -51,29 +51,47 @@
     return /^(?:cliente\s*:?\s*)?atm(?:\s|$)/i.test(String(client || "").trim());
   }
 
+  function projectKey(client) {
+    return String(client || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/^cliente\s*:\s*|^cliente\s+/i, "").trim().replace(/[\s_-]+/g, " ").toUpperCase();
+  }
+
+  function isLine9Group(key) {
+    return /^(?:L9|LI(?:NEA|NIA) ?9)$/.test(key);
+  }
+
+  function isLine9Client(client) {
+    const key = projectKey(client);
+    return isLine9Group(key) || /^CL9T[12]SVI$/.test(key);
+  }
+
   function includeReportOrigin(client, preference) {
     const mode = preference?.mode;
     if (mode === "disabled") return false;
     if (mode === "all") return true;
-    if (mode !== "selected" || !Array.isArray(preference.projects)) return isAtmClient(client);
-    const key = String(client || "").replace(/^cliente\s*:?\s*/i, "").trim().toUpperCase();
-    return preference.projects.some(project => typeof project === "string" &&
-      (project.trim().toUpperCase() === key || (project.trim().toUpperCase() === "ATM" && isAtmClient(client))));
+    if (mode !== "selected" || !Array.isArray(preference.projects))
+      return isAtmClient(client) || isLine9Client(client);
+    const key = projectKey(client);
+    return preference.projects.filter(project => typeof project === "string").map(projectKey).some(project =>
+      project === key || (project === "ATM" && isAtmClient(client)) ||
+      (isLine9Group(project) && isLine9Client(client)));
   }
 
   function originCompanyText(value) {
     return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 200) : "";
   }
 
-  function originCompanyFromWorkorder(documentRoot) {
-    const primary = labeledFieldValue(documentRoot, "Ubicación inicial", "mx88-tb");
-    if (primary) return originCompanyText(primary);
+  function originCompanyFromWorkorder(documentRoot, client) {
+    const primary = originCompanyText(labeledFieldValue(documentRoot, "Ubicación inicial", "mx88-tb"));
+    const useDescription = isLine9Client(client);
+    if (primary && !useDescription) return primary;
     const description = [...(documentRoot.querySelectorAll?.("input[aria-label]") || [])]
       .find(field => field.getAttribute("aria-label")?.trim().toLocaleLowerCase() ===
         "descripción de ubicación inicial" && (!field.getClientRects || field.getClientRects().length));
-    const backup = description?.value ||
-      labeledFieldValue(documentRoot, "Descripción de ubicación inicial", "mx88-tb2");
-    return originCompanyText(backup).replace(/^empresa\s*:?\s+/i, "");
+    const locationDescription = originCompanyText(description?.value) ||
+      originCompanyText(labeledFieldValue(documentRoot, "Descripción de ubicación inicial", "mx88-tb2"));
+    if (useDescription) return locationDescription || primary;
+    return locationDescription.replace(/^empresa\s*:?\s+/i, "");
   }
 
   function removeBirtResourceNotices(documentRoot) {
