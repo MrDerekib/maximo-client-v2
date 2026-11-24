@@ -371,6 +371,31 @@ class FilterTests(unittest.TestCase):
             window.refresh_table()
             self.assertFalse(window.table.selectionModel().selectedRows())
 
+    def test_settings_pending_counts_follow_saved_results(self):
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("UPDATE maximo SET Activo=1")
+            conn.execute("UPDATE maximo SET Activo=0 WHERE OT='1'")
+            conn.commit()
+
+        with self.qt_window() as (window, _qt):
+            window.navigate_to(1)
+            self.assertIn('1 OT', window.reconcile_pending_label.text())
+            self.assertIn('3 OT', window.fault_pending_label.text())
+            self.assertIn('3 OT', window.detail_pending_label.text())
+
+            with patch.object(window, '_credentials_ready', return_value=True), \
+                 patch.object(window, '_start_task') as task:
+                window.refresh_selected_information(('1', '2'))
+                db.apply_observed_status('1', 'CLOSE')
+                db.apply_fault_description('2', '')
+                db.apply_detailed_description('2', '', '')
+                task.call_args.kwargs['progress'](2, 2, '2')
+
+                self.assertIn('0 OT', window.reconcile_pending_label.text())
+                self.assertIn('2 OT', window.fault_pending_label.text())
+                self.assertIn('2 OT', window.detail_pending_label.text())
+                task.call_args.args[1](3)
+
     def test_zero_count_update_still_refreshes_presence_and_last_seen(self):
         with self.qt_window() as (window, qt):
             with patch.object(window,'_credentials_ready',return_value=True), \

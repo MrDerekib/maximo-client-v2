@@ -1076,6 +1076,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.pages.setCurrentIndex(page)
         self.navigation_location.setText(("Listado", "Configuración")[page])
         if page == 1:
+            self._refresh_reconciliation_summary()
+            self._refresh_fault_description_summary()
             # Esta página puede haber estado oculta al calcularse por primera
             # vez; ahora sí conocemos el ancho final del panel principal.
             QTimer.singleShot(0, self._update_settings_content_width)
@@ -2090,6 +2092,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
     def warehouse_row_updated(self, ot, tracking):
         """Refresh a verified operation without rebuilding thousands of unchanged rows."""
         self._table_snapshot = None
+        self._refresh_reconciliation_summary()
         try:
             allowed = {str(row[0]): str(row[6] or '') for row in fetch_data(
                 self.search_edit.text(), self.search_field(), "Todos", self.effective_advanced_filters())}
@@ -2335,7 +2338,12 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         def done(result):
             set_list_update_busy(self,False)
             self.status.finish_progress()
-            self.update_lock.release(); new, changed = result; self.refresh_choices(); self.refresh_table(); self._refresh_reconciliation_summary()
+            self.update_lock.release()
+            new, changed = result
+            self._refresh_reconciliation_summary()
+            self._refresh_fault_description_summary()
+            self.refresh_choices()
+            self.refresh_table()
             sync_summary = (
                 f"Última sincronización de Maximo ({datetime.now().strftime('%H:%M')}): "
                 f"completada · {new} nuevas, {changed} actualizadas"
@@ -2393,12 +2401,28 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             if after:
                 after(combined_summary)
         def failed(error):
-            self.reconcile_lock.release(); logging.warning("Conciliación fallida: %s", error)
+            self.reconcile_lock.release()
+            self._refresh_reconciliation_summary()
+            logging.warning("Conciliación fallida: %s", error)
             combined_summary = f"{sync_summary} · Conciliación fallida; consulta el log." if sync_summary else "La conciliación falló; consulta el log."
             self.status.showMessage(combined_summary)
             if after:
                 after(combined_summary)
-        self._start_task(lambda: reconcile_inactive_tracking(limit=batch), done, failed, coordinated=True)
+        self._start_task(
+            lambda report: reconcile_inactive_tracking(limit=batch, progress_callback=report),
+            done, failed, progress=lambda *_: self._refresh_pending_during_task(reconcile=True),
+            coordinated=True,
+        )
+
+    def _refresh_pending_during_task(self, *, reconcile=False, information=False):
+        # The workers report after processing each OT. Count committed rows only
+        # while the user can see the settings, and refresh again at completion.
+        if self._closing or self.pages.currentIndex() != 1:
+            return
+        if reconcile:
+            self._refresh_reconciliation_summary()
+        if information:
+            self._refresh_fault_description_summary()
 
     def _refresh_fault_description_summary(self):
         if not hasattr(self, "fault_pending_label"):
@@ -2481,10 +2505,12 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             self._refresh_fault_description_summary()
             self.status.showMessage(f"{sync_summary} · Información ampliada: error; consulta el log." if sync_summary else "No se pudo completar la información de OT; consulta el log.")
 
-        self._start_task(lambda: enrich_fault_descriptions(
+        self._start_task(lambda report: enrich_fault_descriptions(
             limit=batch, include_fault=self.cfg.fault_descriptions_enabled,
             include_detail=self.cfg.detailed_descriptions_enabled,
-            cancel_event=cancel_event), done, failed, coordinated=True)
+            cancel_event=cancel_event, progress_callback=report), done, failed,
+            progress=lambda *_: self._refresh_pending_during_task(information=True),
+            coordinated=True)
 
     def refresh_selected_information(self, ots):
         if self._closing or not self._credentials_ready():
@@ -2506,6 +2532,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             self.fault_description_lock.release(); self.update_lock.release()
             self.fault_cancel_button.setEnabled(self.fault_description_lock.locked())
             self._refresh_fault_description_summary()
+            self._refresh_reconciliation_summary()
         def done(completed):
             release()
             if completed:
@@ -2518,12 +2545,16 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             self.refresh_table()
             logging.warning('Actualización manual de información fallida: %s', error)
             self.status.showMessage('No se pudo completar la lectura. Los campos no leídos conservan su información anterior; consulta el log.', 10000)
+        def progress(current, total, ot):
+            self._refresh_pending_during_task(reconcile=True, information=True)
+            self.status.showMessage(f'Actualizando información: {current}/{total} OT · {ot}')
+
         self.status.showMessage(f'Actualizando Seguimiento, avería y descripción ampliada de {len(ots)} OT…')
         try:
             self._start_task(lambda report: enrich_fault_descriptions(
                 limit=None, force_ots=ots, cancel_event=cancel_event,
                 progress_callback=report, job_priority=MANUAL), done, failed,
-                progress=lambda current,total,ot: self.status.showMessage(f'Actualizando información: {current}/{total} OT · {ot}'),
+                progress=progress,
                 coordinated=True)
         except Exception as exc:
             failed(str(exc))
@@ -2574,12 +2605,15 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             if not self._closing:
                 QMessageBox.critical(self, "Información ampliada", error)
 
-        self._start_task(lambda: enrich_fault_descriptions(
+        self._start_task(lambda report: enrich_fault_descriptions(
             limit=None, minimum_age_hours=None, include_fault=self.cfg.fault_descriptions_enabled,
             include_detail=self.cfg.detailed_descriptions_enabled,
-            cancel_event=cancel_event, job_priority=MANUAL), done, failed, coordinated=True)
+            cancel_event=cancel_event, progress_callback=report, job_priority=MANUAL),
+            done, failed, progress=lambda *_: self._refresh_pending_during_task(information=True),
+            coordinated=True)
 
     def _show_priority_reconcile_progress(self, completed, total, ot):
+        self._refresh_pending_during_task(reconcile=True)
         self.status.showMessage(f"Revisión prioritaria: {completed}/{total} OT · {ot}")
 
     def start_priority_reconcile(self):
@@ -2601,6 +2635,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                 QMessageBox.information(self, "Mantenimiento", f"Revisión completada. Seguimientos actualizados: {changed}.")
         def failed(error):
             self.reconcile_lock.release(); self.update_lock.release()
+            self._refresh_reconciliation_summary()
             self.status.showMessage("La revisión prioritaria falló; consulta el detalle.", 7000)
             if not self._closing:
                 QMessageBox.critical(self, "Mantenimiento", error)
@@ -2664,6 +2699,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         ot = result["ot"]
         try:
             apply_started_workorder(ot)
+            self._refresh_reconciliation_summary()
             self.refresh_choices()
             self.refresh_table()
         except Exception:
@@ -2679,6 +2715,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         try:
             if final=='CLOSE':apply_warehouse_status(ot,'CLOSE')
             else:apply_closed_repair(ot)
+            self._refresh_reconciliation_summary()
             self.refresh_choices()
             self.refresh_table()
         except Exception:

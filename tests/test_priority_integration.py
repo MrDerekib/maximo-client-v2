@@ -229,7 +229,8 @@ class IntegrationTests(TestCase):
         w=SimpleNamespace(_closing=False, _list_update_pending=False,
             _credentials_ready=Mock(return_value=True), update_lock=JobCounter(),
             status=Mock(), _start_task=Mock(), refresh_choices=Mock(),refresh_table=Mock(),
-            _refresh_reconciliation_summary=Mock(), start_background_reconcile=Mock())
+            _refresh_reconciliation_summary=Mock(), _refresh_fault_description_summary=Mock(),
+            start_background_reconcile=Mock())
         MaximoDesktopWindow.update_now(w)
         w._start_task.call_args.args[1]((1,2))
         self.assertFalse(w._list_update_pending)
