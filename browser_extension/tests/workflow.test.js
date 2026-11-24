@@ -46,10 +46,10 @@ test("the exact mx47-tb field takes priority, with a Cliente row fallback", () =
     querySelectorAll: () => [label] }), "Cliente: TMB BOIXERES");
 });
 
-test("ATM reads Ubicación inicial before its description and recognizes the client code", () => {
+test("ATM prioritizes the company description and falls back to the location code", () => {
   const fields = new Map([
     ["mx88-tb", { value: " SARBUS " }],
-    ["mx88-tb2", { value: " Empresa SARBUS " }]
+    ["mx88-tb2", { value: " Empresa Sagales " }]
   ]);
   const doc = { getElementById: id => fields.get(id), querySelectorAll: () => [] };
   assert.equal(isAtmClient("Cliente: ATM Autoritat del Transport Metropolità"), true);
@@ -58,11 +58,15 @@ test("ATM reads Ubicación inicial before its description and recognizes the cli
   assert.equal(includeReportOrigin("ATM", { mode: "disabled" }), false);
   assert.equal(includeReportOrigin("FGC", { mode: "all" }), true);
   assert.equal(includeReportOrigin("TMB BOIXERES", { mode: "selected", projects: ["TMB"] }), false);
-  assert.equal(originCompanyFromWorkorder(doc), "SARBUS");
+  assert.equal(originCompanyFromWorkorder(doc, "ATM"), "Sagales");
+  assert.equal(originCompanyFromWorkorder(doc, "FGC"), "SARBUS");
+  fields.set("mx88-tb2", { value: "Empresa:" });
+  assert.equal(originCompanyFromWorkorder(doc, "ATM"), "SARBUS");
   fields.delete("mx88-tb");
-  assert.equal(originCompanyFromWorkorder(doc), "SARBUS");
+  fields.set("mx88-tb2", { value: "Empresa: Sagales" });
+  assert.equal(originCompanyFromWorkorder(doc, "ATM"), "Sagales");
   fields.clear();
-  assert.equal(originCompanyFromWorkorder(doc), "");
+  assert.equal(originCompanyFromWorkorder(doc, "ATM"), "");
 });
 
 function chromeHarness() {

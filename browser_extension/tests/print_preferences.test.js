@@ -92,9 +92,9 @@ test("only verified discarded OTs in this session request the HTML stamp", async
 });
 
 test("ATM sends the company from the current work order and refuses a blank location", async () => {
-  const page = await loadDocument(new Map(), undefined, "ATM", " SARBUS ");
+  const page = await loadDocument(new Map(), undefined, "ATM", " SAGA ", "Empresa Sagales");
   await page.button.click();
-  assert.equal(page.messages[0].originCompany, "SARBUS");
+  assert.equal(page.messages[0].originCompany, "Sagales");
   const missing = await loadDocument(new Map(), undefined, "ATM");
   await missing.button.click();
   assert.equal(missing.messages.length, 0);

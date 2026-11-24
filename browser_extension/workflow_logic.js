@@ -83,15 +83,16 @@
 
   function originCompanyFromWorkorder(documentRoot, client) {
     const primary = originCompanyText(labeledFieldValue(documentRoot, "Ubicación inicial", "mx88-tb"));
-    const useDescription = isLine9Client(client);
-    if (primary && !useDescription) return primary;
+    const line9 = isLine9Client(client);
+    if (primary && !line9 && !isAtmClient(client)) return primary;
     const description = [...(documentRoot.querySelectorAll?.("input[aria-label]") || [])]
       .find(field => field.getAttribute("aria-label")?.trim().toLocaleLowerCase() ===
         "descripción de ubicación inicial" && (!field.getClientRects || field.getClientRects().length));
     const locationDescription = originCompanyText(description?.value) ||
       originCompanyText(labeledFieldValue(documentRoot, "Descripción de ubicación inicial", "mx88-tb2"));
-    if (useDescription) return locationDescription || primary;
-    return locationDescription.replace(/^empresa\s*:?\s+/i, "");
+    if (line9) return locationDescription || primary;
+    const company = locationDescription.replace(/^empresa(?:\s*:\s*|\s+|$)/i, "");
+    return company || primary;
   }
 
   function removeBirtResourceNotices(documentRoot) {
