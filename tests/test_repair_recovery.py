@@ -141,8 +141,8 @@ class RepairRecoveryUiTests(TestCase):
             with patch('technician_repair_ui.RecoveryStore',return_value=store),patch('technician_repair_ui.RepairRecheckWorker') as worker,patch('technician_repair_ui.RepairWorker') as execute:
                 worker.return_value.isRunning.return_value=False
                 progress=d.progress_dialog;progress.failure('Timeout');progress.worker_finished()
-                self.assertTrue(progress.recheck_button.isEnabled());self.assertFalse(progress.retry_button.isEnabled())
-                progress.recheck_button.click()
+                self.assertTrue(progress.retry_button.isEnabled())
+                progress.retry_button.click()
                 self.assertIs(d.progress_dialog,progress)
                 worker.return_value.start.assert_called_once();execute.assert_not_called()
                 self.assertFalse(progress.close_button.isEnabled());self.assertTrue(progress.stop_button.isEnabled())
@@ -178,7 +178,7 @@ class RepairRecoveryUiTests(TestCase):
                 d.progress_dialog.worker_finished()
             self.assertIsNone(store.get('1'));self.assertEqual(printed,[])
             self.assertTrue(d.progress_dialog.print_button.isEnabled())
-            self.assertFalse(d.progress_dialog.retry_button.isEnabled());self.assertFalse(d.progress_dialog.recheck_button.isEnabled())
+            self.assertFalse(d.progress_dialog.retry_button.isEnabled())
 
     def test_local_save_failure_keeps_recheck_and_never_repeats_remote_operation(self):
         d=self.dialog();p=plan()
@@ -188,5 +188,5 @@ class RepairRecoveryUiTests(TestCase):
                 with self.assertLogs(level='ERROR'):
                     d.recheck_ready(WarehouseResult(p.item,status='success',verified_status='ISSUE',operation_id=record['operation_id']))
                 d.progress_dialog.worker_finished()
-            self.assertTrue(d.progress_dialog.recheck_button.isEnabled());self.assertFalse(d.progress_dialog.retry_button.isEnabled())
+            self.assertTrue(d.progress_dialog.retry_button.isEnabled())
             self.assertIn('Guardado en MD pendiente',d.progress_dialog.message.text())
