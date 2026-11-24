@@ -7,7 +7,7 @@ import platform
 from threading import Event
 from uuid import uuid4
 
-from PySide6.QtCore import QEvent, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QFileSystemWatcher, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel,
@@ -517,37 +517,112 @@ class WarehouseWindowMixin:
         flag = 'workorder_close_enabled' if action in ('technician_discard','technician_close') else 'technician_sat_enabled' if ACTIONS[action].role == 'technician' else 'warehouse_enabled'
         return bool(getattr(self.cfg, flag, False))
 
-    def open_warehouse_recovery(self):
-        self._check_closed_recoveries(manual=True)
+    def _pending_operations(self):
+        return [record for record in RecoveryStore().pending() if self._operation_allowed(record['action'])]
 
-    def _show_warehouse_recovery(self):
-        if getattr(self, '_closing', False): return
-        if not (getattr(self.cfg, 'warehouse_enabled', False) or getattr(self.cfg, 'technician_sat_enabled', False) or getattr(self.cfg,'workorder_close_enabled',False)): return
+    def _setup_operations_monitor(self):
+        self._operations_watcher = QFileSystemWatcher(self)
+        self._operations_timer = QTimer(self)
+        self._operations_timer.setSingleShot(True)
+        self._operations_timer.setInterval(250)
+        self._operations_timer.timeout.connect(self._refresh_operations)
+        self._operations_watcher.directoryChanged.connect(lambda _: self._operations_timer.start())
+        store = RecoveryStore()
         try:
-            records = [r for r in RecoveryStore().pending() if self._operation_allowed(r['action'])]
-        except Exception as exc:
-            QMessageBox.warning(self, 'Recuperación de operaciones', str(exc)); return
-        if not records:
-            QMessageBox.information(self, 'Recuperación de operaciones', 'No hay operaciones pendientes.'); return
-        groups = {action:[r for r in records if r['action']==action] for action in ACTIONS}
-        groups = {action:values for action,values in groups.items() if values}
-        action = next(iter(groups))
-        if len(groups)>1:
-            labels = {f'{ACTIONS[a].label} · {len(v)} OT':a for a,v in groups.items()}
-            selected,ok = QInputDialog.getItem(self,'Recuperación de operaciones','Acción pendiente:',list(labels),0,False)
-            if not ok:return
-            action = labels[selected]
+            store.folder.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            log_exception('No se pudo preparar la carpeta de operaciones')
+        self._refresh_operations()
+
+    def _refresh_operations(self):
+        if getattr(self, '_closing', False):
+            return
+        watcher = getattr(self, '_operations_watcher', None)
+        if watcher is None:
+            return
+        store = RecoveryStore()
+        watched = set(watcher.directories())
+        for path in (store.folder.parent, store.folder, store.folder.parent / 'resueltas'):
+            if str(path) not in watched and path.is_dir():
+                watcher.addPath(str(path))
+        try:
+            count = len(self._pending_operations())
+        except (OSError, ValueError, RuntimeError):
+            log_exception('No se pudo contar las operaciones pendientes')
+            count = 0
+        label = '1 pendiente' if count == 1 else f'{count} pendientes'
+        self.operations_button.setText(f'Operaciones · {label}' if count else 'Operaciones')
+        dialog = getattr(self, '_operations_dialog', None)
+        if dialog is not None and dialog.isVisible():
+            dialog.reload()
+
+    def open_warehouse_recovery(self):
+        if getattr(self, '_closing', False):
+            return
+        from operations_history import OperationsDialog
+
+        if getattr(self, '_operations_dialog', None) is None:
+            self._operations_dialog = OperationsDialog(
+                self, RecoveryStore(), self._retry_operation,
+                self._mute_operation_reminder, self._pending_operations,
+            )
+        dialog = self._operations_dialog
+        dialog.reload()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _selected_pending_operation(self, ot, operation_id):
+        record = RecoveryStore().get(ot)
+        if record and record['operation_id'] == operation_id and self._operation_allowed(record['action']):
+            return record
+        raise RuntimeError('La operación ya se resolvió o cambió. Actualiza el historial.')
+
+    def _mute_operation_reminder(self, ot, operation_id):
+        try:
+            record = self._selected_pending_operation(ot, operation_id)
+            RecoveryStore().mute_startup(record)
+        except (OSError, RuntimeError, ValueError) as exc:
+            QMessageBox.warning(self._operations_dialog, 'Operaciones', str(exc))
+        self._refresh_operations()
+
+    def _retry_operation(self, ot, operation_id):
+        if getattr(self, '_closing', False):
+            return
+        try:
+            record = self._selected_pending_operation(ot, operation_id)
+        except (OSError, RuntimeError, ValueError) as exc:
+            QMessageBox.information(self._operations_dialog, 'Operaciones', str(exc))
+            self._refresh_operations()
+            return
         dialogs = getattr(self, '_warehouse_dialogs', [])
-        if any(d.is_running() for d in dialogs):
-            QMessageBox.information(self,'Almacén','Espera a que termine la operación activa.');return
-        dialog = WarehouseBatchDialog([recovery_item(r) for r in groups[action]],action,self.open_ot_number,self,recovery_only=True)
-        if hasattr(self,'warehouse_row_updated'):dialog.record_updated.connect(self.warehouse_row_updated)
-        self._warehouse_dialogs = [*dialogs,dialog];dialog.show()
+        if any(dialog.is_running() for dialog in dialogs):
+            QMessageBox.information(self._operations_dialog, 'Operaciones', 'Espera a que termine la operación activa.')
+            return
+        item = recovery_item(record)
+        action = record['action']
+        if action in ('technician_close', 'technician_discard'):
+            from technician_repair_ui import RepairDialog
+            dialog = RepairDialog(item, self.cfg.workorder_start_selection, self, autoload=False,
+                                  default_action='discard' if action == 'technician_discard' else 'close')
+            dialog.print_requested.connect(lambda number: self.open_repair_report(number, 'print'))
+            dialog.repair_verified.connect(self.workorder_closed.emit)
+            self._warehouse_dialogs = [*dialogs, dialog]
+            dialog.open_saved_recovery(record)
+            return
+        dialog = WarehouseBatchDialog([item], action, self.open_ot_number, self, recovery_only=True)
+        dialog.record_updated.connect(self.warehouse_row_updated)
+        self._warehouse_dialogs = [*dialogs, dialog]
+        dialog.show()
+        if preparation_retry_allowed(record):
+            dialog.start_preparation_retry()
+        else:
+            dialog.start_reverification()
 
     def offer_warehouse_recovery(self):
-        self._check_closed_recoveries(manual=False)
+        self._check_closed_recoveries()
 
-    def _check_closed_recoveries(self, *, manual):
+    def _check_closed_recoveries(self):
         if getattr(self, '_closing', False) or getattr(self, '_checking_closed_recoveries', False):
             return
         if not any(self._operation_allowed(action) for action in ACTIONS):
@@ -569,10 +644,8 @@ class WarehouseWindowMixin:
                 return
             for ot in resolved:
                 self.warehouse_row_updated(ot, 'CLOSE')
-            if manual:
-                self._show_warehouse_recovery()
-            else:
-                self._show_pending_reminder(store)
+            self._refresh_operations()
+            self._show_pending_reminder(store)
 
         if candidates:
             from config import credentials_configured
@@ -603,7 +676,7 @@ class WarehouseWindowMixin:
         prompt.setDefaultButton(later)
         prompt.exec()
         if prompt.clickedButton() is review:
-            self._show_warehouse_recovery()
+            self.open_warehouse_recovery()
         elif prompt.clickedButton() is mute:
             try:
                 for record in records:

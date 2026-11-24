@@ -491,6 +491,33 @@ class RepairDialog(QDialog):
             self._worker.finished.connect(self._repair_worker_finished)
         self._worker.start()
 
+    def open_saved_recovery(self, record):
+        """Restore the reviewed form while routing all retries through the saved attempt."""
+        self._retry_record = record
+        try:
+            plan = repair_plan_from_record(record)
+        except (KeyError, TypeError, ValueError, RuntimeError):
+            if repair_retry_allowed(record):
+                logging.exception('No se pudo reconstruir la reparación pendiente de la OT %s', self.item.ot)
+        else:
+            self.reference.setText(plan.reference)
+            self.duration.setText(plan.duration)
+            self.time_mode.setCurrentIndex(self.time_mode.findData('start'))
+            self.time.setDateTime(QDateTime.fromString(plan.start, Qt.ISODate))
+            self.justification.setPlainText(plan.justification)
+            self.print_check.setChecked(plan.print_report)
+            self.picker.set_selection(plan.selection)
+            for entry in plan.entries:
+                self.add_entry(entry.summary, entry.details)
+            self._reviewed = True
+        self.review_panel.setEnabled(False)
+        self.status.setText('Datos del intento guardado.')
+        self.progress_dialog = RepairProgressDialog(self)
+        self.progress_dialog.failure(record.get('last_error') or 'Resultado pendiente de revisar.')
+        self.progress_dialog.worker_finished()
+        self.progress_dialog.show()
+        self.continue_repair()
+
     def recheck_repair(self):
         if self.is_running():return
         try:

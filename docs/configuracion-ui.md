@@ -6,14 +6,21 @@ La UI Qt mantiene cuatro pestañas con los mismos controles y ajustes existentes
 | --- | --- |
 | General | Credenciales, actualizaciones de MD, tema y legibilidad |
 | Datos y sincronización | Actualización de Maximo, conciliación, información ampliada, prioridades locales, mantenimiento y rutas |
-| Técnico y extensión | Inicio/cierre y anomalías de Edge, impresión, SAT técnico y recuperación |
-| Almacén | Activación de acciones, detalles de SAT y recuperación |
+| Técnico y extensión | Inicio/cierre y anomalías de Edge, impresión y SAT técnico |
+| Almacén | Activación de acciones y detalles de SAT |
 
 Cada pestaña conserva su desplazamiento y sus controles al cambiar a otra. No se
 recargan los datos ni se guardan ajustes al cambiar de pestaña. El botón **Guardar
 cambios** y el aviso de cambios pendientes quedan fuera del área desplazable y
 afectan a todas las pestañas. Las columnas se apilan cuando falta ancho; un grupo
 único como Almacén usa todo el ancho disponible.
+
+## Operaciones
+
+En Listado, **Operaciones** abre los intentos que requieren revisión. El contador
+incluye también los avisos silenciados. **Historial reciente** muestra los
+resultados guardados por MD, entre ellos los intentos resueltos por otra vía.
+Selecciona una OT para ver el último paso y, si sigue pendiente, revisarla.
 
 ## Barra lateral
 

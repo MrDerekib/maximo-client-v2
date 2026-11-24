@@ -6,6 +6,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication,QCalendarWidget,QFileDialog,QInputDialog,
     QLabel,QMenu,QMessageBox,QProgressDialog,QTextBrowser,QDialog,QVBoxLayout,QRadioButton)
 from config import AppConfig
+from operations_history import OperationsDialog
+from warehouse_recovery import RecoveryStore
 from failure_catalog import default_selection
 from priority_importer import PriorityFile
 from release_notes import ReleaseNotes
@@ -46,6 +48,12 @@ def create_surfaces(main, folder):
     recovery.results=[WarehouseResult(item,status='uncertain',detail='Ejemplo de resultado pendiente')]
     recovery.table.item(0,4).setText('Pendiente de verificar');recovery._sync_table_palette()
     surfaces['recovery']=recovery
+    store = RecoveryStore(folder)
+    pending = {'item': {'ot': item.ot}, 'action': 'dispatch', 'phase': 'route_attempted',
+               'operation_id': 'demo-dispatch', 'last_error': 'Respuesta de Maximo pendiente.'}
+    operations = OperationsDialog(main, store, lambda *_: None, lambda *_: None, lambda: [pending])
+    operations.reload()
+    surfaces['operations-history'] = operations
     sat=TechnicianSatDialog([item],lambda _:None,main,selection=default_selection(),report_folder=folder,autoload=False)
     sat.inputs[item.ot]['duration'].setText('0,5');sat.inputs[item.ot]['incident'].setText('inc: DEMO')
     sat.inputs[item.ot]['reason'].setText('Motivo ficticio del envío')

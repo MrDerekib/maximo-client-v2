@@ -819,6 +819,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._restore_column_widths()
         QTimer.singleShot(0, self._fit_columns_to_viewport)
         self.schedule_auto_update()
+        self._setup_operations_monitor()
         QTimer.singleShot(1800, self.offer_warehouse_recovery)
         # La consulta no bloquea el inicio; si hay una versión nueva, ofrece
         # instalarla una sola vez por sesión.
@@ -1092,7 +1093,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.update_icon=RefreshIcon(update,update_icon,ACTIVE_COLORS["on_accent"])
         update.setIconSize(QSize(22, 22))
         update.clicked.connect(self.update_now)
-        outer.addWidget(self._page_header("Órdenes de trabajo", "Consulta, filtra y gestiona el seguimiento local.", update))
+        self.operations_button = QPushButton("Operaciones")
+        self.operations_button.clicked.connect(self.open_warehouse_recovery)
+        actions = QWidget()
+        action_layout = QHBoxLayout(actions)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.addWidget(self.operations_button)
+        action_layout.addWidget(update)
+        outer.addWidget(self._page_header("Órdenes de trabajo", "Consulta, filtra y gestiona el seguimiento local.", actions))
 
         search_card = QFrame(objectName="filtersCard");self.search_card=search_card
         search_layout = QVBoxLayout(search_card)
@@ -1608,9 +1616,6 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             "La combinación de anomalías se revisa antes de ejecutar. No activa opciones de almacén ni de Edge.")
         technical_hint.setWordWrap(True); technical_hint.setObjectName("filterHint")
         technical_layout.addWidget(technical_hint)
-        technical_recovery = QPushButton("Revisar operaciones pendientes…")
-        technical_recovery.clicked.connect(self.open_warehouse_recovery)
-        technical_layout.addWidget(technical_recovery)
 
         self.warehouse_card = QGroupBox("Funciones de almacén · En pruebas")
         warehouse_layout = QVBoxLayout(self.warehouse_card)
@@ -1621,11 +1626,6 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             "Muestra un campo opcional por OT en la revisión del lote. "
             "Desactivado: se deja Detalles vacío; no se inventa una justificación.")
         warehouse_layout.addWidget(self.warehouse_details_check)
-        self.warehouse_recovery_button = QPushButton("Revisar operaciones pendientes…")
-        self.warehouse_recovery_button.clicked.connect(self.open_warehouse_recovery)
-        self.warehouse_recovery_button.setEnabled(self.cfg.warehouse_enabled)
-        self.warehouse_check.toggled.connect(self.warehouse_recovery_button.setEnabled)
-        warehouse_layout.addWidget(self.warehouse_recovery_button)
         warehouse_hint = QLabel("Muestra las acciones de recepción y salida en el menú contextual. "
                                "Ejecuta las acciones validadas en segundo plano tras revisar y confirmar las OTs. "
                                "Las opciones pendientes de validación permanecen deshabilitadas.")
@@ -2983,6 +2983,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._refresh_reconciliation_summary()
         self._refresh_fault_description_summary()
         self._update_fault_description_controls()
+        self._refresh_operations()
         self._refresh_priorities()
         self.refresh_table()
         logging.info(
