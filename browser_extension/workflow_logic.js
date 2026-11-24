@@ -1,6 +1,8 @@
 (function (root) {
   "use strict";
 
+  const BIRT_RESOURCE_NOTICE = "The resource of this report item is not reachable.";
+
   function pageKind(url) {
     const parsed = new URL(url);
     if (parsed.origin !== "https://eam.indraweb.net") return null;
@@ -74,6 +76,21 @@
     return originCompanyText(backup).replace(/^empresa\s*:?\s+/i, "");
   }
 
+  function removeBirtResourceNotices(documentRoot) {
+    for (const element of documentRoot.querySelectorAll("body *")) {
+      if (element.tagName === "IFRAME") {
+        const frame = element.contentDocument;
+        if (frame) removeBirtResourceNotices(frame);
+      } else if (element.tagName === "IMG" && element.alt.trim() === BIRT_RESOURCE_NOTICE) {
+        element.alt = "";
+        if (!element.naturalWidth) element.style.visibility = "hidden";
+      } else if (element.textContent.trim() === BIRT_RESOURCE_NOTICE &&
+        ![...element.children].some(child => child.textContent.trim() === BIRT_RESOURCE_NOTICE)) {
+        element.textContent = "";
+      }
+    }
+  }
+
   function insertOriginCompany(documentRoot, company) {
     if (!company || documentRoot.getElementById("md-origin-company")) return;
     const field = documentRoot.createElement("div");
@@ -106,7 +123,8 @@
 
   const logic = { pageKind, containsOt, canPrintStatus, labeledFieldValue,
     isBoixeresClient, isAtmClient, clientFromWorkorder, originCompanyText,
-    includeReportOrigin, originCompanyFromWorkorder, insertOriginCompany };
+    includeReportOrigin, originCompanyFromWorkorder, insertOriginCompany,
+    BIRT_RESOURCE_NOTICE, removeBirtResourceNotices };
   root.MaximoPartLogic = logic;
   if (typeof module !== "undefined" && module.exports) module.exports = logic;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -341,6 +341,7 @@
       job = await send("CLAIM_OUTPUT");
       await waitFor(() => logic.containsOt(textInFrames(document), job.ot),
         `OT ${job.ot} en el parte HTML`, 45000);
+      logic.removeBirtResourceNotices(document);
       if (job.originCompany) logic.insertOriginCompany(document, job.originCompany);
       if (job.irreparableStamp === true) MaximoReportStamp.insert(document);
       window.print();

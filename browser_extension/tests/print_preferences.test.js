@@ -131,16 +131,17 @@ test("output printing applies the stamp before print, and never for ordinary rep
   for(const enabled of [false,true]) {
     const events=[];
     const intervals=[];
+    const warning = { textContent: logic.BIRT_RESOURCE_NOTICE, children: [] };
     vm.runInNewContext(content,{
       MaximoPartLogic:logic,MaximoReportStamp:{insert(){events.push("stamp");}},
       document:{
         getElementById: () => null,
         createElement: () => ({ style: {} }),
         body: { innerText: "OT 4443840", prepend(node) { events.push(node.textContent); } },
-        querySelectorAll: () => []
+        querySelectorAll: selector => selector === "body *" ? [warning] : []
       },
       location:{href:"https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign"},
-      window:{print(){events.push("print");}},
+      window:{print(){assert.equal(warning.textContent, ""); events.push("print");}},
       chrome:{runtime:{async sendMessage(message){
         events.push(message.type);
         return {ok:true,value:message.type==="CLAIM_OUTPUT" ?

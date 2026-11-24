@@ -440,9 +440,17 @@ test("PDF output requests Save As for BIRT's native PDF from the correct viewer"
   await handleMessage({ type: "START", ot: "4228010", outputFormat: "pdf" }, source);
   assert.equal((await handleMessage({ type: "CLAIM_VIEWER" }, viewer)).outputFormat, "pdf");
   const url = "https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign&__requestid=123";
-  await handlePdfOutput(3, { url }, { id: 3, openerTabId: 99, url });
-  assert.equal(downloads.length, 0);
-  await handlePdfOutput(3, { url }, { id: 3, openerTabId: 2, url });
+  mergerEnvironment();
+  const bytes = await nativePdf(595);
+  const previousFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, url, arrayBuffer: async () => bytes.buffer });
+  try {
+    await handlePdfOutput(3, { url }, { id: 3, openerTabId: 99, url });
+    assert.equal(downloads.length, 0);
+    await handlePdfOutput(3, { url }, { id: 3, openerTabId: 2, url });
+  } finally {
+    global.fetch = previousFetch;
+  }
   assert.deepEqual(downloads, [{ url, filename: "parte_reparacion_OT4228010.pdf",
     saveAs: true, conflictAction: "uniquify" }]);
   assert.equal(session.has(JOB_KEY), false);
@@ -524,8 +532,50 @@ function mergerEnvironment() {
   global.PDFLib=nativePdfLib;
   global.repairPdfBase64=pdfMerge.repairPdfBase64;
   global.mergeRepairPdfs=pdfMerge.mergeRepairPdfs;
-  global.addRepairPdfOrigin=pdfMerge.addRepairPdfOrigin;
+  global.prepareRepairPdf=pdfMerge.prepareRepairPdf;
 }
+
+test("PDF cleanup removes the exact BIRT warning from every page with origin data disabled", async () => {
+  const h = chromeHarness();
+  mergerEnvironment();
+  const { BIRT_RESOURCE_NOTICE: notice } = require("../workflow_logic.js");
+  const source = { tab: { id: 1 } };
+  const viewer = { tab: { id: 2, openerTabId: 1 } };
+  const url = "https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign&__requestid=42";
+  const original = await nativePdfLib.PDFDocument.create();
+  for (let index = 0; index < 2; index++) {
+    const page = original.addPage([595, 842]);
+    page.drawText(notice);
+    page.drawText("Comentario: " + notice);
+    const literal = original.context.flateStream(new TextEncoder().encode(
+      "BT\n(" + notice + ")Tj\nET\n"
+    ));
+    page.node.addContentStream(original.context.register(literal));
+  }
+  const before = await original.save();
+  const previousFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, url, arrayBuffer: async () => before.buffer });
+  try {
+    await h.handleMessage({ type: "START", ot: "3437031", outputFormat: "pdf", client: "ATM",
+      includeOriginCompany: false }, source);
+    await h.handleMessage({ type: "CLAIM_VIEWER" }, viewer);
+    await h.handlePdfOutput(3, { url }, { id: 3, openerTabId: 2, url });
+    assert.equal(h.downloads.length, 1);
+    const cleaned = await nativePdfLib.PDFDocument.load(h.downloads[0].url);
+    assert.equal(cleaned.getPageCount(), 2);
+    const hex = text => Buffer.from(text).toString("hex").toUpperCase();
+    for (const page of cleaned.getPages()) {
+      const content = page.node.Contents().asArray().map(ref =>
+        Buffer.from(nativePdfLib.decodePDFRawStream(cleaned.context.lookup(ref)).decode()).toString()
+      ).join("\n");
+      assert.ok(!content.includes("(" + notice + ")Tj"));
+      assert.ok(!content.includes("<" + hex(notice) + "> Tj"));
+      assert.ok(content.includes(hex("Comentario: " + notice)));
+    }
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
 
 test("ATM saves the original PDF pages with the company on the first page", async () => {
   const h = chromeHarness();

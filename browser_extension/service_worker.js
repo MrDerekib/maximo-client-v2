@@ -42,8 +42,7 @@ async function handlePdfOutput(tabId, changeInfo, tab) {
     let downloadUrl=changeInfo.url || tab.url;
     if(job.variantCount===2){
       await tellSource(job,`Preparando PDF ${job.variantIndex+1}/2 de Boixeres…`,"PROGRESS");
-      let bytes = await fetchRepairPdf(downloadUrl);
-      if (job.originCompany) bytes = await addRepairPdfOrigin(bytes, job.originCompany);
+      const bytes = await prepareRepairPdf(await fetchRepairPdf(downloadUrl), job.originCompany);
       if(job.variantIndex===0){
         // Survive worker suspension; discard these temporary bytes on finish/fail.
         job.pdfFirstPart=repairPdfBase64(bytes);
@@ -54,10 +53,10 @@ async function handlePdfOutput(tabId, changeInfo, tab) {
       if(!job.pdfFirstPart)throw new Error("No se conserva el primer PDF; vuelve a solicitar ambas copias.");
       await tellSource(job,"Uniendo las dos variantes en un PDF…","PROGRESS");
       downloadUrl=await mergeRepairPdfs([job.pdfFirstPart,bytes]);
-    } else if (job.originCompany) {
-      await tellSource(job, "Añadiendo la empresa de origen al PDF…", "PROGRESS");
-      const bytes = await addRepairPdfOrigin(await fetchRepairPdf(downloadUrl), job.originCompany);
-      downloadUrl = "data:application/pdf;base64," + repairPdfBase64(bytes);
+    } else {
+      const original = await fetchRepairPdf(downloadUrl);
+      const bytes = await prepareRepairPdf(original, job.originCompany);
+      if (bytes !== original) downloadUrl = "data:application/pdf;base64," + repairPdfBase64(bytes);
     }
     await chrome.downloads.download({
       url: downloadUrl,
