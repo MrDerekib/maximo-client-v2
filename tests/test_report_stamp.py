@@ -98,6 +98,30 @@ class ReportStampTests(TestCase):
         finally:
             w.deleteLater();app.processEvents()
 
+    def test_origin_company_preferences_default_to_atm_and_persist(self):
+        from tests.test_ui_workorder_start import settings_window
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication([])
+        ui = settings_window()
+        try:
+            self.assertEqual(ui.repair_origin_mode_combo.currentData(), "selected")
+            self.assertEqual(ui.repair_origin_projects.selected_values(), ["ATM"])
+            ui.filter_choices_cache = {"clients": ["ATM", "TMB"]}
+            ui._set_repair_origin_projects(["ATM", "TMB"])
+            self.assertTrue(ui.settings_dirty())
+            ui.repair_origin_mode_combo.setCurrentIndex(ui.repair_origin_mode_combo.findData("all"))
+            self.assertFalse(ui.repair_origin_projects.isEnabled())
+            with patch('ui_qt.save_config') as save:
+                self.assertTrue(ui.save_settings(show_feedback=False))
+            cfg = save.call_args.args[0]
+            self.assertEqual(cfg.repair_origin_mode, "all")
+            self.assertEqual(cfg.repair_origin_projects, ["ATM", "TMB"])
+            self.assertFalse(ui.settings_dirty())
+        finally:
+            ui.deleteLater()
+            app.processEvents()
+
     def test_extension_discard_updates_stamp_without_changing_session_color(self):
         driver=Mock();driver._maximo_report_stamp_enabled=True
         client._remember_discard_for_reports(driver,{'ot':'4443840','status':'CLOSE','action':'discard'})

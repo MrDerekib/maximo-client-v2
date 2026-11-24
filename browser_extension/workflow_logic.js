@@ -49,6 +49,16 @@
     return /^(?:cliente\s*:?\s*)?atm(?:\s|$)/i.test(String(client || "").trim());
   }
 
+  function includeReportOrigin(client, preference) {
+    const mode = preference?.mode;
+    if (mode === "disabled") return false;
+    if (mode === "all") return true;
+    if (mode !== "selected" || !Array.isArray(preference.projects)) return isAtmClient(client);
+    const key = String(client || "").replace(/^cliente\s*:?\s*/i, "").trim().toUpperCase();
+    return preference.projects.some(project => typeof project === "string" &&
+      (project.trim().toUpperCase() === key || (project.trim().toUpperCase() === "ATM" && isAtmClient(client))));
+  }
+
   function originCompanyText(value) {
     return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 200) : "";
   }
@@ -68,7 +78,7 @@
     if (!company || documentRoot.getElementById("md-origin-company")) return;
     const field = documentRoot.createElement("div");
     field.id = "md-origin-company";
-    field.textContent = "Empresa de origen: " + company;
+    field.textContent = "Empresa / Ubicación inicial: " + company;
     field.style.cssText = "display:block;position:relative;margin:0 0 8px;" +
       "font:bold 12px Arial,sans-serif;color:#000;overflow-wrap:anywhere";
     documentRoot.body.prepend(field);
@@ -96,7 +106,7 @@
 
   const logic = { pageKind, containsOt, canPrintStatus, labeledFieldValue,
     isBoixeresClient, isAtmClient, clientFromWorkorder, originCompanyText,
-    originCompanyFromWorkorder, insertOriginCompany };
+    includeReportOrigin, originCompanyFromWorkorder, insertOriginCompany };
   root.MaximoPartLogic = logic;
   if (typeof module !== "undefined" && module.exports) module.exports = logic;
 })(typeof globalThis !== "undefined" ? globalThis : this);

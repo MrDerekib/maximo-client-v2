@@ -58,6 +58,8 @@ class AppConfig:
     repair_print_mode: str = "dialog"
     repair_close_tabs_after_direct_print: bool = False
     repair_irreparable_stamp_enabled: bool = True
+    repair_origin_mode: str = "selected"
+    repair_origin_projects: list[str] = field(default_factory=lambda: ["ATM"])
     filters: dict | None = None
     last_status: dict | None = None
     latest_release_tag: str = ""
@@ -120,6 +122,14 @@ class AppConfig:
             self.warehouse_enabled = False
         if not isinstance(self.warehouse_ask_sat_details, bool):
             self.warehouse_ask_sat_details = False
+        if self.repair_origin_mode not in ("disabled", "all", "selected"):
+            self.repair_origin_mode = "selected"
+        if not isinstance(self.repair_origin_projects, list):
+            self.repair_origin_projects = ["ATM"]
+        self.repair_origin_projects = sorted({
+            value.strip() for value in self.repair_origin_projects
+            if isinstance(value, str) and value.strip()
+        }, key=str.casefold)
         if not isinstance(self.repair_irreparable_stamp_enabled, bool):
             self.repair_irreparable_stamp_enabled = True
         if not isinstance(self.repair_close_tabs_after_direct_print, bool):

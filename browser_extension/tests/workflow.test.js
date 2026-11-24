@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { pageKind, containsOt, canPrintStatus, isBoixeresClient,
-  clientFromWorkorder, isAtmClient, originCompanyFromWorkorder } = require("../workflow_logic.js");
+  clientFromWorkorder, isAtmClient, includeReportOrigin, originCompanyFromWorkorder } = require("../workflow_logic.js");
 
 test("only the Maximo WO page and the repair report windows are handled", () => {
   assert.equal(pageKind("https://eam.indraweb.net/maximo/ui/?event=loadapp"), "workorder");
@@ -54,6 +54,10 @@ test("ATM reads Ubicación inicial before its description and recognizes the cli
   const doc = { getElementById: id => fields.get(id), querySelectorAll: () => [] };
   assert.equal(isAtmClient("Cliente: ATM Autoritat del Transport Metropolità"), true);
   assert.equal(isAtmClient("TMB BOIXERES"), false);
+  assert.equal(includeReportOrigin("ATM"), true);
+  assert.equal(includeReportOrigin("ATM", { mode: "disabled" }), false);
+  assert.equal(includeReportOrigin("FGC", { mode: "all" }), true);
+  assert.equal(includeReportOrigin("TMB BOIXERES", { mode: "selected", projects: ["TMB"] }), false);
   assert.equal(originCompanyFromWorkorder(doc), "SARBUS");
   fields.delete("mx88-tb");
   assert.equal(originCompanyFromWorkorder(doc), "SARBUS");
@@ -536,10 +540,10 @@ test("ATM saves the original PDF pages with the company on the first page", asyn
   const previousFetch = global.fetch;
   global.fetch = async () => ({ ok: true, url, arrayBuffer: async () => bytes.buffer });
   try {
-    await assert.rejects(h.handleMessage({ type: "START", ot: "3437031", client: "ATM" }, source),
-      /Falta la empresa de origen/);
+    await assert.rejects(h.handleMessage({ type: "START", ot: "3437031", client: "ATM",
+      includeOriginCompany: true }, source), /Falta la empresa o ubicación inicial/);
     await h.handleMessage({ type: "START", ot: "3437031", outputFormat: "pdf", client: "ATM",
-      originCompany: "SARBUS" }, source);
+      includeOriginCompany: true, originCompany: "SARBUS" }, source);
     await h.handleMessage({ type: "CLAIM_VIEWER" }, viewer);
     await h.handlePdfOutput(3, { url }, { id: 3, openerTabId: 2, url });
     assert.equal(h.downloads.length, 1);
@@ -550,9 +554,9 @@ test("ATM saves the original PDF pages with the company on the first page", asyn
     const pageTextOperators = page => page.node.Contents().asArray().map(ref =>
       Buffer.from(nativePdfLib.decodePDFRawStream(report.context.lookup(ref)).decode()).toString()
     ).join("\n");
-    const asHex = text => Buffer.from(text).toString("hex").toUpperCase();
+    const asHex = text => Buffer.from(text, "latin1").toString("hex").toUpperCase();
     assert.ok(pageTextOperators(report.getPage(0)).includes(asHex("Original BIRT")));
-    assert.ok(pageTextOperators(report.getPage(0)).includes(asHex("Empresa de origen: SARBUS")));
+    assert.ok(pageTextOperators(report.getPage(0)).includes(asHex("Empresa / Ubicación inicial: SARBUS")));
     assert.ok(!pageTextOperators(report.getPage(1)).includes(asHex("SARBUS")));
   } finally {
     global.fetch = previousFetch;
@@ -581,7 +585,8 @@ test("Boixeres saves one combined PDF, preserving variant/page order with one fi
     return {ok:true,url:requested,arrayBuffer:async()=>bytes.buffer};
   };
   try {
-    await h.handleMessage({type:"START",ot:"4228010",outputFormat:"pdf",client:"TMB BOIXERES"},source);
+    await h.handleMessage({type:"START",ot:"4228010",outputFormat:"pdf",client:"TMB BOIXERES",
+      includeOriginCompany:true,originCompany:"TALLER"},source);
     await h.handleMessage({type:"CLAIM_VIEWER"},{tab:{id:2,openerTabId:1}});
     await h.handlePdfOutput(3,{url:url+"1"},{id:3,openerTabId:2,url:url+"1"});
     assert.equal(h.downloads.length,0,"the first variant must not open Save As");
@@ -599,6 +604,13 @@ test("Boixeres saves one combined PDF, preserving variant/page order with one fi
     assert.match(download.url,/^data:application\/pdf;base64,/);
     const merged=await nativePdfLib.PDFDocument.load(download.url);
     assert.deepEqual(merged.getPages().map(p=>p.getWidth()),[200,300]);
+    const label = Buffer.from("TALLER").toString("hex").toUpperCase();
+    for (const page of merged.getPages()) {
+      const content = page.node.Contents().asArray().map(ref =>
+        Buffer.from(nativePdfLib.decodePDFRawStream(merged.context.lookup(ref)).decode()).toString()
+      ).join("\n");
+      assert.ok(content.includes(label));
+    }
     assert.equal(h.session.has(h.JOB_KEY),false);
     assert.equal(requests.length,2);
     assert.ok(requests.every(([,options])=>options.credentials==="include"));

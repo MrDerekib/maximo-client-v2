@@ -24,7 +24,7 @@ async function addRepairPdfOrigin(bytes, company) {
   if (!page) throw new Error("El parte PDF no contiene páginas.");
   const font = await report.embedFont(PDFLib.StandardFonts.HelveticaBold);
   const { width, height } = page.getSize();
-  const text = "Empresa de origen: " + company;
+  const text = "Empresa / Ubicación inicial: " + company;
   const left = 32;
   const lineHeight = 13;
   const maxWidth = width - 2 * left;
@@ -39,7 +39,7 @@ async function addRepairPdfOrigin(bytes, company) {
   page.scaleContent(scale, scale);
   page.scaleAnnotations(scale, scale);
   page.drawText(lines.join("\n"), { x: left, y: height - top - size, size, lineHeight, font });
-  return report.saveAsBase64({ dataUri: true });
+  return report.save();
 }
 
 if(typeof module!=="undefined")module.exports={repairPdfBase64,mergeRepairPdfs,addRepairPdfOrigin};

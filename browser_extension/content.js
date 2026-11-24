@@ -86,9 +86,12 @@
   }
 
   async function reportContext(ot) {
+    let preference;
+    try { preference = JSON.parse(sessionStorage.getItem("maximoDesktop.reportOrigin") || "null"); } catch (_) {}
     let client = logic.clientFromWorkorder(document);
-    let originCompany = logic.isAtmClient(client) ? logic.originCompanyFromWorkorder(document) : "";
-    if (!client || (logic.isAtmClient(client) && !originCompany)) {
+    let includeOriginCompany = logic.includeReportOrigin(client, preference);
+    let originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document) : "";
+    if (!client || (includeOriginCompany && !originCompany)) {
       const mainTab = () => [...document.querySelectorAll("a[role='tab']")].find(tab =>
         visible(tab) && tab.textContent.trim().toLowerCase() === "orden de trabajo");
       const tab = mainTab();
@@ -98,14 +101,15 @@
           mainTab()?.getAttribute("aria-expanded") === "true" && logic.clientFromWorkorder(document),
           "pestaña Orden de trabajo de la OT", 8000);
         client = logic.clientFromWorkorder(document);
-        originCompany = logic.isAtmClient(client) ? logic.originCompanyFromWorkorder(document) : "";
+        includeOriginCompany = logic.includeReportOrigin(client, preference);
+        originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document) : "";
       }
     }
     if (!client) throw new Error("No se pudo leer el cliente. Abre la pestaña Orden de trabajo.");
-    if (logic.isAtmClient(client) && !originCompany)
-      throw new Error("Falta la empresa de origen de ATM. Comprueba «Ubicación inicial» en Orden de trabajo.");
+    if (includeOriginCompany && !originCompany)
+      throw new Error("Falta la empresa o ubicación inicial. Comprueba «Ubicación inicial» en Orden de trabajo.");
     if (workOrderNumber() !== ot) throw new Error("La ficha ha cambiado durante la lectura del parte.");
-    return { client, originCompany };
+    return { client, includeOriginCompany, originCompany };
   }
 
   async function submitReportVariant(jobId, targetButton, variantIndex, variantCount) {

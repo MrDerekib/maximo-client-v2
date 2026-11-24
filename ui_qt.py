@@ -489,8 +489,10 @@ class MultiSelectButton(QPushButton):
     """Selector compacto con checkboxes persistentes para varios clientes."""
     selection_changed = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, empty_text="Todos", plural="clientes"):
         super().__init__(parent)
+        self._empty_text = empty_text
+        self._plural = plural
         self.setObjectName("multiSelect")
         self._options = []
         self._selected = set()
@@ -540,7 +542,7 @@ class MultiSelectButton(QPushButton):
 
     def _refresh_text(self):
         selected = self.selected_values()
-        text = "Todos" if not selected else selected[0] if len(selected) == 1 else f"{len(selected)} clientes"
+        text = self._empty_text if not selected else selected[0] if len(selected) == 1 else f"{len(selected)} {self._plural}"
         self.setText(text)
 
 
@@ -1585,6 +1587,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.repair_mode_combo.addItem("Imprimir directamente", "direct")
         self.repair_stamp_check = QCheckBox("Sello «IRREPARABLE» en el parte")
         self.repair_stamp_check.setToolTip("Solo con desecho verificado. Impresión HTML: color desde MD; blanco y negro desde Edge. No modifica el PDF nativo de BIRT.")
+        self.repair_origin_mode_combo = DecoratedComboBox()
+        self.repair_origin_mode_combo.addItem("Desactivado", "disabled")
+        self.repair_origin_mode_combo.addItem("Todos los proyectos", "all")
+        self.repair_origin_mode_combo.addItem("Solo proyectos seleccionados", "selected")
+        self.repair_origin_projects = MultiSelectButton(empty_text="Elegir proyectos", plural="proyectos")
+        self.repair_origin_mode_combo.currentIndexChanged.connect(
+            lambda: self.repair_origin_projects.setEnabled(self.repair_origin_mode_combo.currentData() == "selected")
+        )
         self.repair_close_tabs_check = QCheckBox("Cerrar las ventanas del parte tras impresión directa")
         self.repair_hint = QLabel(
             "El modo directo usa la impresora predeterminada de Windows. "
@@ -1599,6 +1609,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         repair_form.addRow("Al pulsar Imprimir parte", self.repair_mode_combo)
         repair_form.addRow("", self.repair_close_tabs_check)
         repair_form.addRow("", self.repair_stamp_check)
+        repair_form.addRow("Incluir Empresa / Ubicación inicial", self.repair_origin_mode_combo)
+        repair_form.addRow("Proyectos", self.repair_origin_projects)
         repair_form.addRow("", self.repair_hint)
         printing_layout.addLayout(repair_form)
         self.repair_extension_check.toggled.connect(self.repair_mode_combo.setEnabled)
@@ -1733,6 +1745,7 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
                                     (QCheckBox,'toggled'),(QSpinBox,'valueChanged'),(QDateEdit,'dateChanged')):
             for widget in self.settings_tabs.findChildren(widget_type):
                 getattr(widget,signal).connect(self._update_settings_dirty_hint)
+        self.repair_origin_projects.selection_changed.connect(self._update_settings_dirty_hint)
         QTimer.singleShot(0, self._update_settings_content_width)
         return page
 
@@ -1913,6 +1926,12 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         choices = filter_choices()
         self.filter_choices_cache = choices
         self.client_combo.set_options(choices["clients"], self.client_combo.selected_values())
+        self._set_repair_origin_projects(self.repair_origin_projects.selected_values())
+
+    def _set_repair_origin_projects(self, selected):
+        known_projects = getattr(self, "filter_choices_cache", {}).get("clients", ())
+        options = sorted({"ATM", *known_projects, *selected}, key=str.casefold)
+        self.repair_origin_projects.set_options(options, selected)
 
     def refresh_profiles(self, selected_name=""):
         try:
@@ -2935,6 +2954,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
         self.repair_close_tabs_check.setChecked(self.cfg.repair_close_tabs_after_direct_print)
         self.repair_stamp_check.setChecked(self.cfg.repair_irreparable_stamp_enabled)
+        self._set_combo_value(self.repair_origin_mode_combo, self.cfg.repair_origin_mode)
+        self._set_repair_origin_projects(self.cfg.repair_origin_projects)
         self.repair_mode_combo.setEnabled(self.cfg.repair_extension_enabled)
         self.fault_batch_spin.setValue(self.cfg.fault_description_batch_size)
         theme_signals_blocked = self.theme_combo.blockSignals(True)
@@ -3009,6 +3030,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             or self.repair_mode_combo.currentData() != self.cfg.repair_print_mode
             or self.repair_close_tabs_check.isChecked() != self.cfg.repair_close_tabs_after_direct_print
             or self.repair_stamp_check.isChecked() != self.cfg.repair_irreparable_stamp_enabled
+            or self.repair_origin_mode_combo.currentData() != self.cfg.repair_origin_mode
+            or self.repair_origin_projects.selected_values() != self.cfg.repair_origin_projects
             or self.fault_batch_spin.value() != self.cfg.fault_description_batch_size
             or self.priority_tmb_validity.currentData() != self.cfg.priority_tmb_validity
             or self.priority_l9_validity.currentData() != self.cfg.priority_l9_validity
@@ -3046,6 +3069,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.cfg.repair_print_mode = self.repair_mode_combo.currentData()
         self.cfg.repair_close_tabs_after_direct_print = self.repair_close_tabs_check.isChecked()
         self.cfg.repair_irreparable_stamp_enabled = self.repair_stamp_check.isChecked()
+        self.cfg.repair_origin_mode = self.repair_origin_mode_combo.currentData()
+        self.cfg.repair_origin_projects = self.repair_origin_projects.selected_values()
         self.cfg.fault_description_batch_size = self.fault_batch_spin.value()
         self.cfg.priority_tmb_validity = self.priority_tmb_validity.currentData()
         self.cfg.priority_l9_validity = self.priority_l9_validity.currentData()

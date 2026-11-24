@@ -97,7 +97,17 @@ test("ATM sends the company from the current work order and refuses a blank loca
   const missing = await loadDocument(new Map(), undefined, "ATM");
   await missing.button.click();
   assert.equal(missing.messages.length, 0);
-  assert.match(missing.button.textContent, /empresa de origen de ATM/);
+  assert.match(missing.button.textContent, /empresa o ubicación inicial/);
+  const settings = new Map([["maximoDesktop.reportOrigin", '{"mode":"disabled"}']]);
+  const disabled = await loadDocument(settings, undefined, "ATM", "SARBUS");
+  await disabled.button.click();
+  assert.equal(disabled.messages[0].includeOriginCompany, false);
+  assert.equal(disabled.messages[0].originCompany, "");
+  settings.set("maximoDesktop.reportOrigin", '{"mode":"selected","projects":["FGC"]}');
+  const selected = await loadDocument(settings, undefined, "FGC", "TALLER");
+  await selected.button.click();
+  assert.equal(selected.messages[0].includeOriginCompany, true);
+  assert.equal(selected.messages[0].originCompany, "TALLER");
 });
 
 test("the HTML stamp is inserted once and leaves BIRT data intact", () => {
@@ -142,7 +152,7 @@ test("output printing applies the stamp before print, and never for ordinary rep
     await new Promise(resolve=>setImmediate(resolve));
     intervals[0]();
     await new Promise(resolve=>setImmediate(resolve));
-    assert.deepEqual(events,enabled ? ["CLAIM_OUTPUT","Empresa de origen: SARBUS","stamp","print","FINISH"]:
+    assert.deepEqual(events,enabled ? ["CLAIM_OUTPUT","Empresa / Ubicación inicial: SARBUS","stamp","print","FINISH"]:
       ["CLAIM_OUTPUT","print","FINISH"]);
   }
 });
