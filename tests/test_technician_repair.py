@@ -166,7 +166,9 @@ class RepairUiTests(TestCase):
         dialog.reference.setText('Dato conservado')
         dialog.preview_ready({'state': 'ISSUE'})
 
-        self.assertTrue(dialog.status.property('blocked'))
+        self.assertTrue(dialog.status_card.property('blocked'))
+        self.assertFalse(dialog.status_warning.isHidden())
+        self.assertFalse(dialog.preview_indicator.animation.timer.isActive())
         self.assertIn('ISSUE', dialog.status.text())
         self.assertIn('APPR o INPRG', dialog.status.text())
         self.assertNotIn('No se pudo consultar', dialog.status.text())

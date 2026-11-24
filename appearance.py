@@ -430,10 +430,11 @@ def component_css(colors, assets_dir):
         border-radius: 8px; }}
     QFrame#repairPreviewBanner QLabel {{ color: {colors['text']}; background: transparent; }}
     QLabel#repairPreviewTitle {{ font-weight: 700; }}
-    QLabel#repairReviewStatus[blocked="true"] {{ background: {colors['danger_bg']};
-        color: {colors['text']}; border: 1px solid {colors['border_strong']};
-        border-left: 4px solid {colors['danger']}; border-radius: 8px;
-        padding: 10px 14px; font-weight: 700; }}
+    QFrame#repairReviewStatusCard[blocked="true"] {{ background: {colors['danger_bg']};
+        border: 1px solid {colors['border_strong']}; border-left: 4px solid {colors['danger']};
+        border-radius: 8px; }}
+    QFrame#repairReviewStatusCard[blocked="true"] QLabel {{
+        color: {colors['text']}; background: transparent; font-weight: 700; }}
     QDialog#activityDialog {{ background: transparent; border: none; }}
     QFrame#activityCard {{ background: {colors['surface']}; border: 1px solid {colors['border']}; border-radius: 10px; }}
     QLabel#activityTitle {{ background: transparent; border: none; color: {colors['heading']}; font-size: 13px; font-weight: 700; }}

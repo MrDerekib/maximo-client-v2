@@ -439,10 +439,18 @@ class RepairDialog(QDialog):
         root.addWidget(self.preview_banner)
         self.preview_banner.hide()
 
+        self.status_card = QFrame(objectName='repairReviewStatusCard')
+        self.status_layout = QHBoxLayout(self.status_card)
+        self.status_layout.setContentsMargins(0, 0, 0, 0)
+        self.status_warning = QLabel()
+        self.status_warning.setPixmap(self.style().standardIcon(QStyle.SP_MessageBoxWarning).pixmap(22, 22))
+        self.status_warning.hide()
+        self.status_layout.addWidget(self.status_warning)
         self.status = QLabel(objectName='repairReviewStatus')
         self.status.setTextFormat(Qt.PlainText)
         self.status.setWordWrap(True)
-        root.addWidget(self.status)
+        self.status_layout.addWidget(self.status, 1)
+        root.addWidget(self.status_card)
         buttons=QHBoxLayout();self.retry_print=QPushButton('Volver a preparar el parte');self.retry_print.setEnabled(False);self.retry_print.clicked.connect(lambda:self.print_requested.emit(self.item.ot));self.cancel=QPushButton('Cerrar');self.cancel.clicked.connect(self.close);self.submit=QPushButton('Revisar y ejecutar…');self.submit.setEnabled(False);self.submit.clicked.connect(self.execute);self.retry_print.hide();buttons.addStretch();buttons.addWidget(self.cancel);buttons.addWidget(self.submit);root.addLayout(buttons)
         self.duration.textChanged.connect(self.update_dates);self.time.dateTimeChanged.connect(self.update_dates);self.time_mode.currentIndexChanged.connect(self.update_dates)
         self.reference.textChanged.connect(lambda:self.mark_preview_edit('reference'))
@@ -466,6 +474,8 @@ class RepairDialog(QDialog):
 
     def update_action_fields(self,*args):
         self.review_form.setRowVisible(self.justification,self.action.currentData()=='discard')
+        if self.status_card.property('blocked'):
+            self._show_ineligible_state()
 
     def mark_preview_edit(self,field):
         if not self._applying_preview:self._preview_edited.add(field)
@@ -510,7 +520,7 @@ class RepairDialog(QDialog):
             self._reviewed = False
             self.submit.setEnabled(False)
             self._mark_preview_blocked(False)
-            self.status.hide()
+            self.status_card.hide()
             self.preview_banner.setToolTip('')
             self.preview_banner.show()
             self.preview_indicator.set_running(True)
@@ -723,17 +733,29 @@ class RepairDialog(QDialog):
     def _stop_preview_indicator(self):
         self.preview_indicator.set_running(False)
         self.preview_banner.hide()
-        self.status.show()
+        self.status_card.show()
 
     def _mark_preview_blocked(self, blocked):
-        if bool(self.status.property('blocked')) == blocked:
+        if bool(self.status_card.property('blocked')) == blocked:
             return
-        self.status.setProperty('blocked', blocked)
-        style = self.status.style()
-        style.unpolish(self.status)
-        style.polish(self.status)
-        self.status.updateGeometry()
-        self.status.update()
+        self.status_card.setProperty('blocked', blocked)
+        self.status_warning.setVisible(blocked)
+        inset = (14, 10, 14, 10) if blocked else (0, 0, 0, 0)
+        self.status_layout.setContentsMargins(*inset)
+        for widget in (self.status_card, self.status):
+            style = widget.style()
+            style.unpolish(widget)
+            style.polish(widget)
+            widget.updateGeometry()
+            widget.update()
+
+    def _show_ineligible_state(self):
+        discard = self.action.currentData() == 'discard'
+        action = 'desechar el equipo' if discard else 'dar salida'
+        self.status.setText(
+            f'El estado {self._preview_state} de esta OT no permite {action}.\n'
+            'Estados admitidos: APPR o INPRG.'
+        )
 
     def preview_ready(self,data):
         self._stop_preview_indicator()
@@ -744,10 +766,7 @@ class RepairDialog(QDialog):
         if blocked:
             self._reviewed = False
             self.submit.setEnabled(False)
-            self.status.setText(
-                f'Maximo muestra la OT en {self._preview_state}. '
-                'Solo se puede dar salida o desechar una OT en APPR o INPRG.'
-            )
+            self._show_ineligible_state()
             return
         self._reviewed=True;self.submit.setEnabled(True)
         self.fault.setText('Avería: '+data['fault'])
