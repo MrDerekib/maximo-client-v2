@@ -79,6 +79,16 @@ test("explicit desktop overrides and PDF requests preserve their cleanup policy"
 });
 
 
+test("report appearance preferences survive reloads and respect explicit disabled values", async () => {
+  for (const replaceLogo of [false, true]) for (const cleanResources of [false, true]) {
+    const page = await loadDocument(new Map([["maximoDesktop.reportAppearance",
+      JSON.stringify({replaceLogo, cleanResources})]]));
+    await page.button.click();
+    assert.equal(page.messages[0].replaceLogo, replaceLogo);
+    assert.equal(page.messages[0].cleanResources, cleanResources);
+  }
+});
+
 test("only verified discarded OTs in this session request the HTML stamp", async () => {
   for (const [stored, expected] of [[undefined,false],['["4384025"]',true],['["4384026"]',false],['bad json',false]]) {
     const page=await loadDocument(new Map(stored ? [["maximoDesktop.discardedOts",stored]] : []));
@@ -153,7 +163,8 @@ test("output printing applies the stamp before print, and never for ordinary rep
     const intervals=[];
     const warning = { textContent: logic.BIRT_RESOURCE_NOTICE, children: [] };
     vm.runInNewContext(content,{
-      MaximoPartLogic:logic,MaximoReportStamp:{insert(){events.push("stamp");}},
+      MaximoPartLogic:{...logic,insertOriginCompany(_doc, company){events.push("Origen: " + company);}},
+      MaximoReportStamp:{insert(){events.push("stamp");}},
       document:{
         getElementById: () => null,
         createElement: () => ({ style: {} }),
@@ -173,7 +184,7 @@ test("output printing applies the stamp before print, and never for ordinary rep
     await new Promise(resolve=>setImmediate(resolve));
     intervals[0]();
     await new Promise(resolve=>setImmediate(resolve));
-    assert.deepEqual(events,enabled ? ["CLAIM_OUTPUT","Empresa / Ubicación inicial: SARBUS","stamp","print","FINISH"]:
+    assert.deepEqual(events,enabled ? ["CLAIM_OUTPUT","Origen: SARBUS","stamp","print","FINISH"]:
       ["CLAIM_OUTPUT","print","FINISH"]);
   }
 });

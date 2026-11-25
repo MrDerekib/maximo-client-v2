@@ -109,7 +109,11 @@
     if (includeOriginCompany && !originCompany)
       throw new Error("Falta la empresa o ubicación inicial. Comprueba «Descripción de Ubicación Inicial» en Orden de trabajo.");
     if (workOrderNumber() !== ot) throw new Error("La ficha ha cambiado durante la lectura del parte.");
-    return { client, includeOriginCompany, originCompany };
+    let appearance;
+    try { appearance = JSON.parse(sessionStorage.getItem("maximoDesktop.reportAppearance") || "null"); } catch (_) {}
+    return { client, includeOriginCompany, originCompany,
+      replaceLogo: appearance?.replaceLogo !== false,
+      cleanResources: appearance?.cleanResources !== false };
   }
 
   async function submitReportVariant(jobId, targetButton, variantIndex, variantCount) {
@@ -341,7 +345,9 @@
       job = await send("CLAIM_OUTPUT");
       await waitFor(() => logic.containsOt(textInFrames(document), job.ot),
         `OT ${job.ot} en el parte HTML`, 45000);
-      logic.removeBirtResourceNotices(document);
+      if (job.cleanResources !== false) logic.removeBirtResourceNotices(document);
+      if (job.replaceLogo !== false && globalThis.MaximoReportBrand)
+        await globalThis.MaximoReportBrand.replaceInDocument(document);
       if (job.originCompany) logic.insertOriginCompany(document, job.originCompany);
       if (job.irreparableStamp === true) MaximoReportStamp.insert(document);
       window.print();

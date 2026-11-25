@@ -144,3 +144,34 @@ automáticamente. Desechar y Retener conservan sus confirmaciones y diálogos na
 
 Pruebas locales: `MAXIMO_BROWSER_TESTS=1` y `python -m unittest tests.test_browser_close_records tests.test_workorder_close tests.test_extension_panel`.
 Las fixtures no acceden a Maximo ni usan perfiles o credenciales reales.
+# Aspecto del parte
+
+Cuando se incluye la empresa o ubicación inicial, se añade una fila **Origen**
+dentro de **Datos del equipo**, debajo de Cliente. La inserción HTML conserva
+los estilos de la tabla nativa y no duplica la fila si se prepara de nuevo.
+El PDF localiza las cabeceras de esa sección y desplaza el cuerpo de la primera
+página, conservando fuentes, tamaño de página y pie. Si falta espacio, añade
+una página de continuación en un límite de fila y actualiza la numeración,
+manteniendo el orden de las páginas originales. Si la estructura no se reconoce,
+muestra un error en lugar de generar datos superpuestos o colocar el origen
+fuera de la tabla.
+
+En **Configuración → Técnico y extensión → Partes de reparación** se pueden
+desactivar por separado **Usar el logo actual de Indra** y **Limpiar avisos de
+recursos no disponibles**. Ambas opciones se activan por defecto y se aplican
+tanto a impresión como a Guardar PDF, incluidas las dos copias de Boixeres.
+Las preferencias se transfieren a las ventanas de Edge abiertas por MD y se
+conservan durante las recargas de la OT. Se aplican al abrir una nueva ventana
+desde MD después de guardar Configuración. Una sesión independiente de la
+extensión usa los valores predeterminados.
+
+La limpieza elimina únicamente el aviso exacto de BIRT «The resource of this
+report item is not reachable.», sin borrar comentarios que contengan esa frase
+ni imágenes desconocidas. La sustitución reconoce los píxeles del logo antiguo
+y mantiene su espacio en el informe; no modifica otras imágenes.
+
+El logo actual está incluido localmente en `report_brand.js`. Procede del
+[paquete oficial de Indra](https://www.indragroup.com/cms-content/2026/05/Logos-Indra-1.zip),
+archivo `AF_INDRA_LOG_POS attachments/AF_INDRA_LOG_RGB_POS.png`, obtenido desde la
+[sala de prensa](https://www.indragroup.com/en/press-room). Se conserva la
+proporción original y no se realizan descargas externas al generar un parte.

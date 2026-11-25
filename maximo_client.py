@@ -629,6 +629,11 @@ def open_ot(
                 {"mode": getattr(cfg, "repair_origin_mode", "selected"),
                  "projects": getattr(cfg, "repair_origin_projects", DEFAULT_REPAIR_ORIGIN_PROJECTS)},
             )
+            driver.execute_script(
+                "window.sessionStorage.setItem('maximoDesktop.reportAppearance', JSON.stringify(arguments[0]));",
+                {"replaceLogo": getattr(cfg, "repair_replace_logo_enabled", True),
+                 "cleanResources": getattr(cfg, "repair_clean_resources_enabled", True)},
+            )
             # Tab session storage survives Maximo reloads, including the two
             # reloads used to validate an OT closure. It expires with the tab.
             driver.execute_script(

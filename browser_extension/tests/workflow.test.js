@@ -525,9 +525,17 @@ test("printing releases Edge panel focus only when focusing the page is insuffic
 
 const nativePdfLib = require("../vendor/pdf-lib.min.js");
 const pdfMerge = require("../pdf_merge.js");
+function equipmentSection(doc, page) {
+  for (const [text,x,y] of [["Datos del equipo",10,370],["Cliente:",10,350],
+      ["ATM",80,350],["Datos orden reparacion",10,320],["Original BIRT",10,200]])
+    page.drawText(text,{x,y,size:7});
+  const stream=doc.context.flateStream(new TextEncoder().encode(
+    `q\n1 0 0 1 10 330 cm\n0 0 m\n${page.getWidth()-20} 0 l\nS\nQ\n`));
+  page.node.addContentStream(doc.context.register(stream));
+}
 async function nativePdf(width) {
   const doc = await nativePdfLib.PDFDocument.create();
-  doc.addPage([width, 400]);
+  equipmentSection(doc,doc.addPage([width, 400]));
   return doc.save();
 }
 function mergerEnvironment() {
@@ -579,14 +587,29 @@ test("PDF cleanup removes the exact BIRT warning from every page with origin dat
   }
 });
 
-test("ATM saves the original PDF pages with the company on the first page", async () => {
+test("origin placement rejects unknown layouts and paginates a full first page", async () => {
+  global.PDFLib = nativePdfLib;
+  const unknown=await nativePdfLib.PDFDocument.create();
+  unknown.addPage([595,842]).drawText("An unrelated report");
+  await assert.rejects(pdfMerge.prepareRepairPdf(await unknown.save(),"SARBUS"), /Datos del equipo/);
+  const full=await nativePdfLib.PDFDocument.create();
+  const page=full.addPage([595,842]);
+  equipmentSection(full,page);
+  page.drawText("Last line of the page",{x:10,y:80,size:7});
+  full.addPage([595,842]).drawText("Original second page");
+  const continued=await nativePdfLib.PDFDocument.load(await pdfMerge.prepareRepairPdf(await full.save(),"SARBUS"));
+  assert.equal(continued.getPageCount(),3);
+  assert.deepEqual(continued.getPages().map(p=>p.getSize()),Array.from({length:3},()=>({width:595,height:842})));
+});
+
+test("ATM saves the original PDF pages with the company inside equipment data on the first page", async () => {
   const h = chromeHarness();
   mergerEnvironment();
   const source = { tab: { id: 1 } };
   const viewer = { tab: { id: 2, openerTabId: 1 } };
   const url = "https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign&__requestid=1";
   const original = await nativePdfLib.PDFDocument.create();
-  original.addPage([595, 842]).drawText("Original BIRT");
+  equipmentSection(original,original.addPage([595, 842]));
   original.addPage([595, 842]).drawText("Second page");
   const bytes = await original.save();
   const previousFetch = global.fetch;
@@ -607,8 +630,8 @@ test("ATM saves the original PDF pages with the company on the first page", asyn
       Buffer.from(nativePdfLib.decodePDFRawStream(report.context.lookup(ref)).decode()).toString()
     ).join("\n");
     const asHex = text => Buffer.from(text, "latin1").toString("hex").toUpperCase();
-    assert.ok(pageTextOperators(report.getPage(0)).includes(asHex("Original BIRT")));
-    assert.ok(pageTextOperators(report.getPage(0)).includes(asHex("Empresa / Ubicación inicial: SARBUS")));
+    assert.ok(pageTextOperators(report.getPage(0)).includes(asHex("Origen:")));
+    assert.ok(pageTextOperators(report.getPage(0)).includes(asHex("SARBUS")));
     assert.ok(!pageTextOperators(report.getPage(1)).includes(asHex("SARBUS")));
   } finally {
     global.fetch = previousFetch;

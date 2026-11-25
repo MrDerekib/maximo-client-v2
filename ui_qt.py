@@ -979,13 +979,15 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
 
         self.maximo_menu_button = add_menu('Maximo')
         maximo_menu = self.maximo_menu_button.menu()
+        maximo_menu.aboutToShow.connect(self._refresh_reconciliation_summary)
+        maximo_menu.aboutToShow.connect(self._refresh_fault_description_summary)
         update_action = maximo_menu.addAction('Actualizar Maximo', lambda: self.update_now())
         maximo_menu.aboutToShow.connect(
             lambda: update_action.setEnabled(not getattr(self, '_list_update_pending', False))
         )
         maximo_menu.addSeparator()
-        maximo_menu.addAction('Revisar OTs no activas…', self.start_priority_reconcile)
-        self.fault_run_action = maximo_menu.addAction('Completar información de OTs…', self.start_priority_fault_descriptions)
+        self.reconcile_run_action = maximo_menu.addAction('Revisar OTs no activas', self.start_priority_reconcile)
+        self.fault_run_action = maximo_menu.addAction('Completar información de OTs', self.start_priority_fault_descriptions)
         self.fault_cancel_action = maximo_menu.addAction('Cancelar lectura de información', self.cancel_fault_descriptions)
         self.fault_cancel_action.setEnabled(False)
 
@@ -1420,7 +1422,14 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         settings_header_host = QWidget()
         settings_header_layout = QHBoxLayout(settings_header_host)
         settings_header_layout.setContentsMargins(0, 0, 0, 0)
-        self.settings_header = self._page_header("Configuración", "Ajustes de la aplicación y de las órdenes de trabajo.")
+        self.back_to_list_button = QPushButton("Volver al listado")
+        self.back_to_list_button.setToolTip("Volver al listado de órdenes de trabajo")
+        self.back_to_list_button.setAccessibleName("Volver al listado de órdenes de trabajo")
+        self.back_to_list_button.clicked.connect(lambda: self.navigate_to(0))
+        self.settings_header = self._page_header(
+            "Configuración",
+            "Ajustes de la aplicación y de las órdenes de trabajo.",
+        )
         self.settings_header.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         settings_header_layout.addWidget(self.settings_header)
         layout.addWidget(settings_header_host)
@@ -1587,6 +1596,11 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.repair_mode_combo.addItem("Imprimir directamente", "direct")
         self.repair_stamp_check = QCheckBox("Sello «IRREPARABLE» en el parte")
         self.repair_stamp_check.setToolTip("Solo con desecho verificado. Impresión HTML: color desde MD; blanco y negro desde Edge. No modifica el PDF nativo de BIRT.")
+        self.repair_replace_logo_check = QCheckBox("Usar el logo actual de Indra")
+        self.repair_replace_logo_check.setToolTip("Sustituye el logo del parte por el logo actual de Indra.")
+        self.repair_clean_resources_check = QCheckBox("Limpiar avisos de recursos no disponibles")
+        self.repair_clean_resources_check.setToolTip(
+            "Elimina solo los avisos BIRT de recursos ausentes. No borra datos del parte ni imágenes arbitrarias.")
         self.repair_origin_mode_combo = DecoratedComboBox()
         self.repair_origin_mode_combo.addItem("Desactivado", "disabled")
         self.repair_origin_mode_combo.addItem("Todos los proyectos", "all")
@@ -1609,6 +1623,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         repair_form.addRow("Al pulsar Imprimir parte", self.repair_mode_combo)
         repair_form.addRow("", self.repair_close_tabs_check)
         repair_form.addRow("", self.repair_stamp_check)
+        repair_form.addRow("", self.repair_replace_logo_check)
+        repair_form.addRow("", self.repair_clean_resources_check)
         repair_form.addRow("Incluir Empresa / Ubicación inicial", self.repair_origin_mode_combo)
         repair_form.addRow("Proyectos", self.repair_origin_projects)
         repair_form.addRow("", self.repair_hint)
@@ -1739,7 +1755,9 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.settings_save_hint.setWordWrap(True)
         self.save_settings_button = QPushButton('Guardar cambios', objectName='primary')
         self.save_settings_button.clicked.connect(self.save_settings)
-        save_row.addWidget(self.settings_save_hint,1);save_row.addWidget(self.save_settings_button)
+        save_row.addWidget(self.settings_save_hint, 1)
+        save_row.addWidget(self.back_to_list_button)
+        save_row.addWidget(self.save_settings_button)
         layout.addWidget(self.settings_tabs, 1);layout.addLayout(save_row)
         for widget_type, signal in ((QLineEdit,'textChanged'),(QComboBox,'currentIndexChanged'),
                                     (QCheckBox,'toggled'),(QSpinBox,'valueChanged'),(QDateEdit,'dateChanged')):
@@ -2529,6 +2547,10 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         )
         pending = fault_description_candidate_count()
         detail_pending = detailed_description_candidate_count()
+        pending_ots = enrichment_candidate_count(
+            self.cfg.fault_descriptions_enabled, self.cfg.detailed_descriptions_enabled
+        )
+        self.fault_run_action.setText(f"Completar información de OTs ({pending_ots})")
         self.detail_pending_label.setText(
             f"{detail_pending} OT activas pendientes de comprobar."
             if self.cfg.detailed_descriptions_enabled else
@@ -2545,6 +2567,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         if not hasattr(self, "reconcile_pending_label"):
             return
         pending = inactive_tracking_candidate_count()
+        if hasattr(self, "reconcile_run_action"):
+            self.reconcile_run_action.setText(f"Revisar OTs no activas ({pending})")
         if self.cfg.reconciliation_enabled:
             self.reconcile_pending_label.setText(f"{pending} OT no activas pendientes de revisar.")
         else:
@@ -2954,6 +2978,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self._set_combo_value(self.repair_mode_combo, self.cfg.repair_print_mode)
         self.repair_close_tabs_check.setChecked(self.cfg.repair_close_tabs_after_direct_print)
         self.repair_stamp_check.setChecked(self.cfg.repair_irreparable_stamp_enabled)
+        self.repair_replace_logo_check.setChecked(self.cfg.repair_replace_logo_enabled)
+        self.repair_clean_resources_check.setChecked(self.cfg.repair_clean_resources_enabled)
         self._set_combo_value(self.repair_origin_mode_combo, self.cfg.repair_origin_mode)
         self._set_repair_origin_projects(self.cfg.repair_origin_projects)
         self.repair_mode_combo.setEnabled(self.cfg.repair_extension_enabled)
@@ -3030,6 +3056,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
             or self.repair_mode_combo.currentData() != self.cfg.repair_print_mode
             or self.repair_close_tabs_check.isChecked() != self.cfg.repair_close_tabs_after_direct_print
             or self.repair_stamp_check.isChecked() != self.cfg.repair_irreparable_stamp_enabled
+            or self.repair_replace_logo_check.isChecked() != self.cfg.repair_replace_logo_enabled
+            or self.repair_clean_resources_check.isChecked() != self.cfg.repair_clean_resources_enabled
             or self.repair_origin_mode_combo.currentData() != self.cfg.repair_origin_mode
             or self.repair_origin_projects.selected_values() != self.cfg.repair_origin_projects
             or self.fault_batch_spin.value() != self.cfg.fault_description_batch_size
@@ -3069,6 +3097,8 @@ class MaximoDesktopWindow(WarehouseWindowMixin, QMainWindow):
         self.cfg.repair_print_mode = self.repair_mode_combo.currentData()
         self.cfg.repair_close_tabs_after_direct_print = self.repair_close_tabs_check.isChecked()
         self.cfg.repair_irreparable_stamp_enabled = self.repair_stamp_check.isChecked()
+        self.cfg.repair_replace_logo_enabled = self.repair_replace_logo_check.isChecked()
+        self.cfg.repair_clean_resources_enabled = self.repair_clean_resources_check.isChecked()
         self.cfg.repair_origin_mode = self.repair_origin_mode_combo.currentData()
         self.cfg.repair_origin_projects = self.repair_origin_projects.selected_values()
         self.cfg.fault_description_batch_size = self.fault_batch_spin.value()

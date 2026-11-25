@@ -189,4 +189,5 @@ class RepairRecoveryUiTests(TestCase):
                     d.recheck_ready(WarehouseResult(p.item,status='success',verified_status='ISSUE',operation_id=record['operation_id']))
                 d.progress_dialog.worker_finished()
             self.assertTrue(d.progress_dialog.retry_button.isEnabled())
-            self.assertIn('Guardado en MD pendiente',d.progress_dialog.message.text())
+            self.assertIn('Pendiente de guardar en MD. Pulsa Revisar y reintentar para guardar el resultado.',
+                          d.progress_dialog.message.text())

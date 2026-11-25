@@ -106,13 +106,47 @@
   }
 
   function insertOriginCompany(documentRoot, company) {
-    if (!company || documentRoot.getElementById("md-origin-company")) return;
-    const field = documentRoot.createElement("div");
+    if (!company) return;
+    const existing = documentRoot.getElementById("md-origin-company");
+    if (existing?.tagName === "TR") {
+      existing.cells[1].textContent = company;
+      return;
+    }
+    const normalize = text => String(text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ").trim().toLowerCase();
+    const leaves = [...documentRoot.querySelectorAll("div, span, td, th")].filter(e => !e.children.length);
+    const headings = leaves.filter(e => normalize(e.textContent) === "datos del equipo");
+    const candidates = headings.map(heading => {
+      const table = heading.closest("table");
+      if (!table) return null;
+      const rows = [...table.rows].filter(row => row.closest("table") === table);
+      const start = rows.indexOf(heading.closest("tr"));
+      const end = rows.findIndex((row, i) => i > start &&
+        normalize(row.textContent) === "datos orden reparacion");
+      const clientRows = rows.slice(start + 1, end).filter(row =>
+        [...row.cells].some(cell => normalize(cell.textContent) === "cliente:"));
+      if (end < 0 || clientRows.length !== 1) return null;
+      return { row: rows[end], clientRow: clientRows[0] };
+    }).filter(Boolean);
+    if (candidates.length !== 1)
+      throw new Error("No se pudo identificar «Datos del equipo» para insertar el origen en el parte.");
+    const { row, clientRow } = candidates[0];
+    const columns = [...clientRow.cells].reduce((total, cell) => total + cell.colSpan, 0);
+    if (columns < 2) throw new Error("La tabla del equipo no tiene la estructura esperada.");
+    const field = documentRoot.createElement("tr");
     field.id = "md-origin-company";
-    field.textContent = "Empresa / Ubicación inicial: " + company;
-    field.style.cssText = "display:block;position:relative;margin:0 0 8px;" +
-      "font:bold 12px Arial,sans-serif;color:#000;overflow-wrap:anywhere";
-    documentRoot.body.prepend(field);
+    field.style.verticalAlign = "top";
+    const label = documentRoot.createElement("td"), value = documentRoot.createElement("td");
+    label.className = clientRow.cells[0].className;
+    value.className = clientRow.cells[1].className;
+    label.style.cssText = "text-align:left;font-weight:bold";
+    value.style.cssText = "text-align:left;overflow-wrap:anywhere";
+    label.textContent = "Origen:";
+    value.textContent = company;
+    value.colSpan = columns - 1;
+    field.append(label, value);
+    row.parentNode.insertBefore(field, row);
+    if (existing) existing.remove();
   }
 
   function isBoixeresClient(client) {

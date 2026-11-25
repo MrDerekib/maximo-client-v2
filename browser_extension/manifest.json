@@ -23,6 +23,7 @@
       "js": [
         "workflow_logic.js",
         "report_stamp.js",
+        "report_brand.js",
         "content.js",
         "panel_content.js"
       ],

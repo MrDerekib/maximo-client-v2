@@ -59,6 +59,8 @@ class AppConfig:
     repair_print_mode: str = "dialog"
     repair_close_tabs_after_direct_print: bool = False
     repair_irreparable_stamp_enabled: bool = True
+    repair_replace_logo_enabled: bool = True
+    repair_clean_resources_enabled: bool = True
     repair_origin_mode: str = "selected"
     repair_origin_projects: list[str] = field(default_factory=lambda: list(DEFAULT_REPAIR_ORIGIN_PROJECTS))
     filters: dict | None = None
@@ -133,6 +135,10 @@ class AppConfig:
         }, key=str.casefold)
         if not isinstance(self.repair_irreparable_stamp_enabled, bool):
             self.repair_irreparable_stamp_enabled = True
+        if not isinstance(self.repair_replace_logo_enabled, bool):
+            self.repair_replace_logo_enabled = True
+        if not isinstance(self.repair_clean_resources_enabled, bool):
+            self.repair_clean_resources_enabled = True
         if not isinstance(self.repair_close_tabs_after_direct_print, bool):
             self.repair_close_tabs_after_direct_print = False
         if self.filters is None:

@@ -1,2 +1,2 @@
 # version.py
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.5.0"

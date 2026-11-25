@@ -1,6 +1,6 @@
 "use strict";
 
-if (typeof importScripts === "function") importScripts("panel_bridge.js", "panel_visibility.js", "panel_worker.js", "workflow_logic.js", "vendor/pdf-lib.min.js", "pdf_merge.js");
+if (typeof importScripts === "function") importScripts("panel_bridge.js", "panel_visibility.js", "panel_worker.js", "workflow_logic.js", "report_brand.js", "vendor/pdf-lib.min.js", "pdf_merge.js");
 
 const partLogic = typeof module !== "undefined" ? require("./workflow_logic.js") : globalThis.MaximoPartLogic;
 
@@ -42,7 +42,7 @@ async function handlePdfOutput(tabId, changeInfo, tab) {
     let downloadUrl=changeInfo.url || tab.url;
     if(job.variantCount===2){
       await tellSource(job,`Preparando PDF ${job.variantIndex+1}/2 de Boixeres…`,"PROGRESS");
-      const bytes = await prepareRepairPdf(await fetchRepairPdf(downloadUrl), job.originCompany);
+      const bytes = await prepareRepairPdf(await fetchRepairPdf(downloadUrl), job.originCompany, job);
       if(job.variantIndex===0){
         // Survive worker suspension; discard these temporary bytes on finish/fail.
         job.pdfFirstPart=repairPdfBase64(bytes);
@@ -55,7 +55,7 @@ async function handlePdfOutput(tabId, changeInfo, tab) {
       downloadUrl=await mergeRepairPdfs([job.pdfFirstPart,bytes]);
     } else {
       const original = await fetchRepairPdf(downloadUrl);
-      const bytes = await prepareRepairPdf(original, job.originCompany);
+      const bytes = await prepareRepairPdf(original, job.originCompany, job);
       if (bytes !== original) downloadUrl = "data:application/pdf;base64," + repairPdfBase64(bytes);
     }
     await chrome.downloads.download({
@@ -167,6 +167,8 @@ async function handleMessage(message, sender) {
       variantIndex: 0,
       variantCount: isBoixeresClient(message.client) ? 2 : 1,
       originCompany,
+      replaceLogo: message.replaceLogo !== false,
+      cleanResources: message.cleanResources !== false,
       irreparableStamp: outputFormat === "html" && message.irreparableStamp === true,
       closeTabs: outputFormat === "html" && message.closeTabs === true
     };
@@ -441,6 +443,7 @@ async function handleMessage(message, sender) {
     job.outputTabId = tab.id;
     await chrome.storage.session.set({ [JOB_KEY]: job });
     return { ot: job.ot, jobId: job.id, irreparableStamp: job.irreparableStamp === true,
+      replaceLogo: job.replaceLogo !== false, cleanResources: job.cleanResources !== false,
       ...(job.originCompany && { originCompany: job.originCompany }) };
   }
 
