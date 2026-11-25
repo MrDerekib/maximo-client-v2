@@ -283,6 +283,7 @@ def application_legibility_css(profile):
     QLabel, QLineEdit, QComboBox, QSpinBox, QAbstractSpinBox, QCheckBox,
     QRadioButton, QTextEdit, QPlainTextEdit, QTableView, QListView, QMenu,
     QPushButton, QStatusBar {{ font-size: {size}px; font-weight: {settings.weight}; }}
+    QHeaderView#workorderHeader {{ font-size: {size}px; font-weight: 700; }}
     """
 
 
@@ -352,6 +353,7 @@ def component_css(colors, assets_dir):
     QPushButton#sidebarAction:disabled {{ color: {colors['sidebar_muted']}; }}
     QPushButton#sidebarAction:hover {{ background: {colors['sidebar_surface']}; color: {colors['sidebar_text']}; }}
     QToolButton#navigationMenu {{ padding: 5px 23px 5px 5px; font-size: 14px; }}
+    QToolButton#navigationSettings {{ padding: 5px 8px; font-size: 14px; }}
     QToolButton#navigationMenu::menu-indicator {{
         image: url("{arrow}"); width: 12px; height: 12px;
         subcontrol-origin: padding; subcontrol-position: center right; right: 5px; }}
@@ -424,6 +426,16 @@ def component_css(colors, assets_dir):
     QPushButton#priorityFilter:checked:hover, QPushButton#advancedFilter[filtersActive="true"]:hover {{ background: {colors['accent']}; }}
     QPushButton#dialogPrimary {{ background: {colors['accent']}; color: {colors['on_accent']}; }}
     QPushButton#dialogPrimary:hover {{ background: {colors['accent_hover']}; }}
+    QFrame#repairPreviewBanner {{ background: {colors['accent_light']};
+        border: 1px solid {colors['border_strong']}; border-left: 4px solid {colors['accent']};
+        border-radius: 8px; }}
+    QFrame#repairPreviewBanner QLabel {{ color: {colors['text']}; background: transparent; }}
+    QLabel#repairPreviewTitle {{ font-weight: 700; }}
+    QFrame#repairReviewStatusCard[blocked="true"] {{ background: {colors['danger_bg']};
+        border: 1px solid {colors['border_strong']}; border-left: 4px solid {colors['danger']};
+        border-radius: 8px; }}
+    QFrame#repairReviewStatusCard[blocked="true"] QLabel {{
+        color: {colors['text']}; background: transparent; font-weight: 700; }}
     QDialog#activityDialog {{ background: transparent; border: none; }}
     QFrame#activityCard {{ background: {colors['surface']}; border: 1px solid {colors['border']}; border-radius: 10px; }}
     QLabel#activityTitle {{ background: transparent; border: none; color: {colors['heading']}; font-size: 13px; font-weight: 700; }}

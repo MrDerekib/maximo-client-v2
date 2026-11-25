@@ -167,11 +167,23 @@ class WorkorderCloser(WorkorderStarter):
         field.send_keys(Keys.CONTROL,'a')
         field.send_keys(formatted,Keys.TAB)
 
-        def confirmed(d):
+        observed = current['value'] or current['title']
+
+        def confirmed(_driver):
+            nonlocal observed
             self.reject_dialogs()
-            snapshot=self.field_snapshot(caption)
-            return actual_datetime(snapshot['value'],snapshot['title'])==value
-        self.wait(confirmed,f'validación de {caption}')
+            snapshot = self.field_snapshot(caption)
+            observed = snapshot['value'] or snapshot['title']
+            return actual_datetime(snapshot['value'], snapshot['title']) == value
+
+        try:
+            self.wait(confirmed, f'validación de {caption}')
+        except RuntimeError as exc:
+            if not isinstance(exc.__cause__, TimeoutException):
+                raise
+            raise RuntimeError(
+                f'{exc} Valor revisado: {formatted}. Último valor leído en Maximo: {observed or "vacío"}.'
+            ) from exc
         self.idle()
 
     def prepare_close(self, approval, pending):

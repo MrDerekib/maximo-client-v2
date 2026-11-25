@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { pageKind, containsOt, canPrintStatus, isBoixeresClient,
-  clientFromWorkorder } = require("../workflow_logic.js");
+  clientFromWorkorder, isAtmClient, includeReportOrigin, originCompanyFromWorkorder } = require("../workflow_logic.js");
 
 test("only the Maximo WO page and the repair report windows are handled", () => {
   assert.equal(pageKind("https://eam.indraweb.net/maximo/ui/?event=loadapp"), "workorder");
@@ -44,6 +44,27 @@ test("the exact mx47-tb field takes priority, with a Cliente row fallback", () =
   };
   assert.equal(clientFromWorkorder({ getElementById: () => null,
     querySelectorAll: () => [label] }), "Cliente: TMB BOIXERES");
+});
+
+test("report origin uses only the initial location description", () => {
+  const fields = new Map([
+    ["mx88-tb", { value: " SARBUS " }],
+    ["mx88-tb2", { value: " Empresa Sagales " }]
+  ]);
+  const doc = { getElementById: id => fields.get(id), querySelectorAll: () => [] };
+  assert.equal(isAtmClient("Cliente: ATM Autoritat del Transport Metropolità"), true);
+  assert.equal(isAtmClient("TMB BOIXERES"), false);
+  assert.equal(includeReportOrigin("ATM"), true);
+  assert.equal(includeReportOrigin("ATM", { mode: "disabled" }), false);
+  assert.equal(includeReportOrigin("FGC", { mode: "all" }), true);
+  assert.equal(includeReportOrigin("TMB BOIXERES", { mode: "selected", projects: ["TMB"] }), false);
+  assert.equal(originCompanyFromWorkorder(doc), "Sagales");
+  fields.set("mx88-tb2", { value: "Empresa:" });
+  assert.equal(originCompanyFromWorkorder(doc), "");
+  fields.set("mx88-tb2", { value: "Stock Lìnia 9 - Tramo I" });
+  assert.equal(originCompanyFromWorkorder(doc), "Stock Lìnia 9 - Tramo I");
+  fields.delete("mx88-tb2");
+  assert.equal(originCompanyFromWorkorder(doc), "");
 });
 
 function chromeHarness() {
@@ -421,9 +442,17 @@ test("PDF output requests Save As for BIRT's native PDF from the correct viewer"
   await handleMessage({ type: "START", ot: "4228010", outputFormat: "pdf" }, source);
   assert.equal((await handleMessage({ type: "CLAIM_VIEWER" }, viewer)).outputFormat, "pdf");
   const url = "https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign&__requestid=123";
-  await handlePdfOutput(3, { url }, { id: 3, openerTabId: 99, url });
-  assert.equal(downloads.length, 0);
-  await handlePdfOutput(3, { url }, { id: 3, openerTabId: 2, url });
+  mergerEnvironment();
+  const bytes = await nativePdf(595);
+  const previousFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, url, arrayBuffer: async () => bytes.buffer });
+  try {
+    await handlePdfOutput(3, { url }, { id: 3, openerTabId: 99, url });
+    assert.equal(downloads.length, 0);
+    await handlePdfOutput(3, { url }, { id: 3, openerTabId: 2, url });
+  } finally {
+    global.fetch = previousFetch;
+  }
   assert.deepEqual(downloads, [{ url, filename: "parte_reparacion_OT4228010.pdf",
     saveAs: true, conflictAction: "uniquify" }]);
   assert.equal(session.has(JOB_KEY), false);
@@ -496,16 +525,118 @@ test("printing releases Edge panel focus only when focusing the page is insuffic
 
 const nativePdfLib = require("../vendor/pdf-lib.min.js");
 const pdfMerge = require("../pdf_merge.js");
+function equipmentSection(doc, page) {
+  for (const [text,x,y] of [["Datos del equipo",10,370],["Cliente:",10,350],
+      ["ATM",80,350],["Datos orden reparacion",10,320],["Original BIRT",10,200]])
+    page.drawText(text,{x,y,size:7});
+  const stream=doc.context.flateStream(new TextEncoder().encode(
+    `q\n1 0 0 1 10 330 cm\n0 0 m\n${page.getWidth()-20} 0 l\nS\nQ\n`));
+  page.node.addContentStream(doc.context.register(stream));
+}
 async function nativePdf(width) {
   const doc = await nativePdfLib.PDFDocument.create();
-  doc.addPage([width, 400]);
+  equipmentSection(doc,doc.addPage([width, 400]));
   return doc.save();
 }
 function mergerEnvironment() {
   global.PDFLib=nativePdfLib;
   global.repairPdfBase64=pdfMerge.repairPdfBase64;
   global.mergeRepairPdfs=pdfMerge.mergeRepairPdfs;
+  global.prepareRepairPdf=pdfMerge.prepareRepairPdf;
 }
+
+test("PDF cleanup removes the exact BIRT warning from every page with origin data disabled", async () => {
+  const h = chromeHarness();
+  mergerEnvironment();
+  const { BIRT_RESOURCE_NOTICE: notice } = require("../workflow_logic.js");
+  const source = { tab: { id: 1 } };
+  const viewer = { tab: { id: 2, openerTabId: 1 } };
+  const url = "https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign&__requestid=42";
+  const original = await nativePdfLib.PDFDocument.create();
+  for (let index = 0; index < 2; index++) {
+    const page = original.addPage([595, 842]);
+    page.drawText(notice);
+    page.drawText("Comentario: " + notice);
+    const literal = original.context.flateStream(new TextEncoder().encode(
+      "BT\n(" + notice + ")Tj\nET\n"
+    ));
+    page.node.addContentStream(original.context.register(literal));
+  }
+  const before = await original.save();
+  const previousFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, url, arrayBuffer: async () => before.buffer });
+  try {
+    await h.handleMessage({ type: "START", ot: "3437031", outputFormat: "pdf", client: "ATM",
+      includeOriginCompany: false }, source);
+    await h.handleMessage({ type: "CLAIM_VIEWER" }, viewer);
+    await h.handlePdfOutput(3, { url }, { id: 3, openerTabId: 2, url });
+    assert.equal(h.downloads.length, 1);
+    const cleaned = await nativePdfLib.PDFDocument.load(h.downloads[0].url);
+    assert.equal(cleaned.getPageCount(), 2);
+    const hex = text => Buffer.from(text).toString("hex").toUpperCase();
+    for (const page of cleaned.getPages()) {
+      const content = page.node.Contents().asArray().map(ref =>
+        Buffer.from(nativePdfLib.decodePDFRawStream(cleaned.context.lookup(ref)).decode()).toString()
+      ).join("\n");
+      assert.ok(!content.includes("(" + notice + ")Tj"));
+      assert.ok(!content.includes("<" + hex(notice) + "> Tj"));
+      assert.ok(content.includes(hex("Comentario: " + notice)));
+    }
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
+
+test("origin placement rejects unknown layouts and paginates a full first page", async () => {
+  global.PDFLib = nativePdfLib;
+  const unknown=await nativePdfLib.PDFDocument.create();
+  unknown.addPage([595,842]).drawText("An unrelated report");
+  await assert.rejects(pdfMerge.prepareRepairPdf(await unknown.save(),"SARBUS"), /Datos del equipo/);
+  const full=await nativePdfLib.PDFDocument.create();
+  const page=full.addPage([595,842]);
+  equipmentSection(full,page);
+  page.drawText("Last line of the page",{x:10,y:80,size:7});
+  full.addPage([595,842]).drawText("Original second page");
+  const continued=await nativePdfLib.PDFDocument.load(await pdfMerge.prepareRepairPdf(await full.save(),"SARBUS"));
+  assert.equal(continued.getPageCount(),3);
+  assert.deepEqual(continued.getPages().map(p=>p.getSize()),Array.from({length:3},()=>({width:595,height:842})));
+});
+
+test("ATM saves the original PDF pages with the company inside equipment data on the first page", async () => {
+  const h = chromeHarness();
+  mergerEnvironment();
+  const source = { tab: { id: 1 } };
+  const viewer = { tab: { id: 2, openerTabId: 1 } };
+  const url = "https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign&__requestid=1";
+  const original = await nativePdfLib.PDFDocument.create();
+  equipmentSection(original,original.addPage([595, 842]));
+  original.addPage([595, 842]).drawText("Second page");
+  const bytes = await original.save();
+  const previousFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, url, arrayBuffer: async () => bytes.buffer });
+  try {
+    await assert.rejects(h.handleMessage({ type: "START", ot: "3437031", client: "ATM",
+      includeOriginCompany: true }, source), /Falta la empresa o ubicación inicial/);
+    await h.handleMessage({ type: "START", ot: "3437031", outputFormat: "pdf", client: "ATM",
+      includeOriginCompany: true, originCompany: "SARBUS" }, source);
+    await h.handleMessage({ type: "CLAIM_VIEWER" }, viewer);
+    await h.handlePdfOutput(3, { url }, { id: 3, openerTabId: 2, url });
+    assert.equal(h.downloads.length, 1);
+    assert.equal(h.downloads[0].saveAs, true);
+    const report = await nativePdfLib.PDFDocument.load(h.downloads[0].url);
+    assert.deepEqual(report.getPages().map(page => page.getSize()),
+      [{ width: 595, height: 842 }, { width: 595, height: 842 }]);
+    const pageTextOperators = page => page.node.Contents().asArray().map(ref =>
+      Buffer.from(nativePdfLib.decodePDFRawStream(report.context.lookup(ref)).decode()).toString()
+    ).join("\n");
+    const asHex = text => Buffer.from(text, "latin1").toString("hex").toUpperCase();
+    assert.ok(pageTextOperators(report.getPage(0)).includes(asHex("Origen:")));
+    assert.ok(pageTextOperators(report.getPage(0)).includes(asHex("SARBUS")));
+    assert.ok(!pageTextOperators(report.getPage(1)).includes(asHex("SARBUS")));
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
 
 test("Boixeres saves one combined PDF, preserving variant/page order with one filename prompt", async () => {
   const h=chromeHarness();mergerEnvironment();
@@ -529,7 +660,8 @@ test("Boixeres saves one combined PDF, preserving variant/page order with one fi
     return {ok:true,url:requested,arrayBuffer:async()=>bytes.buffer};
   };
   try {
-    await h.handleMessage({type:"START",ot:"4228010",outputFormat:"pdf",client:"TMB BOIXERES"},source);
+    await h.handleMessage({type:"START",ot:"4228010",outputFormat:"pdf",client:"TMB BOIXERES",
+      includeOriginCompany:true,originCompany:"TALLER"},source);
     await h.handleMessage({type:"CLAIM_VIEWER"},{tab:{id:2,openerTabId:1}});
     await h.handlePdfOutput(3,{url:url+"1"},{id:3,openerTabId:2,url:url+"1"});
     assert.equal(h.downloads.length,0,"the first variant must not open Save As");
@@ -547,6 +679,13 @@ test("Boixeres saves one combined PDF, preserving variant/page order with one fi
     assert.match(download.url,/^data:application\/pdf;base64,/);
     const merged=await nativePdfLib.PDFDocument.load(download.url);
     assert.deepEqual(merged.getPages().map(p=>p.getWidth()),[200,300]);
+    const label = Buffer.from("TALLER").toString("hex").toUpperCase();
+    for (const page of merged.getPages()) {
+      const content = page.node.Contents().asArray().map(ref =>
+        Buffer.from(nativePdfLib.decodePDFRawStream(merged.context.lookup(ref)).decode()).toString()
+      ).join("\n");
+      assert.ok(content.includes(label));
+    }
     assert.equal(h.session.has(h.JOB_KEY),false);
     assert.equal(requests.length,2);
     assert.ok(requests.every(([,options])=>options.credentials==="include"));

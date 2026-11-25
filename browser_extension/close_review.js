@@ -3,6 +3,7 @@
   function mount(dialog, data, onChange) {
     if (!data.records) return null;
     const records=data.records, existing=records.entries||[], references=records.references||[];
+    const incidentRequired=records.incident_required!==false;
     const root=document.createElement('section');root.className='close-card close-records';
     const element=(tag,text,parent=root)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;parent.append(node);return node;};
     element('h3','Incidencia y trabajos realizados');
@@ -19,7 +20,7 @@
     }
     const label=element('label','Incidencia');label.className='close-label';label.htmlFor='maximo-close-reference';
     const reference=element('input');reference.id='maximo-close-reference';reference.type='text';reference.name='reference';reference.maxLength=100;
-    reference.placeholder='Número o texto libre: stock, sin inc…';reference.value=references.length===1?references[0]:'';
+    reference.placeholder=incidentRequired?'Número o sin incidencia':'Opcional';reference.value=references.length===1?references[0]:'';
     if(references.length>1)element('p','Hay varias incidencias. Elige la que corresponde; no se eliminará ninguna.').className='close-hint';
     if(references.length) {
       const choices=element('datalist');choices.id='maximo-close-references';reference.setAttribute('list',choices.id);
@@ -60,9 +61,9 @@
         if(!records.complete)return records.error||'No se pudo comprobar Registro completo. Revisa la ficha y vuelve a abrir el cierre.';
         if(!data.anomalies?.complete)return 'Falta completar anomalías o soluciones.';
         const value=normalizeReference(),notes=entries();
-        if(!value)return 'Introduce o elige la incidencia (texto libre).';
+        if(!value&&(incidentRequired||reference.value.trim()))return 'Indica la incidencia o escribe «sin incidencia».';
         if(value.length>100||/[\x00-\x1f]/.test(value))return 'La incidencia no es válida o supera 100 caracteres.';
-        extra.hidden=!references.length||references.includes(value);
+        extra.hidden=!references.length||!value||references.includes(value);
         if(!extra.hidden&&!extraAck.checked)return 'Confirma que deseas añadir otra incidencia sin sustituir las existentes.';
         if(notes.some(row=>!row.summary))return 'Cada entrada nueva necesita un resumen.';
         if(notes.some(row=>/^inc\s*:/i.test(row.summary)))return 'Introduce la incidencia en su campo, no como trabajo realizado.';

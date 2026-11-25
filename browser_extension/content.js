@@ -85,8 +85,35 @@
     });
   }
 
-  function repairClient() {
-    return logic.clientFromWorkorder(document);
+  async function reportContext(ot) {
+    let preference;
+    try { preference = JSON.parse(sessionStorage.getItem("maximoDesktop.reportOrigin") || "null"); } catch (_) {}
+    let client = logic.clientFromWorkorder(document);
+    let includeOriginCompany = logic.includeReportOrigin(client, preference);
+    let originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document) : "";
+    if (!client || (includeOriginCompany && !originCompany)) {
+      const mainTab = () => [...document.querySelectorAll("a[role='tab']")].find(tab =>
+        visible(tab) && tab.textContent.trim().toLowerCase() === "orden de trabajo");
+      const tab = mainTab();
+      if (tab && tab.getAttribute("aria-expanded") !== "true") {
+        tab.click();
+        await waitFor(() => workOrderNumber() === ot &&
+          mainTab()?.getAttribute("aria-expanded") === "true" && logic.clientFromWorkorder(document),
+          "pestaña Orden de trabajo de la OT", 8000);
+        client = logic.clientFromWorkorder(document);
+        includeOriginCompany = logic.includeReportOrigin(client, preference);
+        originCompany = includeOriginCompany ? logic.originCompanyFromWorkorder(document) : "";
+      }
+    }
+    if (!client) throw new Error("No se pudo leer el cliente. Abre la pestaña Orden de trabajo.");
+    if (includeOriginCompany && !originCompany)
+      throw new Error("Falta la empresa o ubicación inicial. Comprueba «Descripción de Ubicación Inicial» en Orden de trabajo.");
+    if (workOrderNumber() !== ot) throw new Error("La ficha ha cambiado durante la lectura del parte.");
+    let appearance;
+    try { appearance = JSON.parse(sessionStorage.getItem("maximoDesktop.reportAppearance") || "null"); } catch (_) {}
+    return { client, includeOriginCompany, originCompany,
+      replaceLogo: appearance?.replaceLogo !== false,
+      cleanResources: appearance?.cleanResources !== false };
   }
 
   async function submitReportVariant(jobId, targetButton, variantIndex, variantCount) {
@@ -268,7 +295,8 @@
         let discardedOts = [];
         try { discardedOts = JSON.parse(sessionStorage.getItem("maximoDesktop.discardedOts") || "[]"); } catch (_) {}
         const irreparableStamp = outputFormat === "html" && Array.isArray(discardedOts) && discardedOts.includes(ot);
-        const job = await send("START", { ot, outputFormat, client: repairClient(), closeTabs, irreparableStamp });
+        const context = await reportContext(ot);
+        const job = await send("START", { ot, outputFormat, ...context, closeTabs, irreparableStamp });
         jobId = job.jobId;
         setButtonText(job.variantCount > 1 ? "Preparando parte 1/2…" : "Preparando parte…");
         await submitReportVariant(jobId, button, job.variantIndex, job.variantCount);
@@ -317,6 +345,10 @@
       job = await send("CLAIM_OUTPUT");
       await waitFor(() => logic.containsOt(textInFrames(document), job.ot),
         `OT ${job.ot} en el parte HTML`, 45000);
+      if (job.cleanResources !== false) logic.removeBirtResourceNotices(document);
+      if (job.replaceLogo !== false && globalThis.MaximoReportBrand)
+        await globalThis.MaximoReportBrand.replaceInDocument(document);
+      if (job.originCompany) logic.insertOriginCompany(document, job.originCompany);
       if (job.irreparableStamp === true) MaximoReportStamp.insert(document);
       window.print();
       const result = await send("FINISH", { jobId: job.jobId });

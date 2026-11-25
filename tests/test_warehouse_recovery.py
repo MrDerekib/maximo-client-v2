@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 from tests.test_support import temporary_directory
 from warehouse import WarehouseItem
 from warehouse_recovery import RecoveryStore
-from warehouse_transport import run_live, reverify_pending, FINAL_STATES
+from warehouse_transport import run_live, reverify_pending, reconcile_closed_repairs, FINAL_STATES
 
 
 class FakeServer:
@@ -70,6 +70,32 @@ class RecoveryTests(TestCase):
     def run_batch(self,server,items=None,**kwargs):
         return run_live(items or [WarehouseItem(ot,serial='SERIAL-'+ot) for ot in server.states],server.action,
                         session_factory=server.session,recovery_store=self.store,**kwargs)
+
+    def test_already_closed_repair_is_archived_only_after_identity_and_local_save(self):
+        server = FakeServer(states={'1': 'CLOSE', '2': 'CLOSE', '3': 'INPRG', '4': 'CLOSE'})
+        server.identity_changed.add('2')
+        records = [
+            self.store.begin(WarehouseItem(ot, serial='SERIAL-'+ot), 'technician_close',
+                             {'Activo': 'ASSET-'+ot, 'Nº de serie': 'SERIAL-'+ot, 'Planta': 'LAB-BAD'},
+                             'APPR', preparing=True)
+            for ot in server.states
+        ]
+        records[0] = self.store.update(records[0], 'preparing', last_error='Detalles no revisados')
+        self.store.mute_startup(records[0])
+        pending = self.store.pending()
+        self.assertTrue(self.store.get('1')['mute_startup'])
+        with patch('db.apply_observed_status', side_effect=lambda ot, status: ot != '4') as save:
+            self.assertEqual(reconcile_closed_repairs(pending, self.store, session_factory=server.session), ['1'])
+        self.assertCountEqual([call.args for call in save.call_args_list], [('1', 'CLOSE'), ('4', 'CLOSE')])
+        self.assertIsNone(self.store.get('1'))
+        self.assertEqual({r['item']['ot'] for r in self.store.pending()}, {'2', '3', '4'})
+        archived, = (self.folder / 'resueltas').glob('*.json')
+        self.assertIn('closed_elsewhere', archived.read_text(encoding='utf-8'))
+        self.assertIn('Detalles no revisados', archived.read_text(encoding='utf-8'))
+        for session in server.sessions:
+            session.driver.find_element.assert_not_called()
+            session.accept_button.assert_not_called()
+            session.close.assert_called_once()
 
     def test_middle_timeout_is_rechecked_only_after_all_eighteen_finish(self):
         server=FakeServer(states={str(i):'ISSUE' for i in range(1,19)});server.lost.add('7')

@@ -22,6 +22,46 @@ class ColumnWidthTests(TestCase):
         QTest.mouseMove(v,QPoint(x+delta,y),delay=20)
         QTest.mouseRelease(v,Qt.LeftButton,pos=QPoint(x+delta,y))
 
+    def test_columns_menu_persists_visibility_across_refreshes_and_reopening(self):
+        with self.f.qt_window() as (w, qt):
+            view_columns = next(action.menu() for action in w.view_menu_button.menu().actions()
+                                if action.text() == 'Columnas')
+            view_columns.aboutToShow.emit()
+            actions = {action.text(): action for action in view_columns.actions()}
+            self.assertTrue(actions['OT'].isChecked())
+            self.assertFalse(actions['OT'].isEnabled())
+            self.assertFalse(actions['Avería'].isEnabled())
+            w._workorder_selector._set_rows([0, 1])
+            selected = {item.ot for item in w.warehouse_items()}
+            preferred = list(w._column_widths)
+
+            actions['Planta'].trigger()
+            actions['Tipo de trabajo'].trigger()
+            self.assertEqual(w.cfg.table_hidden_columns, ['Tipo de trabajo', 'Planta'])
+            cfg = deepcopy(qt.save_config.call_args.args[0])
+            w.toggle_sidebar()
+            w._table_snapshot = None
+            self.assertTrue(w.refresh_table())
+            self.assertTrue(w.table.isColumnHidden(w.columns.index('Planta')))
+            self.assertEqual({item.ot for item in w.warehouse_items()}, selected)
+            self.assertEqual(w._column_widths, preferred)
+            self.assertFalse(w._column_widths_dirty)
+
+        with self.f.qt_window(cfg) as (w, _):
+            header = w.table.horizontalHeader()
+            header.customContextMenuRequested.emit(QPoint(4, 4))
+            menu = w.header_columns_menu
+            self.assertTrue(menu.isVisible())
+            actions = {action.text(): action for action in menu.actions()}
+            self.assertFalse(actions['Planta'].isChecked())
+            self.assertFalse(actions['Tipo de trabajo'].isChecked())
+            actions['Restablecer visibilidad'].trigger()
+            menu.hide()
+            self.assertFalse(w.table.isColumnHidden(w.columns.index('Planta')))
+            self.assertFalse(w.table.isColumnHidden(w.columns.index('Tipo de trabajo')))
+            self.assertTrue(w.table.isColumnHidden(w.columns.index('Avería')))
+            self.assertEqual(w.cfg.table_hidden_columns, [])
+
     def test_initial_and_programmatic_layout_changes_never_save_preferences(self):
         with self.f.qt_window() as (w,qt):
             w.show();qt.QApplication.processEvents()

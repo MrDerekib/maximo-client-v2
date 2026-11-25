@@ -27,19 +27,26 @@ class SidebarTests(TestCase):
                 self.assertEqual([window.table.item(row,1) for row in range(window.table.rowCount())],cells)
                 self.assertEqual([index.row() for index in window.table.selectionModel().selectedRows()],selected)
                 fetch.assert_not_called();save.assert_called_once()
-                window.navigation_actions[1].trigger()
+                window.settings_nav_button.click()
                 qt.QApplication.processEvents()
                 self.assertEqual(window.pages.currentIndex(),1)
-                self.assertEqual(window.navigation_location.text(),"Configuración")
+                self.assertFalse(window.settings_nav_button.icon().isNull())
                 toggle_settings=window.sidebar_toggle
                 self.assertTrue(toggle_settings.isVisible())
                 window.user_edit.setText('escritura-pendiente')
-                toggle_settings.click();qt.QApplication.processEvents()
+                self.assertEqual(window.sidebar_visibility_action.text(), 'Mostrar barra lateral')
+                window.sidebar_visibility_action.trigger()
+                qt.QApplication.processEvents()
                 self.assertFalse(window.sidebar.isHidden());self.assertFalse(window.cfg.sidebar_collapsed)
                 self.assertEqual(window.user_edit.text(),'escritura-pendiente')
                 self.assertEqual(window.cfg.username,'')  # Hiding the sidebar never applies pending settings.
                 self.assertEqual(save.call_count,2)
                 fetch.assert_not_called()
+                window.user_edit.clear()
+                list_action = next(action for action in window.view_menu_button.menu().actions()
+                                   if action.text() == 'Listado')
+                list_action.trigger()
+                self.assertEqual(window.pages.currentIndex(), 0)
 
     def test_sidebar_preference_is_restored_with_a_visible_control(self):
         with self.fixture.qt_window(AppConfig(sidebar_collapsed=True)) as (window,qt):
@@ -68,7 +75,17 @@ class SidebarTests(TestCase):
             self.assertEqual(window.search_card.height(),before)
             self.assertEqual(window.export_action.text(),'Exportar a Excel')
             window._set_sidebar_visible(False)
-            self.assertTrue(window.navigation_menu_button.isVisible())
+            self.assertTrue(window.file_menu_button.isVisible())
+            self.assertIn(window.export_action, window.file_menu_button.menu().actions())
+            self.assertIn(window.fault_run_action, window.maximo_menu_button.menu().actions())
+            self.assertIn(window.fault_cancel_action, window.maximo_menu_button.menu().actions())
+            self.assertFalse(window.fault_cancel_action.isEnabled())
+            self.assertFalse(hasattr(window, 'navigation_location'))
+            sync = next(action for action in window.maximo_menu_button.menu().actions()
+                        if action.text() == 'Actualizar Maximo')
+            with patch.object(window, 'update_now') as update:
+                sync.trigger()
+            update.assert_called_once_with()
 
     def test_sidebar_drag_preserves_rows_marks_and_pending_settings(self):
         from PySide6.QtCore import QPoint, Qt

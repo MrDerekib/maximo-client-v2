@@ -229,7 +229,8 @@ class IntegrationTests(TestCase):
         w=SimpleNamespace(_closing=False, _list_update_pending=False,
             _credentials_ready=Mock(return_value=True), update_lock=JobCounter(),
             status=Mock(), _start_task=Mock(), refresh_choices=Mock(),refresh_table=Mock(),
-            _refresh_reconciliation_summary=Mock(), start_background_reconcile=Mock())
+            _refresh_reconciliation_summary=Mock(), _refresh_fault_description_summary=Mock(),
+            start_background_reconcile=Mock())
         MaximoDesktopWindow.update_now(w)
         w._start_task.call_args.args[1]((1,2))
         self.assertFalse(w._list_update_pending)
@@ -335,7 +336,7 @@ class IntegrationTests(TestCase):
                 w=SimpleNamespace(_closing=False,cfg=AppConfig(fault_descriptions_enabled=True),
                     reconcile_lock=JobCounter(),update_lock=JobCounter(),fault_description_lock=JobCounter(),
                     refresh_table=Mock(),_refresh_reconciliation_summary=Mock(),
-                    _refresh_fault_description_summary=Mock(),status=Mock(),_start_task=Mock(),fault_cancel_button=Mock())
+                    _refresh_fault_description_summary=Mock(),status=Mock(),_start_task=Mock(),fault_cancel_action=Mock())
                 MaximoDesktopWindow.start_background_reconcile(w)
                 w._start_task.call_args.args[1](count)
                 self.assertEqual(w.refresh_table.call_count,int(count>0))

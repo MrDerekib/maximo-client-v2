@@ -7,13 +7,16 @@ const content = fs.readFileSync(require.resolve("../content.js"), "utf8");
 
 // Each document has new DOM nodes, while tab session storage survives reloads.
 // Run the real content script and capture START before any report is generated.
-async function loadDocument(storage, rootPreference) {
+async function loadDocument(storage, rootPreference, client = "TMB", origin = "", description = "") {
   const elements = new Map();
   const intervals = [];
   const messages = [];
   const field = value => ({ value, getClientRects: () => [1] });
   elements.set("mx45-tb", field("4384025"));
   elements.set("mx73-tb", field("ISSUE"));
+  elements.set("mx47-tb", field(client));
+  elements.set("mx88-tb", field(origin));
+  elements.set("mx88-tb2", field(description));
   const document = {
     documentElement: { dataset: rootPreference === undefined ? {} :
       { maximoCloseReportTabs: rootPreference } },
@@ -76,6 +79,16 @@ test("explicit desktop overrides and PDF requests preserve their cleanup policy"
 });
 
 
+test("report appearance preferences survive reloads and respect explicit disabled values", async () => {
+  for (const replaceLogo of [false, true]) for (const cleanResources of [false, true]) {
+    const page = await loadDocument(new Map([["maximoDesktop.reportAppearance",
+      JSON.stringify({replaceLogo, cleanResources})]]));
+    await page.button.click();
+    assert.equal(page.messages[0].replaceLogo, replaceLogo);
+    assert.equal(page.messages[0].cleanResources, cleanResources);
+  }
+});
+
 test("only verified discarded OTs in this session request the HTML stamp", async () => {
   for (const [stored, expected] of [[undefined,false],['["4384025"]',true],['["4384026"]',false],['bad json',false]]) {
     const page=await loadDocument(new Map(stored ? [["maximoDesktop.discardedOts",stored]] : []));
@@ -86,6 +99,45 @@ test("only verified discarded OTs in this session request the HTML stamp", async
   page.button.dataset.maximoReportAction="pdf";
   await page.button.click();
   assert.equal(page.messages[0].irreparableStamp,false);
+});
+
+test("ATM sends the company from the current work order and refuses a blank location", async () => {
+  const page = await loadDocument(new Map(), undefined, "ATM", " SAGA ", "Empresa Sagales");
+  await page.button.click();
+  assert.equal(page.messages[0].originCompany, "Sagales");
+  const missing = await loadDocument(new Map(), undefined, "ATM");
+  await missing.button.click();
+  assert.equal(missing.messages.length, 0);
+  assert.match(missing.button.textContent, /empresa o ubicación inicial/);
+  const settings = new Map([["maximoDesktop.reportOrigin", '{"mode":"disabled"}']]);
+  const disabled = await loadDocument(settings, undefined, "ATM", "SARBUS");
+  await disabled.button.click();
+  assert.equal(disabled.messages[0].includeOriginCompany, false);
+  assert.equal(disabled.messages[0].originCompany, "");
+  settings.set("maximoDesktop.reportOrigin", '{"mode":"selected","projects":["FGC"]}');
+  const selected = await loadDocument(settings, undefined, "FGC", "CODIGO", "TALLER");
+  await selected.button.click();
+  assert.equal(selected.messages[0].includeOriginCompany, true);
+  assert.equal(selected.messages[0].originCompany, "TALLER");
+});
+
+test("Line 9 sends the initial location description instead of its inventory code", async () => {
+  const storage = new Map([["maximoDesktop.reportOrigin", '{"mode":"selected","projects":["Línea 9"]}']]);
+  const location = "Stock Lìnia 9 - Tramo I";
+  for (const client of ["LINEA-9", "CL9T1SVI", "CL9T2SVI"]) {
+    const page = await loadDocument(storage, undefined, client, "ISTOCK", location);
+    await page.button.click();
+    assert.equal(page.messages[0].includeOriginCompany, true);
+    assert.equal(page.messages[0].originCompany, location);
+  }
+  const missing = await loadDocument(new Map(), undefined, "LINEA-9", "ISTOCK");
+  await missing.button.click();
+  assert.equal(missing.messages.length, 0);
+  assert.match(missing.button.textContent, /Descripción de Ubicación Inicial/);
+  storage.set("maximoDesktop.reportOrigin", '{"mode":"selected","projects":["ATM"]}');
+  const excluded = await loadDocument(storage, undefined, "LINEA-9", "ISTOCK", location);
+  await excluded.button.click();
+  assert.equal(excluded.messages[0].includeOriginCompany, false);
 });
 
 test("the HTML stamp is inserted once and leaves BIRT data intact", () => {
@@ -109,22 +161,30 @@ test("output printing applies the stamp before print, and never for ordinary rep
   for(const enabled of [false,true]) {
     const events=[];
     const intervals=[];
+    const warning = { textContent: logic.BIRT_RESOURCE_NOTICE, children: [] };
     vm.runInNewContext(content,{
-      MaximoPartLogic:logic,MaximoReportStamp:{insert(){events.push("stamp");}},
-      document:{body:{innerText:"OT 4443840"},querySelectorAll:()=>[]},
+      MaximoPartLogic:{...logic,insertOriginCompany(_doc, company){events.push("Origen: " + company);}},
+      MaximoReportStamp:{insert(){events.push("stamp");}},
+      document:{
+        getElementById: () => null,
+        createElement: () => ({ style: {} }),
+        body: { innerText: "OT 4443840", prepend(node) { events.push(node.textContent); } },
+        querySelectorAll: selector => selector === "body *" ? [warning] : []
+      },
       location:{href:"https://eam.indraweb.net/maximo/output?__report=parte_reparacion.rptdesign"},
-      window:{print(){events.push("print");}},
+      window:{print(){assert.equal(warning.textContent, ""); events.push("print");}},
       chrome:{runtime:{async sendMessage(message){
         events.push(message.type);
         return {ok:true,value:message.type==="CLAIM_OUTPUT" ?
-          {ot:"4443840",jobId:"test",irreparableStamp:enabled}: {closeTabs:false}};
+          {ot:"4443840",jobId:"test",irreparableStamp:enabled,originCompany:enabled ? "SARBUS" : ""}:
+          {closeTabs:false}};
       }}},console,
       setInterval(fn){intervals.push(fn);return intervals.length;},clearInterval(){}
     });
     await new Promise(resolve=>setImmediate(resolve));
     intervals[0]();
     await new Promise(resolve=>setImmediate(resolve));
-    assert.deepEqual(events,enabled ? ["CLAIM_OUTPUT","stamp","print","FINISH"]:
+    assert.deepEqual(events,enabled ? ["CLAIM_OUTPUT","Origen: SARBUS","stamp","print","FINISH"]:
       ["CLAIM_OUTPUT","print","FINISH"]);
   }
 });

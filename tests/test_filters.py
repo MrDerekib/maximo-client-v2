@@ -342,6 +342,69 @@ class FilterTests(unittest.TestCase):
             self.assertIs(window.table.item(0,1),cell)
             self.assertFalse(window.table.selectionModel().selectedRows())
 
+    def test_background_refresh_preserves_visible_batch_by_ot(self):
+        from PySide6.QtWidgets import QStyleOptionViewItem
+
+        with self.qt_window() as (window, qt):
+            window.table.sortItems(3, qt.Qt.AscendingOrder)
+            window._workorder_selector._set_rows([
+                row for row in range(window.table.rowCount())
+                if window.table.item(row, 1).text() in {'1', '2', '3'}
+            ])
+            self.assertEqual({item.ot for item in window.warehouse_items()}, {'1', '2', '3'})
+
+            with patch.object(window, '_credentials_ready', return_value=True), \
+                 patch.object(window, '_start_task') as task, \
+                 patch.object(window, 'start_background_reconcile'):
+                window.update_now()
+                with closing(sqlite3.connect(self.path)) as conn:
+                    conn.execute("UPDATE maximo SET Seguimiento='DAR SALIDA' WHERE OT='1'")
+                    conn.execute("DELETE FROM maximo WHERE OT='3'")
+                    conn.execute("INSERT INTO maximo (OT, Nº_de_serie, Cliente) VALUES ('5', '000', 'TMB')")
+                    conn.commit()
+                task.call_args.args[1]((1, 1))
+
+            self.assertEqual(window.table.item(0, 1).text(), '5')
+            self.assertEqual(window.table.horizontalHeader().sortIndicatorSection(), 3)
+            batch = {item.ot: item.status for item in window.warehouse_items()}
+            self.assertEqual(batch, {'1': 'DAR SALIDA', '2': 'RETENIDO'})
+            row = next(i for i in range(window.table.rowCount()) if window.table.item(i, 1).text() == '1')
+            column = window.columns.index('Seguimiento')
+            tracking = window.table.item(row, column)
+            option = QStyleOptionViewItem()
+            window.table.itemDelegate().initStyleOption(option, window.table.model().index(row, column))
+            self.assertEqual(option.text, 'Pendiente de salida de almacén')
+            self.assertEqual(tracking.toolTip(), 'Pendiente de salida de almacén (ISSUE)')
+            self.assertEqual(window._workorder_selector.counter.text(), '2 OTs seleccionadas')
+            window.advanced_state['tracking'] = ['RETENIDO']
+            window.refresh_table()
+            self.assertFalse(window.table.selectionModel().selectedRows())
+
+    def test_settings_pending_counts_follow_saved_results(self):
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("UPDATE maximo SET Activo=1")
+            conn.execute("UPDATE maximo SET Activo=0 WHERE OT='1'")
+            conn.commit()
+
+        with self.qt_window() as (window, _qt):
+            window.navigate_to(1)
+            self.assertIn('1 OT', window.reconcile_pending_label.text())
+            self.assertIn('3 OT', window.fault_pending_label.text())
+            self.assertIn('3 OT', window.detail_pending_label.text())
+
+            with patch.object(window, '_credentials_ready', return_value=True), \
+                 patch.object(window, '_start_task') as task:
+                window.refresh_selected_information(('1', '2'))
+                db.apply_observed_status('1', 'CLOSE')
+                db.apply_fault_description('2', '')
+                db.apply_detailed_description('2', '', '')
+                task.call_args.kwargs['progress'](2, 2, '2')
+
+                self.assertIn('0 OT', window.reconcile_pending_label.text())
+                self.assertIn('2 OT', window.fault_pending_label.text())
+                self.assertIn('2 OT', window.detail_pending_label.text())
+                task.call_args.args[1](3)
+
     def test_zero_count_update_still_refreshes_presence_and_last_seen(self):
         with self.qt_window() as (window, qt):
             with patch.object(window,'_credentials_ready',return_value=True), \
@@ -392,6 +455,10 @@ class FilterTests(unittest.TestCase):
             row=next(r for r in range(window.table.rowCount()) if window.table.item(r,1).text()=='1')
             self.assertTrue(window.table.item(row,2).icon().isNull())
             self.assertFalse(window.table.item(row,10).icon().isNull())
+            window._set_column_visible(window.columns[10], False)
+            row = next(r for r in range(window.table.rowCount()) if window.table.item(r, 1).text() == '1')
+            self.assertTrue(window.table.isColumnHidden(10))
+            self.assertFalse(window.table.item(row, 2).icon().isNull())
 
     def test_incremental_change_then_database_reversion_cannot_leave_stale_cell(self):
         with self.qt_window() as (window, qt):

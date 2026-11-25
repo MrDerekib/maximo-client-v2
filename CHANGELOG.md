@@ -1,5 +1,55 @@
 # Historial de cambios
 
+## 1.5.0 — Navegación, operaciones pendientes y partes de reparación
+
+### Resumen
+
+Esta actualización facilita revisar las operaciones, mejora la navegación de MD y permite personalizar los partes de reparación.
+
+- **Todos los roles:** Operaciones e historial accesibles desde el listado; menús Archivo, Ver y Maximo; columnas ocultables y acceso directo para volver de Configuración al listado.
+- **Técnico:** recuperación del cierre desde «Revisar y reintentar», comprobando el estado real y los datos existentes antes de continuar. Avisos más claros durante la consulta y cuando el estado de la OT no permite finalizarla.
+- **Partes:** Empresa / Ubicación inicial dentro de Datos del equipo, configurable por proyecto. Logo actual de Indra y limpieza de avisos de recursos ausentes, desactivables por separado. Se aplican también a las dos copias de Boixeres.
+- **Validaciones:** incidencia obligatoria solo en procesos de técnico de TMB y Línea 9; Boixeres queda exento. Se admiten espacios equivalentes en el número de serie sin ignorar cambios de contenido.
+- **Datos:** contadores de OTs pendientes actualizados en Configuración y visibles también en el menú Maximo.
+
+### Navegación y consultas · Todos los roles
+
+- Acceso desde el listado a las operaciones pendientes y a su historial reciente.
+- Menús Archivo, Ver y Maximo para organizar las acciones. «Volver al listado» queda junto a «Guardar cambios», respetando los ajustes pendientes.
+- Columnas visibles configurables desde Ver o desde la cabecera de la tabla. La OT permanece visible y se conservan las preferencias de columnas.
+- Estados de Maximo con descripciones legibles, manteniendo sus códigos técnicos y sus colores.
+- Los contadores de conciliación e información ampliada reflejan los resultados guardados. El menú Maximo muestra las OTs pendientes y refresca las cifras al abrirlo.
+
+### Reparación y recuperación · Técnico
+
+- «Revisar y reintentar» reúne la comprobación del resultado y la continuación de un proceso interrumpido. Consulta el estado real y conserva los trabajos ya registrados antes de decidir cómo continuar.
+- Los fallos indican el paso afectado y permiten acceder al reintento desde el aviso. Una confirmación final incierta se comprueba sin reenviarla a ciegas.
+- Consulta previa con indicador visible. Si la OT tiene un estado incompatible, se muestra una advertencia destacada; el formulario sigue siendo editable.
+- La incidencia se exige solo en TMB y Línea 9: admite número o texto libre como «sin incidencia». TMB Boixeres y los procesos de almacén quedan exentos.
+- La identidad del equipo admite espacios normales y espacios no separables equivalentes en el número de serie; conserva la comprobación del resto del contenido.
+
+### Partes de reparación · Técnico y almacén
+
+- Campo Origen debajo de Cliente, dentro de Datos del equipo. Usa «Descripción de Ubicación Inicial» de Maximo, con ATM y Línea 9 seleccionados por defecto. Puede desactivarse, aplicarse a todos los proyectos o limitarse a proyectos elegidos.
+- Logo actual de Indra incluido localmente y limpieza del aviso conocido de BIRT sobre recursos ausentes. Ambas opciones están activadas por defecto y pueden desactivarse por separado en Configuración.
+- Los ajustes se aplican a impresión HTML y guardado PDF, también en ambas variantes de Boixeres. El PDF mantiene ambas copias en un documento y solicita su nombre una sola vez.
+- Si falta espacio al insertar Origen en un PDF, se añade una página de continuación sin reducir el tamaño de letra, conservando el orden de las páginas y actualizando su numeración.
+
+### Operaciones · Almacén
+
+- Revisión de intentos pendientes e historial desde Operaciones, en el listado, sin pasar por Configuración.
+- Acceso desde Maximo a revisar OTs no activas y completar información, con el número de OTs pendientes visible.
+
+## 1.4.3 — Selección de OTs durante las actualizaciones
+
+### Resumen
+
+Esta actualización corrige la pérdida de selección al actualizar Maximo, especialmente al preparar lotes de OTs en almacén.
+
+- **Selección de OTs:** si mantienes los mismos filtros, las OTs marcadas que sigan visibles permanecen seleccionadas aunque cambien de fila.
+- **Legibilidad del listado:** las descripciones aprovechan el ancho de la celda desde el primer pintado. Los encabezados siguen el tamaño del perfil de legibilidad, incluido el personalizado.
+- **Operaciones pendientes:** si Maximo ya muestra la OT en CLOSE y coincide el equipo, MD actualiza el seguimiento local y archiva el intento. También puedes silenciar avisos al iniciar y seguir consultando los intentos manualmente.
+
 ## 1.4.2 — Correcciones del cierre y pegado desde Excel
 
 ### Resumen

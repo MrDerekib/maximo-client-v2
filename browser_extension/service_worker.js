@@ -1,6 +1,8 @@
 "use strict";
 
-if (typeof importScripts === "function") importScripts("panel_bridge.js", "panel_visibility.js", "panel_worker.js", "vendor/pdf-lib.min.js", "pdf_merge.js");
+if (typeof importScripts === "function") importScripts("panel_bridge.js", "panel_visibility.js", "panel_worker.js", "workflow_logic.js", "report_brand.js", "vendor/pdf-lib.min.js", "pdf_merge.js");
+
+const partLogic = typeof module !== "undefined" ? require("./workflow_logic.js") : globalThis.MaximoPartLogic;
 
 const JOB_KEY = "activePrintJob";
 const JOB_TTL_MS = 3 * 60 * 1000;
@@ -17,6 +19,16 @@ function repairOutputUrl(raw) {
   }
 }
 
+async function fetchRepairPdf(url) {
+  const response = await fetch(url, { credentials: "include", signal: AbortSignal.timeout(45000) });
+  if (!response.ok || !repairOutputUrl(response.url || url))
+    throw new Error("No se pudo obtener el PDF de BIRT en la sesión actual.");
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (String.fromCharCode(...bytes.subarray(0, 5)) !== "%PDF-")
+    throw new Error("BIRT no devolvió un PDF válido; revisa si la sesión ha caducado.");
+  return bytes;
+}
+
 async function handlePdfOutput(tabId, changeInfo, tab) {
   if (pdfDownloadInProgress || !repairOutputUrl(changeInfo.url || tab?.url)) return;
   const job = await readJob();
@@ -30,12 +42,7 @@ async function handlePdfOutput(tabId, changeInfo, tab) {
     let downloadUrl=changeInfo.url || tab.url;
     if(job.variantCount===2){
       await tellSource(job,`Preparando PDF ${job.variantIndex+1}/2 de Boixeres…`,"PROGRESS");
-      const response=await fetch(downloadUrl,{credentials:"include",signal:AbortSignal.timeout(45000)});
-      if(!response.ok || !repairOutputUrl(response.url || downloadUrl))
-        throw new Error("No se pudo obtener el PDF de BIRT en la sesión actual.");
-      const bytes=new Uint8Array(await response.arrayBuffer());
-      if(String.fromCharCode(...bytes.subarray(0,5))!=="%PDF-")
-        throw new Error("BIRT no devolvió un PDF válido; revisa si la sesión ha caducado.");
+      const bytes = await prepareRepairPdf(await fetchRepairPdf(downloadUrl), job.originCompany, job);
       if(job.variantIndex===0){
         // Survive worker suspension; discard these temporary bytes on finish/fail.
         job.pdfFirstPart=repairPdfBase64(bytes);
@@ -46,6 +53,10 @@ async function handlePdfOutput(tabId, changeInfo, tab) {
       if(!job.pdfFirstPart)throw new Error("No se conserva el primer PDF; vuelve a solicitar ambas copias.");
       await tellSource(job,"Uniendo las dos variantes en un PDF…","PROGRESS");
       downloadUrl=await mergeRepairPdfs([job.pdfFirstPart,bytes]);
+    } else {
+      const original = await fetchRepairPdf(downloadUrl);
+      const bytes = await prepareRepairPdf(original, job.originCompany, job);
+      if (bytes !== original) downloadUrl = "data:application/pdf;base64," + repairPdfBase64(bytes);
     }
     await chrome.downloads.download({
       url: downloadUrl,
@@ -147,11 +158,17 @@ async function handleMessage(message, sender) {
     if (!/^\d{5,12}$/.test(ot)) throw new Error("El número de OT no es válido.");
     const outputFormat = message.outputFormat || "html";
     if (!["html", "pdf"].includes(outputFormat)) throw new Error("Formato de parte no válido.");
+    const includeOrigin = message.includeOriginCompany === true;
+    const originCompany = includeOrigin ? partLogic.originCompanyText(message.originCompany) : "";
+    if (includeOrigin && !originCompany) throw new Error("Falta la empresa o ubicación inicial.");
     const job = {
       id: crypto.randomUUID(), ot, outputFormat, sourceTabId: tab.id,
       viewerTabId: null, outputTabId: null, startedAt: Date.now(),
       variantIndex: 0,
       variantCount: isBoixeresClient(message.client) ? 2 : 1,
+      originCompany,
+      replaceLogo: message.replaceLogo !== false,
+      cleanResources: message.cleanResources !== false,
       irreparableStamp: outputFormat === "html" && message.irreparableStamp === true,
       closeTabs: outputFormat === "html" && message.closeTabs === true
     };
@@ -425,7 +442,9 @@ async function handleMessage(message, sender) {
     }
     job.outputTabId = tab.id;
     await chrome.storage.session.set({ [JOB_KEY]: job });
-    return { ot: job.ot, jobId: job.id, irreparableStamp: job.irreparableStamp === true };
+    return { ot: job.ot, jobId: job.id, irreparableStamp: job.irreparableStamp === true,
+      replaceLogo: job.replaceLogo !== false, cleanResources: job.cleanResources !== false,
+      ...(job.originCompany && { originCompany: job.originCompany }) };
   }
 
   if (message.type === "FINISH" || message.type === "FAIL") {

@@ -25,6 +25,23 @@ class TechnicianSatPlanTests(TestCase):
             with self.subTest(field=field),self.assertRaises(ValueError):
                 reviewed_sat_plans([WarehouseItem('1')],values,default_selection())
 
+    def test_incident_policy_uses_project_codes_and_accepts_explicit_absence(self):
+        for client in ('TMB', 'Línea 9', 'LINEA-9', 'CL9T1SVI', 'CL9T2SVI'):
+            values = self.values()
+            values['1']['incident'] = ''
+            with self.subTest(client=client), self.assertRaisesRegex(ValueError, 'sin incidencia'):
+                reviewed_sat_plans([WarehouseItem('1', client=client)], values, default_selection())
+            values['1']['incident'] = 'sin incidencia'
+            plan, = reviewed_sat_plans([WarehouseItem('1', client=client)], values, default_selection())
+            self.assertEqual(plan.incident_summary, 'inc: sin incidencia')
+
+        values = self.values()
+        values['1']['incident'] = ''
+        for client in ('TMB BOIXERES', 'RENFE-BCN'):
+            with self.subTest(client=client):
+                plan, = reviewed_sat_plans([WarehouseItem('1', client=client)], values, default_selection())
+                self.assertEqual(plan.incident_summary, '')
+
     def test_duration_requires_quarter_hours(self):
         for value in ('','0','0,1','-1','NaN'):
             values=self.values();values['1']['duration']=value

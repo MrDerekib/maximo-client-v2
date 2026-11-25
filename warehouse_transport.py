@@ -1,4 +1,4 @@
-from task_priorities import coordinator, scheduled, HIGH
+from task_priorities import AUTOMATIC, HIGH, JobCancelled, coordinator, scheduled
 """Headless warehouse transport with explicit action gates and guarded submissions."""
 from dataclasses import replace
 import json
@@ -14,7 +14,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 
 import maximo_client as client
-from warehouse import ACTIONS, FINAL_STATES, WarehouseResult, freeze_items
+from warehouse import ACTIONS, FINAL_STATES, WarehouseResult, freeze_items, serials_match
 from workorder_start import WorkorderStarter, normalized
 from warehouse_diagnostics import sanitize, log_exception
 from warehouse_recovery import RecoveryStore, recovery_item, PendingOperationError, preparation_retry_allowed
@@ -262,9 +262,54 @@ def _identity(session, item):
     if (not isinstance(identity, dict) or not identity.get('Activo') or not identity.get('Planta') or
             not isinstance(identity.get('Nº de serie'), str)):
         raise RuntimeError('No se pudo identificar de forma fiable el equipo y su planta.')
-    if item.serial and str(identity.get('Nº de serie') or '').strip() != item.serial.strip():
+    if item.serial and not serials_match(item.serial, identity['Nº de serie']):
         raise RuntimeError('El número de serie de la ficha no coincide con la OT seleccionada.')
     return identity
+
+
+@scheduled('Comprobar reparaciones pendientes', AUTOMATIC)
+def reconcile_closed_repairs(records, store, *, session_factory=WarehouseSession):
+    from db import apply_observed_status
+
+    resolved = []
+    session = None
+
+    def retire():
+        nonlocal session
+        _close_session(session)
+        session = None
+
+    try:
+        for index, record in enumerate(records):
+            item = recovery_item(record)
+            coordinator.checkpoint('Consultar estado e identidad', item.ot, index, len(records), on_pause=retire)
+            try:
+                if store.get(item.ot) != record:
+                    continue
+                if session is None:
+                    session = session_factory()
+                if session.open(item.ot) != 'CLOSE':
+                    continue
+                if _identity(session, item) != record['identity']:
+                    logging.warning('OT %s en CLOSE con identidad distinta. Sigue pendiente.', item.ot)
+                    continue
+                session.check('CLOSE', record['identity'])
+                if store.archive_external_close(record, apply_observed_status):
+                    resolved.append(item.ot)
+                    logging.info('OT %s: intento %s finalizado por otra vía (CLOSE).',
+                                 item.ot, record['operation_id'])
+            except JobCancelled:
+                raise
+            except Exception:
+                log_exception('No se pudo conciliar el intento de la OT %s', item.ot)
+                if session is None:
+                    break
+                retire()
+    except JobCancelled:
+        pass
+    finally:
+        retire()
+    return resolved
 
 
 def _recover_one(record, store, session_factory, journal, stop, attempts=2):

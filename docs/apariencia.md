@@ -17,9 +17,10 @@ Estado en Maximo: activo verde, prioridad ámbar, no activo rojo y desconocido v
 En Seguimiento:
 texto de color seminegrita sin fondo: pendientes violeta, taller azul,
 Dar salida/ISSUE verde, Cerrada/CLOSE cian/turquesa, retenidos/SAT ámbar y
-cancelados/desechados rojo. Se mantiene el texto original y las filas seleccionadas
-usan el color de selección para seguir siendo legibles. Valores desconocidos
-conservan el color de texto normal.
+cancelados/desechados rojo. Los estados de Maximo conocidos se muestran con su
+nombre descriptivo. Al pasar el cursor se ve también el código de Maximo.
+Las filas seleccionadas usan el color de selección para seguir siendo legibles.
+Los estados desconocidos conservan el texto y el color originales.
 
 ## Añadir temas
 

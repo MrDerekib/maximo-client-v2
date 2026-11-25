@@ -21,6 +21,7 @@ from release_notes import STATE_FILENAME, initialize_history
 import version
 
 LEGACY_CONFIG_PATH = BASE_DIR / "config.json"
+DEFAULT_REPAIR_ORIGIN_PROJECTS = ("ATM", "Línea 9")
 _legacy_cleanup_attempted = False
 
 
@@ -58,12 +59,17 @@ class AppConfig:
     repair_print_mode: str = "dialog"
     repair_close_tabs_after_direct_print: bool = False
     repair_irreparable_stamp_enabled: bool = True
+    repair_replace_logo_enabled: bool = True
+    repair_clean_resources_enabled: bool = True
+    repair_origin_mode: str = "selected"
+    repair_origin_projects: list[str] = field(default_factory=lambda: list(DEFAULT_REPAIR_ORIGIN_PROJECTS))
     filters: dict | None = None
     last_status: dict | None = None
     latest_release_tag: str = ""
     latest_release_url: str = ""
     latest_release_checked_at: str = ""
     table_column_widths: dict | None = None
+    table_hidden_columns: list[str] = field(default_factory=list)
     table_layout_initialized: bool = False
     window_size: list | None = None
     window_maximized: bool = False
@@ -119,14 +125,32 @@ class AppConfig:
             self.warehouse_enabled = False
         if not isinstance(self.warehouse_ask_sat_details, bool):
             self.warehouse_ask_sat_details = False
+        if self.repair_origin_mode not in ("disabled", "all", "selected"):
+            self.repair_origin_mode = "selected"
+        if not isinstance(self.repair_origin_projects, list):
+            self.repair_origin_projects = list(DEFAULT_REPAIR_ORIGIN_PROJECTS)
+        self.repair_origin_projects = sorted({
+            value.strip() for value in self.repair_origin_projects
+            if isinstance(value, str) and value.strip()
+        }, key=str.casefold)
         if not isinstance(self.repair_irreparable_stamp_enabled, bool):
             self.repair_irreparable_stamp_enabled = True
+        if not isinstance(self.repair_replace_logo_enabled, bool):
+            self.repair_replace_logo_enabled = True
+        if not isinstance(self.repair_clean_resources_enabled, bool):
+            self.repair_clean_resources_enabled = True
         if not isinstance(self.repair_close_tabs_after_direct_print, bool):
             self.repair_close_tabs_after_direct_print = False
         if self.filters is None:
             self.filters = {"mx38_tfrow_[C:26]_txt-tb": "=LAB-BAD"}
         if not isinstance(self.table_column_widths, dict):
             self.table_column_widths = {}
+        if not isinstance(self.table_hidden_columns, list):
+            self.table_hidden_columns = []
+        else:
+            self.table_hidden_columns = [
+                name for name in self.table_hidden_columns if isinstance(name, str) and name != "OT"
+            ]
         if not isinstance(self.window_size, list) or len(self.window_size) != 2:
             self.window_size = None
 

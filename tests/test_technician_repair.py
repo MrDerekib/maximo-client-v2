@@ -19,6 +19,14 @@ class RepairPlanTests(TestCase):
             'entries':[{'summary':'Test equipo','details':'Aviso sobretensión'},
                        {'summary':'Comprobación','details':'Resultado de prueba'}]}
     def plan(self):return reviewed_repair(WarehouseItem('1',serial='S'),self.values(),default_selection())
+    def test_repair_without_incident_is_allowed_for_other_projects(self):
+        values = {**self.values(), 'reference': ''}
+        plan = reviewed_repair(WarehouseItem('1', client='FGC'), values, default_selection())
+        self.assertEqual(plan.incident_summary, '')
+        self.assertTrue(plan.entries)
+        with self.assertRaisesRegex(ValueError, 'sin incidencia'):
+            reviewed_repair(WarehouseItem('1', client='CL9T2SVI'), values, default_selection())
+
     def test_free_reference_entries_and_calculated_start(self):
         p=self.plan()
         self.assertEqual(p.reference,'stock Ávila: libre');self.assertEqual(len(p.entries),2)
@@ -153,6 +161,21 @@ class RepairUiTests(TestCase):
         d.preview_ready({'state':'APPR','fault':'Cached fault','duration':'1','reference':'inc: 123',
             'entries':[{'summary':'Test','details':'Result'}]})
         d.justification.setPlainText('Irreparable');return d
+    def test_ineligible_state_is_a_highlighted_result_and_preserves_editing(self):
+        dialog = self.dialog()
+        dialog.reference.setText('Dato conservado')
+        dialog.preview_ready({'state': 'WAPPR'})
+
+        self.assertTrue(dialog.status_card.property('blocked'))
+        self.assertFalse(dialog.status_warning.isHidden())
+        self.assertFalse(dialog.preview_indicator.animation.timer.isActive())
+        self.assertIn('Pendiente de aprobación (WAPPR)', dialog.status.text())
+        self.assertIn('Aprobada (APPR) o En curso (INPRG)', dialog.status.text())
+        self.assertNotIn('No se pudo consultar', dialog.status.text())
+        self.assertFalse(dialog.submit.isEnabled())
+        self.assertTrue(dialog.reference.isEnabled())
+        self.assertEqual(dialog.reference.text(), 'Dato conservado')
+
     def test_discard_reason_defaults_to_local_fault_without_waiting_for_preview(self):
         with patch('technician_repair_ui.get_fault_description',return_value='PETARDEA NO FUNCIONA'):
             d=RepairDialog(WarehouseItem('1'),default_selection(),autoload=False)
@@ -362,6 +385,25 @@ class RepairUiTests(TestCase):
 
 
 class CachedFaultTests(TestCase):
+    def test_repair_preview_accepts_equivalent_serial_spaces_but_rejects_a_different_serial(self):
+        from technician_repair_ui import repair_defaults
+        session = Mock()
+        session.open.return_value = 'INPRG'
+        session.identity.return_value = {'Activo': 'A', 'Planta': 'P', 'Nº de serie': 'AB12 34567'}
+        preparer = Mock()
+        preparer.value.return_value = '0,50'
+        preparer.worklog_snapshot.return_value = {'totals': [0], 'rows': []}
+
+        with patch('technician_repair_ui.WarehouseSession', return_value=session), \
+                patch('technician_repair_ui.RepairPreparer', return_value=preparer) as make_preparer, \
+                patch('technician_repair_ui.get_fault_description', return_value='Avería guardada'):
+            result = repair_defaults(WarehouseItem('1', serial='AB12\u00a034567'))
+            self.assertEqual(result['state'], 'INPRG')
+            self.assertEqual(result['identity'], session.identity.return_value)
+            for serial in ('AB1234567', 'AB12\u00a034568'):
+                with self.subTest(serial=serial), self.assertRaisesRegex(RuntimeError, 'número de serie'):
+                    repair_defaults(WarehouseItem('1', serial=serial))
+            make_preparer.assert_called_once()
     def test_sat_defaults_use_cached_fault_without_reading_live_summary(self):
         from technician_sat import technician_sat_defaults
         s=Mock();s.open.return_value='APPR';s.identity.return_value={'Activo':'A','Planta':'P','Nº de serie':'S'}

@@ -60,7 +60,35 @@ class ContinuationUiTests(TestCase):
                 d.continue_repair();check.assert_called_once();execute.assert_not_called()
                 d.recheck_ready({'kind':'resume','state':'INPRG','operation_id':r['operation_id'],'detail':'La OT ya está iniciada.'})
                 execute.assert_not_called();self.assertEqual(d.progress_dialog.table.item(2,1).text(),'Completado')
-                d.progress_dialog.worker_finished();self.assertEqual(d.progress_dialog.retry_button.text(),'Continuar cierre…')
+                from threading import Event
+                from types import SimpleNamespace
+                d._worker = SimpleNamespace(isRunning=lambda: False, stop_requested=Event())
+                with patch.object(d, '_confirm_resume') as confirm:
+                    d._recheck_worker_finished()
+                    confirm.assert_called_once()
+                self.assertEqual(d.progress_dialog.retry_button.text(), 'Revisar y reintentar')
+    def test_failure_prompt_names_failed_step_and_uses_the_same_retry(self):
+        d = self.dialog()
+        progress = d.progress_dialog
+        progress.set_stage(3, 'Validando fechas')
+        progress.failure('Tiempo agotado al validar Inicio real')
+        d._show_failure_prompt = True
+
+        with patch('technician_repair_ui.RecoveryStore') as store, \
+                patch('technician_repair_ui.QMessageBox') as message_box, \
+                patch.object(d, 'continue_repair') as retry:
+            store.return_value.get.return_value = None
+            prompt = message_box.return_value
+            buttons = [object(), object(), object()]
+            prompt.addButton.side_effect = buttons
+            prompt.clickedButton.return_value = buttons[0]
+            d._repair_worker_finished()
+
+        prompt.setText.assert_called_once_with('Paso pendiente: ' + progress.STAGES[3])
+        self.assertIn('Tiempo agotado', prompt.setInformativeText.call_args.args[0])
+        self.assertEqual(prompt.addButton.call_args_list[0].args[0], 'Revisar y reintentar')
+        retry.assert_called_once_with()
+
     def test_same_progress_window_only_continues_after_explicit_confirmation(self):
         for answer in (QMessageBox.Yes,QMessageBox.No):
             with self.subTest(answer=answer),temporary_directory() as folder:
@@ -68,7 +96,7 @@ class ContinuationUiTests(TestCase):
                 r=store.begin(p.item,'technician_close',fixtures.IDENTITY,'APPR',preparing=True,reviewed_request=asdict(p))
                 d._resume_assessment={'kind':'resume','state':'INPRG','operation_id':r['operation_id'],'detail':'No se iniciará otra vez.'}
                 with patch('technician_repair_ui.RecoveryStore',return_value=store),patch('technician_repair_ui.QMessageBox.question',return_value=answer) as confirm,patch.object(d,'launch') as execute:
-                    d.continue_repair();confirm.assert_called_once()
+                    d._confirm_resume(d._resume_assessment);confirm.assert_called_once()
                     self.assertIn('INPRG',confirm.call_args.args[2]);self.assertIs(d.progress_dialog,progress)
                     if answer==QMessageBox.Yes:
                         execute.assert_called_once();self.assertEqual(asdict(execute.call_args.args[0]),r['reviewed_request'])

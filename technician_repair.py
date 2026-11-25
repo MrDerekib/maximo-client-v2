@@ -11,12 +11,12 @@ import time
 from uuid import uuid4
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from technician_sat import TechnicianSatPreparer,format_incident
+from technician_sat import TechnicianSatPreparer, format_incident, incident_required
 from workorder_start import normalized
 from workorder_close import WorkorderCloser, actual_datetime, repair_seconds, validate_close_times, close_review
 from failure_catalog import resolve_selection
 from task_priorities import scheduled, HIGH
-from warehouse import WarehouseItem
+from warehouse import WarehouseItem, serials_match
 from warehouse_transport import WarehouseSession
 from warehouse_recovery import RecoveryStore, repair_retry_allowed
 from warehouse_diagnostics import sanitize,log_exception
@@ -43,14 +43,14 @@ class RepairPlan:
 
     @property
     def incident_summary(self):
-        return format_incident(self.reference)
+        return format_incident(self.reference, required=incident_required(self.item.client))
 
 
 def reviewed_repair(item, values, selection, now=None):
     if values.get('action') not in ('close','discard'):
         raise ValueError('Elige Cerrar OT o Desechar equipo.')
     reference=str(values.get('reference') or '').strip()
-    format_incident(reference)
+    incident = format_incident(reference, required=incident_required(item.client))
     duration=str(values.get('duration') or '').strip()
     seconds=repair_seconds(duration)
     mode=values.get('time_mode','end')
@@ -66,7 +66,7 @@ def reviewed_repair(item, values, selection, now=None):
         if not summary:raise ValueError('Cada entrada de registro necesita un resumen.')
         validate_worklog_summary(summary)
         entries.append(RepairEntry(summary,details))
-    summaries=[format_incident(reference),*[entry.summary for entry in entries]]
+    summaries = ([incident] if incident else []) + [entry.summary for entry in entries]
     if len({normalized(s) for s in summaries})!=len(summaries):
         raise ValueError('Evita resúmenes repetidos en las entradas de esta petición.')
     justification=str(values.get('justification') or '').strip()
@@ -94,11 +94,14 @@ def verify_saved_repair(session, request):
 
 def verify_repair_entries(session, request):
     if 'reference' not in request:return
-    registry=RepairPreparer(session.driver,request['item']['ot'],'INPRG')
-    registry.active_status=session.reader.value('Estado')
-    registry.require_approved()
-    registry.verify_entries((RepairEntry(format_incident(request['reference'])),
-        *(RepairEntry(item['summary'],item.get('details','')) for item in request.get('entries',[]))))
+    incident = format_incident(request['reference'], required=incident_required(request['item'].get('client')))
+    entries = [RepairEntry(incident)] if incident else []
+    entries.extend(RepairEntry(item['summary'], item.get('details', '')) for item in request.get('entries', []))
+    if entries:
+        registry = RepairPreparer(session.driver, request['item']['ot'], 'INPRG')
+        registry.active_status = session.reader.value('Estado')
+        registry.require_approved()
+        registry.verify_entries(tuple(entries))
 
 
 class RepairPreparer(TechnicianSatPreparer):
@@ -345,8 +348,10 @@ def run_repair(plan, *, progress=None, stop=None, session_factory=WarehouseSessi
             raise RuntimeError('El inicio anterior sigue sin confirmar. No se repetirá; comprueba su resultado antes de continuar.')
         identity=session.identity()
         journal({'event':'initial_state_read','ot':plan.item.ot,'state':state,'identity':identity})
-        if not identity.get('Activo') or not identity.get('Planta') or (plan.item.serial and identity.get('Nº de serie')!=plan.item.serial):
+        if not identity.get('Activo') or not identity.get('Planta'):
             raise RuntimeError('No se pudo contrastar la identidad del equipo.')
+        if plan.item.serial and not serials_match(plan.item.serial, identity.get('Nº de serie')):
+            raise RuntimeError('El número de serie de la ficha no coincide con el del listado de MD.')
         if retry_record is not None:
             if identity!=current['identity']:
                 raise RuntimeError('La identidad cambió desde el intento anterior. No se reintentará.')
@@ -359,7 +364,8 @@ def run_repair(plan, *, progress=None, stop=None, session_factory=WarehouseSessi
         preparer=RepairPreparer(session.driver,plan.item.ot,state,progress);session.reader=preparer
         stage_progress(1,'Preparar anomalías y entradas de Registro')
         preparer.apply_anomalies(plan.selection)
-        for entry in (RepairEntry(plan.incident_summary),*plan.entries):
+        incident = (RepairEntry(plan.incident_summary),) if plan.incident_summary else ()
+        for entry in (*incident, *plan.entries):
             if stop.is_set():raise RuntimeError('Preparación detenida antes de continuar.')
             progress('Preparando Registro: '+entry.summary)
             preparer.ensure_entry(entry)

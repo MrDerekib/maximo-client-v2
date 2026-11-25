@@ -118,7 +118,8 @@ class AppUpdateFlowTests(TestCase):
             _closing=False, _credentials_ready=Mock(return_value=True),
             update_lock=threading.Lock(), _start_task=Mock(), status=Mock(),
             refresh_choices=Mock(), refresh_table=Mock(),
-            _refresh_reconciliation_summary=Mock(), start_background_reconcile=Mock(),
+            _refresh_reconciliation_summary=Mock(), _refresh_fault_description_summary=Mock(),
+            start_background_reconcile=Mock(),
         )
 
     def test_running_update_blocks_another_worker(self):

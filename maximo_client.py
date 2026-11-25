@@ -14,7 +14,7 @@ import pandas as pd
 import logging
 from pathlib import Path
 from uuid import uuid4
-from config import load_config, get_credentials
+from config import DEFAULT_REPAIR_ORIGIN_PROJECTS, load_config, get_credentials
 from app_paths import EDGE_PROFILE_DIR, PROGRAM_DIR, create_unique_directory
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -623,6 +623,16 @@ def open_ot(
             driver.execute_script(
                 "window.sessionStorage.setItem('maximoDesktop.discardedOts', JSON.stringify(arguments[0]));",
                 sorted(discarded_ots),
+            )
+            driver.execute_script(
+                "window.sessionStorage.setItem('maximoDesktop.reportOrigin', JSON.stringify(arguments[0]));",
+                {"mode": getattr(cfg, "repair_origin_mode", "selected"),
+                 "projects": getattr(cfg, "repair_origin_projects", DEFAULT_REPAIR_ORIGIN_PROJECTS)},
+            )
+            driver.execute_script(
+                "window.sessionStorage.setItem('maximoDesktop.reportAppearance', JSON.stringify(arguments[0]));",
+                {"replaceLogo": getattr(cfg, "repair_replace_logo_enabled", True),
+                 "cleanResources": getattr(cfg, "repair_clean_resources_enabled", True)},
             )
             # Tab session storage survives Maximo reloads, including the two
             # reloads used to validate an OT closure. It expires with the tab.
